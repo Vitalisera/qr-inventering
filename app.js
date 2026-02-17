@@ -783,11 +783,12 @@ function prepareSingleDialog(item, tag) {
   dlgTitle.contentEditable = "false";
   const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Tryck <b>"Registrera inventering"</b> för att bekräfta.<br>"Fler fält" öppnar redigering av kommentar, enhet, typ och min-antal.';}
 
+  const isoDate = toYMD(meta.lastMs);
   dlgInfo.innerHTML = `
     <div class="metaTop">
       <span class="metaQty">${meta.qty ?? 0} ${meta.unit ?? ""}</span>
       <span class="metaBy"> • ${meta.user || ""}</span>
-      <div class="metaDate">${toYMD(meta.lastMs)}</div>
+      <div class="metaDate">Datum: <input type="date" id="singleDateEdit" value="${isoDate}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
     </div>
   `;
 
@@ -795,9 +796,28 @@ function prepareSingleDialog(item, tag) {
     <button id="confirmSingle" class="btn">Registrera inventering</button>
     <button id="editSingle" class="btn cancel">Fler fält</button>
     <button id="cancelSingle" class="btn cancel">Stäng</button>
+    <div id="msgLine" class="msgLine"></div>
   `;
 
   dlg.classList.remove("hidden");
+
+  const dateInput = qs("#singleDateEdit");
+  dateInput.addEventListener('change', () => {
+    const newVal = dateInput.value;
+    if (!newVal) {
+      // Rensa datum = avinventera
+      gasCall('updateMeta', {tag, args: {clearTimestamp: true, clearUser: true, userName: ''}});
+      setLocalMeta(tag, { lastMs: 0, user: '' });
+      recomputeMaxLast(); renderLists();
+      const ml = qs("#msgLine"); if(ml){ml.className='msgLine ok';ml.textContent='Datum rensat — artikeln avinventerad';}
+    } else {
+      const ms = new Date(newVal + 'T12:00:00').getTime();
+      gasCall('updateMeta', {tag, args: {lastYMD: newVal}});
+      setLocalMeta(tag, { lastMs: ms });
+      recomputeMaxLast(); renderLists();
+      const ml = qs("#msgLine"); if(ml){ml.className='msgLine ok';ml.textContent='Datum uppdaterat';}
+    }
+  });
 
   qs("#confirmSingle").onclick = () => {
     dlg.classList.add("hidden");
@@ -877,7 +897,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     <div class="metaTop">
       <span class="metaQty">${dialogItem.qty} ${dialogItem.unit}</span>
       <span class="metaBy"> • ${dialogItem.user || ""}</span>
-      <div class="metaDate">${isoDate}</div>
+      <div class="metaDate">Datum: <input type="date" id="containerDateEdit" value="${isoDate}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
     </div>
     <p class="metaText">Lägg till eller ange ny total:</p>
   `;
@@ -896,6 +916,25 @@ function prepareContainerDialog(item, tag, opts = {}) {
 
   const incBtn = qs("#incBtn"), newBtn = qs("#newBtn"), toggleMore = qs("#toggleMore"),
         cancelBtn = qs("#cancelUpdate"), msgLine = qs("#msgLine");
+
+  const containerDateInput = qs("#containerDateEdit");
+  if (containerDateInput) {
+    containerDateInput.addEventListener('change', () => {
+      const newVal = containerDateInput.value;
+      if (!newVal) {
+        gasCall('updateMeta', {tag, args: {clearTimestamp: true, clearUser: true, userName: ''}});
+        setLocalMeta(tag, { lastMs: 0, user: '' });
+        recomputeMaxLast(); renderLists();
+        setMsg('Datum rensat — artikeln avinventerad', 'ok');
+      } else {
+        const ms = new Date(newVal + 'T12:00:00').getTime();
+        gasCall('updateMeta', {tag, args: {lastYMD: newVal}});
+        setLocalMeta(tag, { lastMs: ms });
+        recomputeMaxLast(); renderLists();
+        setMsg('Datum uppdaterat', 'ok');
+      }
+    });
+  }
 
   const extra = document.createElement("div");
   extra.className = "extraFields";

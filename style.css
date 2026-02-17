@@ -473,6 +473,76 @@ body.kb #cameraBox { display: none !important; }
   .help-box { background: rgba(15,20,26,.95); }
 }
 
+/* === INSTALL-OVERLAY === */
+#installOverlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.7);
+  z-index: 100000;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding: 0 16px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  animation: fadeInOverlay 0.3s ease;
+}
+#installOverlay.hidden { display: none !important; }
+.io-card {
+  background: var(--primary);
+  color: #fff;
+  border-radius: 20px;
+  padding: 24px 20px 20px;
+  text-align: center;
+  max-width: 380px;
+  width: 100%;
+  position: relative;
+  box-shadow: 0 -8px 40px rgba(0,0,0,.4);
+}
+.io-icon {
+  margin-bottom: 8px;
+}
+.io-card h2 {
+  font-size: 1.2rem; font-weight: 700;
+  margin: 0 0 6px; color: #fff;
+}
+.io-card p {
+  font-size: 0.95rem; opacity: 0.9;
+  margin: 0 0 12px; color: #fff;
+}
+.io-card ol {
+  text-align: left;
+  padding-left: 22px;
+  margin: 0 0 16px;
+  font-size: 0.95rem;
+  line-height: 1.8;
+}
+.io-card li { color: rgba(255,255,255,.95); }
+.io-share-inline {
+  vertical-align: -3px;
+  display: inline;
+}
+.io-card .btn {
+  background: #fff;
+  color: var(--primary);
+  border: none;
+  border-radius: 40px;
+  padding: 12px 32px;
+  font-size: 1rem;
+  font-weight: 700;
+  width: 100%;
+  cursor: pointer;
+}
+.io-arrow {
+  position: absolute;
+  bottom: -55px;
+  left: 50%;
+  transform: translateX(-50%);
+  animation: bounceArrow 1.5s ease-in-out infinite;
+}
+@keyframes bounceArrow {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(8px); }
+}
+@keyframes fadeInOverlay {
+  from { opacity: 0; } to { opacity: 1; }
+}
+
 /* === UTILITY === */
 .hidden { display: none !important; }
 .flashOverlay { animation: flash 0.9s ease; }

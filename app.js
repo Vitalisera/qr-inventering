@@ -501,14 +501,10 @@ function openContainerForTag(tag) {
   const { name, type, sheetName, rowNum } = cached;
 
   if (type === "singel") {
-    const le = appendLog(`${name} – uppdateras`, tag);
-    show("Uppdaterar…");
-    gasCall('logTag', {tag, name, type: "singel", qty: 1, user: userName, sheetName, rowNum})
-      .then(() => { markAsDone(le); addUndoButton(le, tag); });
-    setLocalMeta(tag, { lastMs: Date.now(), user: userName });
-    recomputeMaxLast();
-    renderLists();
-    statusDefault();
+    const dialogItem = tagCache.get(tag);
+    if (dialogItem) {
+      prepareSingleDialog(dialogItem, tag);
+    }
     return;
   }
 
@@ -618,17 +614,7 @@ function renderLists() {
       <span class="sr-lastcount">${meta.qty ?? ""}</span>
       <span class="sr-date">${meta.lastStr || ""}</span>`;
 
-    const type = (item.type || "").toLowerCase();
-
-    if (type === "singel") {
-      addSafeTap(
-        row,
-        () => openContainerForTag(t),
-        () => { const c = tagCache.get(t); if (c) prepareContainerDialog(c, t, { editMode: true }); }
-      );
-    } else {
-      addSafeTap(row, (e) => { if (!e.target.closest('.infoIcon')) openContainerForTag(t); });
-    }
+    addSafeTap(row, (e) => { if (!e.target.closest('.infoIcon')) openContainerForTag(t); });
 
     const DAY_MS = 24 * 60 * 60 * 1000;
     const now = Date.now();
@@ -786,6 +772,54 @@ function closeDialog(){
 function resetDialog(){dlgTitle.textContent="";dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";manualName.value="";manualQty.value="";dlg.querySelectorAll('.tagScanRow,.extraFields').forEach(el=>el.remove());}
 
 /* ===== Behållare-dialog ===== */
+/* ===== Singel-bekräftelsedialog ===== */
+function prepareSingleDialog(item, tag) {
+  resetDialog();
+  currentDialogTag = tag;
+  const meta = metaCache.get(tag) || {};
+  const toYMD = d => { if (!d) return ""; const dt = new Date(d); if (isNaN(dt)) return ""; return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`; };
+
+  dlgTitle.textContent = item.name || "Okänd artikel";
+  dlgTitle.contentEditable = "false";
+
+  dlgInfo.innerHTML = `
+    <div class="metaTop">
+      <span class="metaQty">${meta.qty ?? 0} ${meta.unit ?? ""}</span>
+      <span class="metaBy"> • ${meta.user || ""}</span>
+      <div class="metaDate">${toYMD(meta.lastMs)}</div>
+    </div>
+  `;
+
+  dlgBtns.innerHTML = `
+    <button id="confirmSingle" class="btn">Registrera inventering</button>
+    <button id="editSingle" class="btn cancel">Fler fält</button>
+    <button id="cancelSingle" class="btn cancel">Stäng</button>
+  `;
+
+  dlg.classList.remove("hidden");
+
+  qs("#confirmSingle").onclick = () => {
+    dlg.classList.add("hidden");
+    const le = appendLog(`${item.name} – uppdateras`, tag);
+    show("Uppdaterar…");
+    gasCall('logTag', {tag, name: item.name, type: "singel", qty: 1, user: userName, sheetName: item.sheetName, rowNum: item.rowNum})
+      .then(() => { markAsDone(le); addUndoButton(le, tag); });
+    setLocalMeta(tag, { lastMs: Date.now(), user: userName });
+    recomputeMaxLast();
+    renderLists();
+    statusDefault();
+  };
+
+  qs("#editSingle").onclick = () => {
+    prepareContainerDialog(item, tag, { editMode: true });
+  };
+
+  qs("#cancelSingle").onclick = () => {
+    dlg.classList.add("hidden");
+    statusDefault();
+  };
+}
+
 function prepareContainerDialog(item, tag, opts = {}) {
   resetDialog();
 

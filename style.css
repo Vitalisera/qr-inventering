@@ -321,7 +321,7 @@ body:has(.dialog:not(.hidden))::after {
 
 /* Kommentardialog */
 .dialog.comment {
-  top: 8vh; bottom: auto;
+  top: calc(env(safe-area-inset-top, 0px) + 8vh); bottom: auto;
   transform: translateX(-50%);
   width: 94vw; max-height: 85vh;
   font-size: 1rem;
@@ -366,7 +366,7 @@ body:has(.dialog:not(.hidden))::after {
 
 /* Sokdialog */
 #searchDialog {
-  top: 2vh; bottom: auto;
+  top: calc(env(safe-area-inset-top, 0px) + 2vh); bottom: auto;
   left: 0; right: 0;
   margin: 0 auto;
   transform: none;

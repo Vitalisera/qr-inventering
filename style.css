@@ -27,6 +27,7 @@
 html, body {
   margin: 0; padding: 0;
   height: 100dvh;
+  overflow: hidden;
   font-family: "Inter", -apple-system, Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -43,10 +44,11 @@ body {
 
 /* === HEADER === */
 header {
+  flex-shrink: 0;
   background: var(--primary);
   color: #fff;
   text-align: center;
-  padding: 14px 0;
+  padding: calc(env(safe-area-inset-top, 0px) + 14px) env(safe-area-inset-right, 0px) 14px env(safe-area-inset-left, 0px);
   position: relative;
 }
 header h1 {
@@ -98,6 +100,7 @@ header h1 {
 
 /* === STATUS + LOGG === */
 #statusContainer {
+  flex-shrink: 0;
   background: rgba(255,255,255,.95);
   text-align: center;
   padding: 8px;
@@ -122,9 +125,11 @@ header h1 {
 
 /* === LISTOR === */
 #statusList {
-  flex: 1 1 67%;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
-  padding: 10px 12px 120px;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 80px);
 }
 .group { margin-bottom: 12px; }
 .groupHeader {
@@ -380,16 +385,16 @@ body:has(.dialog:not(.hidden))::after {
 /* === FABs === */
 .btn.fab {
   position: fixed;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
   border: none; border-radius: 50px;
-  padding: 14px 24px;
-  font-size: 0.9rem; font-weight: 600;
+  padding: 12px 20px;
+  font-size: 0.85rem; font-weight: 600;
   color: #fff; background: var(--primary);
-  box-shadow: 0 6px 16px rgba(0,0,0,.25);
+  box-shadow: 0 4px 12px rgba(0,0,0,.3);
   z-index: 1000;
 }
-#startBtn { right: 16px; }
-#settingsBtn { left: 16px; }
+#startBtn { right: env(safe-area-inset-right, 12px); }
+#settingsBtn { left: env(safe-area-inset-left, 12px); }
 #searchFab { left: 50%; transform: translateX(-50%); }
 
 /* === SPINNER === */

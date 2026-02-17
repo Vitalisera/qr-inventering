@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vitalisera inventering</title>
+
+  <meta name="theme-color" content="#1f5e69">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Inventering">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header>
+    <h1>Vitalisera inventering <span class="help-toggle" data-help="header">?</span></h1>
+    <button id="addBtn" aria-label="Ny artikel">+</button>
+  </header>
+  <div class="help-box" id="help-header">
+    Inventeringsapp for Vitalisera. Skanna QR-koder med kameran eller valj artiklar i listan for att registrera inventering.
+    Tryck <b>+</b> for att skapa en ny artikel manuellt.
+  </div>
+
+  <!-- KAMERA -->
+  <section id="cameraBox" class="hidden">
+    <video id="preview" autoplay muted playsinline></video>
+    <div id="overlay"><div id="scanBox"><div id="scanLaser"></div></div></div>
+  </section>
+
+  <!-- STATUS + LOGG -->
+  <section id="statusContainer">
+    <div id="status">Valj artikel i listan</div>
+    <div id="logList"></div>
+  </section>
+
+  <!-- LISTOR -->
+  <section id="statusList">
+    <div class="group">
+      <div class="groupHeader">
+        <div class="groupTitle">Inventerat</div>
+        <span class="help-toggle dark" data-help="lists">?</span>
+      </div>
+      <div class="help-box" id="help-lists">
+        <b>Inventerat</b> = artiklar uppdaterade senaste 5 dagarna.<br>
+        <b>Ej inventerat</b> = ovriga artiklar.<br>
+        Tryck pa en rad for att registrera/uppdatera.<br>
+        Langtryck pa singel-artikel = redigera metadata.<br>
+        Tryck pa rubrikerna for att byta ordning.
+      </div>
+      <div id="listInventerat" class="list"></div>
+    </div>
+
+    <div class="group">
+      <div class="groupHeader">
+        <div class="groupTitle">Ej inventerat</div>
+      </div>
+      <div id="listEj" class="list"></div>
+    </div>
+  </section>
+
+  <!-- NAMN -->
+  <div id="nameDialog" class="dialog hidden">
+    <h2>Ange ditt namn</h2>
+    <input id="userNameInput" placeholder="Ex. Robert Kraft" autocomplete="name" />
+    <div class="actions"><button id="saveNameBtn" class="btn">OK</button></div>
+  </div>
+
+  <!-- ARTIKEL -->
+  <div id="dialogBox" class="dialog hidden">
+    <h2 id="dialogTitle" contenteditable="true"></h2>
+    <p id="dialogInfo"></p>
+    <div id="newItemFields" class="hidden">
+      <input id="manualName" placeholder="Benamning" autocomplete="off" />
+      <select id="manualType">
+        <option value="singel">Singel</option>
+        <option value="behallare">Behallare</option>
+      </select>
+      <input id="manualUnit" placeholder="Enhet (t.ex. st, kg, liter)" autocomplete="off" />
+      <select id="manualPlace"></select>
+      <input id="manualQty" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Antal (1 som standard)" autocomplete="off" />
+    </div>
+    <input id="dialogInput" class="hidden" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Antal" autocomplete="off" />
+    <div id="dialogBtns" class="actions"></div>
+  </div>
+
+  <!-- FILTER -->
+<div id="filterDialog" class="dialog hidden">
+  <h2>Filtrera listor <span class="help-toggle dark" data-help="filter">?</span></h2>
+  <div class="help-box" id="help-filter">
+    Valj vilka platser som ska visas i listorna. Kryssa i "Visa endast artiklar med for lagt saldo" for att bara se artiklar som behover fyllas pa. Tryck "Anvand" for att spara.
+  </div>
+  <div id="placeList" class="checklist"></div>
+  <div class="actions">
+    <button id="applyFilterBtn" class="btn">Anvand</button>
+    <button id="clearFilterBtn" class="btn cancel">Valj alla</button>
+    <button id="cancelFilterBtn" class="btn cancel">Avbryt</button>
+  </div>
+</div>
+
+  <!-- SOK -->
+  <div id="searchDialog" class="dialog hidden">
+    <h2>Sok artiklar <span class="help-toggle dark" data-help="search">?</span></h2>
+    <div class="help-box" id="help-search">
+      Sok artiklar med fritext. Tryck pa ett resultat for att oppna artikeln. Tryck "Ny artikel" for att skapa en helt ny.
+    </div>
+    <input id="searchInput" type="search" placeholder="Sok..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    <div id="searchResults" class="list"></div>
+    <div class="actions"><button id="newItemBtn" class="btn">Ny artikel</button><button id="closesearchFab" class="btn cancel">Stang</button></div>
+  </div>
+
+  <!-- FABs + LJUD -->
+  <button id="startBtn" class="btn fab">Skanna QR</button>
+  <button id="searchFab" class="btn fab">Sok</button>
+  <button id="settingsBtn" class="btn fab" aria-label="Filtrera listor">Filtrera listor</button>
+
+  <audio id="successSound" preload="auto">
+    <source src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg" type="audio/ogg" />
+  </audio>
+  <audio id="blipSound" preload="auto">
+    <source src="https://actions.google.com/sounds/v1/cartoon/wood_plank_clicks.ogg" type="audio/ogg" />
+  </audio>
+
+  <script src="app.js"></script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js', {scope: './'}).catch(()=>{});
+    }
+  </script>
+
+  <div id="rotateBlock">Vand enheten till staende lage</div>
+</body>
+</html>

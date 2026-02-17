@@ -25,8 +25,8 @@
     <button id="addBtn" aria-label="Ny artikel">+</button>
   </header>
   <div class="help-box" id="help-header">
-    Inventeringsapp for Vitalisera. Skanna QR-koder med kameran eller valj artiklar i listan for att registrera inventering.
-    Tryck <b>+</b> for att skapa en ny artikel manuellt.
+    Inventeringsapp för Vitalisera. Skanna QR-koder med kameran eller välj artiklar i listan för att registrera inventering.
+    Tryck <b>+</b> för att skapa en ny artikel manuellt.
   </div>
 
   <!-- KAMERA -->
@@ -37,7 +37,7 @@
 
   <!-- STATUS + LOGG -->
   <section id="statusContainer">
-    <div id="status">Valj artikel i listan</div>
+    <div id="status">Välj artikel i listan</div>
     <div id="logList"></div>
   </section>
 
@@ -50,10 +50,10 @@
       </div>
       <div class="help-box" id="help-lists">
         <b>Inventerat</b> = artiklar uppdaterade senaste 5 dagarna.<br>
-        <b>Ej inventerat</b> = ovriga artiklar.<br>
-        Tryck pa en rad for att registrera/uppdatera.<br>
-        Langtryck pa singel-artikel = redigera metadata.<br>
-        Tryck pa rubrikerna for att byta ordning.
+        <b>Ej inventerat</b> = övriga artiklar.<br>
+        Tryck på en rad för att registrera/uppdatera.<br>
+        Långtryck på singel-artikel = redigera metadata.<br>
+        Tryck på rubrikerna för att byta ordning.
       </div>
       <div id="listInventerat" class="list"></div>
     </div>
@@ -68,7 +68,10 @@
 
   <!-- NAMN -->
   <div id="nameDialog" class="dialog hidden">
-    <h2>Ange ditt namn</h2>
+    <h2>Ange ditt namn <span class="help-toggle dark" data-help="name">?</span></h2>
+    <div class="help-box" id="help-name">
+      Ditt namn sparas lokalt i 10 dagar och visas i Sheetet vid varje registrering, så att man ser vem som inventerade.
+    </div>
     <input id="userNameInput" placeholder="Ex. Robert Kraft" autocomplete="name" />
     <div class="actions"><button id="saveNameBtn" class="btn">OK</button></div>
   </div>
@@ -76,12 +79,19 @@
   <!-- ARTIKEL -->
   <div id="dialogBox" class="dialog hidden">
     <h2 id="dialogTitle" contenteditable="true"></h2>
+    <span class="help-toggle dark" data-help="article">?</span>
+    <div class="help-box" id="help-article">
+      <b>Singel:</b> registreras direkt med datum och ditt namn.<br>
+      <b>Behållare:</b> välj "Öka antal" eller ange "Ny total".<br>
+      Tryck på artikelnamnet för att redigera det.<br>
+      "Fler fält" visar kommentar, enhet, typ och min-antal.
+    </div>
     <p id="dialogInfo"></p>
     <div id="newItemFields" class="hidden">
-      <input id="manualName" placeholder="Benamning" autocomplete="off" />
+      <input id="manualName" placeholder="Benämning" autocomplete="off" />
       <select id="manualType">
         <option value="singel">Singel</option>
-        <option value="behallare">Behallare</option>
+        <option value="behållare">Behållare</option>
       </select>
       <input id="manualUnit" placeholder="Enhet (t.ex. st, kg, liter)" autocomplete="off" />
       <select id="manualPlace"></select>
@@ -95,30 +105,30 @@
 <div id="filterDialog" class="dialog hidden">
   <h2>Filtrera listor <span class="help-toggle dark" data-help="filter">?</span></h2>
   <div class="help-box" id="help-filter">
-    Valj vilka platser som ska visas i listorna. Kryssa i "Visa endast artiklar med for lagt saldo" for att bara se artiklar som behover fyllas pa. Tryck "Anvand" for att spara.
+    Välj vilka platser som ska visas i listorna. Kryssa i "Visa endast artiklar med för lågt saldo" för att bara se artiklar som behöver fyllas på. Tryck "Använd" för att spara.
   </div>
   <div id="placeList" class="checklist"></div>
   <div class="actions">
-    <button id="applyFilterBtn" class="btn">Anvand</button>
-    <button id="clearFilterBtn" class="btn cancel">Valj alla</button>
+    <button id="applyFilterBtn" class="btn">Använd</button>
+    <button id="clearFilterBtn" class="btn cancel">Välj alla</button>
     <button id="cancelFilterBtn" class="btn cancel">Avbryt</button>
   </div>
 </div>
 
-  <!-- SOK -->
+  <!-- SÖK -->
   <div id="searchDialog" class="dialog hidden">
-    <h2>Sok artiklar <span class="help-toggle dark" data-help="search">?</span></h2>
+    <h2>Sök artiklar <span class="help-toggle dark" data-help="search">?</span></h2>
     <div class="help-box" id="help-search">
-      Sok artiklar med fritext. Tryck pa ett resultat for att oppna artikeln. Tryck "Ny artikel" for att skapa en helt ny.
+      Sök artiklar med fritext. Tryck på ett resultat för att öppna artikeln. Tryck "Ny artikel" för att skapa en helt ny.
     </div>
-    <input id="searchInput" type="search" placeholder="Sok..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    <input id="searchInput" type="search" placeholder="Sök..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
     <div id="searchResults" class="list"></div>
-    <div class="actions"><button id="newItemBtn" class="btn">Ny artikel</button><button id="closesearchFab" class="btn cancel">Stang</button></div>
+    <div class="actions"><button id="newItemBtn" class="btn">Ny artikel</button><button id="closesearchFab" class="btn cancel">Stäng</button></div>
   </div>
 
   <!-- FABs + LJUD -->
   <button id="startBtn" class="btn fab">Skanna QR</button>
-  <button id="searchFab" class="btn fab">Sok</button>
+  <button id="searchFab" class="btn fab">Sök</button>
   <button id="settingsBtn" class="btn fab" aria-label="Filtrera listor">Filtrera listor</button>
 
   <audio id="successSound" preload="auto">
@@ -136,6 +146,6 @@
     }
   </script>
 
-  <div id="rotateBlock">Vand enheten till staende lage</div>
+  <div id="rotateBlock">Vänd enheten till stående läge</div>
 </body>
 </html>

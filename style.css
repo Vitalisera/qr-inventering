@@ -129,7 +129,7 @@ header h1 {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 80px);
+  padding: 10px calc(env(safe-area-inset-right, 0px) + 20px) calc(env(safe-area-inset-bottom, 0px) + 80px) calc(env(safe-area-inset-left, 0px) + 20px);
 }
 .group { margin-bottom: 12px; }
 .groupHeader {

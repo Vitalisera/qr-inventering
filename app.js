@@ -784,12 +784,14 @@ function prepareSingleDialog(item, tag) {
   const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Tryck <b>"Registrera inventering"</b> för att bekräfta.<br>"Fler fält" öppnar redigering av kommentar, enhet, typ och min-antal.';}
 
   const todayYMD = toYMD(Date.now());
+  const oldDate = toYMD(meta.lastMs);
   dlgInfo.innerHTML = `
     <div class="metaTop">
       <span class="metaQty">${meta.qty ?? 0} ${meta.unit ?? ""}</span>
-      <span class="metaBy"> • ${meta.user || ""}</span>
-      <div class="metaDate">Datum: <input type="date" id="singleDateEdit" value="${todayYMD}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
+      ${meta.user ? `<span class="metaBy"> • ${meta.user}</span>` : ""}
+      ${oldDate ? `<span class="metaBy"> • ${oldDate}</span>` : ""}
     </div>
+    <div class="metaDate">Nytt datum: <input type="date" id="singleDateEdit" value="${todayYMD}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
   `;
 
   dlgBtns.innerHTML = `
@@ -893,12 +895,14 @@ function prepareContainerDialog(item, tag, opts = {}) {
   dlgTitle.addEventListener("input", () => (pendingName = dlgTitle.textContent.trim()));
   dlgTitle.addEventListener("focusout", commitName);
 
+  const oldDate = toYMD(dialogItem.lastMs);
   dlgInfo.innerHTML = `
     <div class="metaTop">
       <span class="metaQty">${dialogItem.qty} ${dialogItem.unit}</span>
-      <span class="metaBy"> • ${dialogItem.user || ""}</span>
-      <div class="metaDate">Datum: <input type="date" id="containerDateEdit" value="${isoDate}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
+      ${dialogItem.user ? `<span class="metaBy"> • ${dialogItem.user}</span>` : ""}
+      ${oldDate ? `<span class="metaBy"> • ${oldDate}</span>` : ""}
     </div>
+    <div class="metaDate">Nytt datum: <input type="date" id="containerDateEdit" value="${isoDate}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
     <p class="metaText">Lägg till eller ange ny total:</p>
   `;
 

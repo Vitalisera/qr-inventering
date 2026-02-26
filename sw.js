@@ -1,4 +1,4 @@
-const CACHE = 'vitalisera-inv-v4';
+const CACHE = 'vitalisera-inv-v5';
 const PRECACHE = [
   './',
   'style.css',

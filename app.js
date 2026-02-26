@@ -814,8 +814,8 @@ function prepareSingleDialog(item, tag) {
       const ml = qs("#msgLine"); if(ml){ml.className='msgLine ok';ml.textContent='Datum rensat — artikeln avinventerad';}
     } else {
       const ms = new Date(newVal + 'T12:00:00').getTime();
-      gasCall('updateMeta', {tag, args: {lastYMD: newVal}});
-      setLocalMeta(tag, { lastMs: ms });
+      gasCall('updateMeta', {tag, args: {lastYMD: newVal, userName}});
+      setLocalMeta(tag, { lastMs: ms, user: userName });
       recomputeMaxLast(); renderLists();
       const ml = qs("#msgLine"); if(ml){ml.className='msgLine ok';ml.textContent='Datum uppdaterat';}
     }
@@ -932,8 +932,8 @@ function prepareContainerDialog(item, tag, opts = {}) {
         setMsg('Datum rensat — artikeln avinventerad', 'ok');
       } else {
         const ms = new Date(newVal + 'T12:00:00').getTime();
-        gasCall('updateMeta', {tag, args: {lastYMD: newVal}});
-        setLocalMeta(tag, { lastMs: ms });
+        gasCall('updateMeta', {tag, args: {lastYMD: newVal, userName}});
+        setLocalMeta(tag, { lastMs: ms, user: userName });
         recomputeMaxLast(); renderLists();
         setMsg('Datum uppdaterat', 'ok');
       }

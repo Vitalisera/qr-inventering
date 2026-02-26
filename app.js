@@ -783,12 +783,12 @@ function prepareSingleDialog(item, tag) {
   dlgTitle.contentEditable = "false";
   const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Tryck <b>"Registrera inventering"</b> för att bekräfta.<br>"Fler fält" öppnar redigering av kommentar, enhet, typ och min-antal.';}
 
-  const isoDate = toYMD(meta.lastMs);
+  const todayYMD = toYMD(Date.now());
   dlgInfo.innerHTML = `
     <div class="metaTop">
       <span class="metaQty">${meta.qty ?? 0} ${meta.unit ?? ""}</span>
       <span class="metaBy"> • ${meta.user || ""}</span>
-      <div class="metaDate">Datum: <input type="date" id="singleDateEdit" value="${isoDate}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
+      <div class="metaDate">Datum: <input type="date" id="singleDateEdit" value="${todayYMD}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
     </div>
   `;
 
@@ -866,7 +866,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const y = dt.getFullYear(), m = String(dt.getMonth()+1).padStart(2,"0"), da = String(dt.getDate()).padStart(2,"0");
     return `${y}-${m}-${da}`;
   };
-  const isoDate = toYMD(dialogItem.lastMs);
+  const isoDate = toYMD(Date.now());
   const setMsg = (text, cls) => { msgLine.className = `msgLine ${cls||""}`; msgLine.textContent = text || ""; };
   const setBtnBusy = (btn, busy=true, labelWhenIdle) => {
     if (!btn) return;

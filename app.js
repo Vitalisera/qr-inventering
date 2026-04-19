@@ -532,7 +532,7 @@ function initData(records) {
       step: (step || "").trim(),
       comment: (comment || "").trim(),
       rowNum: rowNum || null,
-      sheetName: isSynthetic ? plc : null,
+      sheetName: plc,
       altTags: Array.isArray(altTags) ? altTags : []
     });
 
@@ -1557,7 +1557,7 @@ gasCall('preload').then(res => {
       step: (step || "").trim(),
       comment: (comment || "").trim(),
       rowNum: rowNum || null,
-      sheetName: isSynthetic ? plc : null,
+      sheetName: plc,
       altTags: Array.isArray(altTags) ? altTags : []
     });
 

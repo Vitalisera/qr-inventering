@@ -394,7 +394,15 @@ body:has(.dialog:not(.hidden))::after {
   z-index: 1000;
 }
 #startBtn { right: env(safe-area-inset-right, 12px); }
-#settingsBtn { left: env(safe-area-inset-left, 12px); }
+#settingsBtn {
+  left: env(safe-area-inset-left, 12px);
+  padding: 10px 14px;
+  font-size: 1.3rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 #searchFab { left: 50%; transform: translateX(-50%); }
 
 /* === SPINNER === */

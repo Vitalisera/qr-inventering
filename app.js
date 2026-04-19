@@ -24,6 +24,32 @@ async function gasCall(fn, params = {}) {
 /* ===== Utils ===== */
 const qs=(s,p=document)=>p.querySelector(s), qsa=(s,p=document)=>Array.from(p.querySelectorAll(s));
 const normTag=x=>{const s=String(x||"").trim();return s.startsWith("S")?s:s.replace(/[^\d]/g,"");};
+
+// Preferenser för ikoner i listan (togglas i Inställningar-dialogen).
+const prefs = {
+  iconTag:     localStorage.getItem('vitaliseraIconTag')     === 'true',
+  iconType:    localStorage.getItem('vitaliseraIconType')    === 'true',
+  iconComment: localStorage.getItem('vitaliseraIconComment') !== 'false' // default true
+};
+
+function renderRowIcons(t, item, hasComment) {
+  const out = [];
+  if (prefs.iconTag && !t.startsWith('S')) out.push('🏷️');
+  if (prefs.iconType && item.type === 'singel') out.push('•');
+  if (prefs.iconComment && hasComment) {
+    out.push(`<span class="infoIcon" data-tag="${t}">ℹ️</span>`);
+  }
+  return out.length ? ' ' + out.join('') : '';
+}
+
+// Slår upp en skannad tag i tagCache — primär nyckel först, sedan altTags linjärt.
+function lookupByTag(scanned) {
+  if (tagCache.has(scanned)) return { tag: scanned, item: tagCache.get(scanned) };
+  for (const [primary, item] of tagCache.entries()) {
+    if (item.altTags && item.altTags.includes(scanned)) return { tag: primary, item };
+  }
+  return null;
+}
 const fmtDate=t=>{try{if(!t)return"";const d=new Date(t);return isNaN(d)?"":d.toLocaleDateString("sv-SE");}catch{return"";}};
 const toDayMs=ms=>{if(!ms)return null;const d=new Date(ms);d.setHours(0,0,0,0);return d.getTime();};
 const toDayStr=ms=>ms?new Date(ms).toLocaleDateString("sv-SE"):"";
@@ -316,6 +342,32 @@ function openFilterDialog() {
     placeList.appendChild(row);
   }
 
+  const titleIcons = document.createElement('div');
+  titleIcons.style.marginTop = '12px';
+  titleIcons.style.fontWeight = '600';
+  titleIcons.textContent = 'Visa ikoner';
+  placeList.appendChild(titleIcons);
+
+  const iconDefs = [
+    { key: 'iconTag',     label: 'Tag (🏷️)' },
+    { key: 'iconType',    label: 'Singel (•)' },
+    { key: 'iconComment', label: 'Kommentar (ℹ️)' }
+  ];
+  for (const def of iconDefs) {
+    const row = document.createElement('div');
+    row.className = 'placeRow';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.dataset.icon = def.key;
+    chk.checked = !!prefs[def.key];
+    const txt = document.createElement('div');
+    txt.className = 'placeTxt';
+    txt.textContent = def.label;
+    row.append(chk, txt);
+    row.addEventListener('click', e => { if (e.target !== chk) chk.checked = !chk.checked; });
+    placeList.appendChild(row);
+  }
+
   overlay.classList.add("blurred");
   filterDialog.classList.remove("hidden");
 }
@@ -341,6 +393,12 @@ applyFilterBtn?.addEventListener('click', () => {
   const selPlaces = new Set();
   boxes.forEach(b => { if (b.checked) selPlaces.add(b.dataset.place); });
   activePlaces = (selPlaces.size === boxes.length) ? null : selPlaces;
+
+  placeList.querySelectorAll('input[type="checkbox"][data-icon]').forEach(b => {
+    const key = b.dataset.icon;
+    prefs[key] = !!b.checked;
+    localStorage.setItem('vitalisera' + key.charAt(0).toUpperCase() + key.slice(1), String(!!b.checked));
+  });
 
   savePlaceFilter();
   show("Laddar inventeringslistor...", null, { autoreset: false });
@@ -460,7 +518,7 @@ function initData(records) {
   placeSet.clear();
 
   records.forEach(rec => {
-    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum] = rec;
+    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags] = rec;
     if (!name) return;
     const nt = normTag(t);
     const plc = normPlace(place);
@@ -474,7 +532,8 @@ function initData(records) {
       step: (step || "").trim(),
       comment: (comment || "").trim(),
       rowNum: rowNum || null,
-      sheetName: isSynthetic ? plc : null
+      sheetName: isSynthetic ? plc : null,
+      altTags: Array.isArray(altTags) ? altTags : []
     });
 
     placeSet.add(plc);
@@ -607,9 +666,7 @@ function renderLists() {
     row.dataset.tag = t;
 
     row.innerHTML = `
-      <span class="sr-name">
-        ${name}${hasComment ? ` <span class="infoIcon" data-tag="${t}">ℹ️</span>` : ""}
-      </span>
+      <span class="sr-name">${name}${renderRowIcons(t, item, hasComment)}</span>
       <span class="sr-min">${item.minQty ?? ""}</span>
       <span class="sr-lastcount">${meta.qty ?? ""}</span>
       <span class="sr-date">${meta.lastStr || ""}</span>`;
@@ -985,15 +1042,22 @@ function prepareContainerDialog(item, tag, opts = {}) {
     scanTagBtn.onclick = () => {
       startTagScanMode((scannedTag) => {
         setMsg("Sparar tag…", "");
-        gasCall('setTag', {sheetName: _sn || (cached?.place), rowNum: _rn || (cached?.rowNum), newTag: scannedTag})
+        gasCall('addTag', {sheetName: _sn || (cached?.place), rowNum: _rn || (cached?.rowNum), newTag: scannedTag})
           .then(res => {
             if (res.ok) {
               tagDisplay.value = res.tag;
               tagDisplay.style.opacity = "1";
               const oldData = tagCache.get(tag);
-              const oldMeta = metaCache.get(tag);
-              if (oldData) { tagCache.delete(tag); tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null }); }
-              if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
+              if (oldData) {
+                if (tag.startsWith("S")) {
+                  tagCache.delete(tag);
+                  tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null, altTags: oldData.altTags || [] });
+                  const oldMeta = metaCache.get(tag);
+                  if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
+                } else {
+                  oldData.altTags = [...(oldData.altTags || []), res.tag];
+                }
+              }
               setMsg("Tag kopplad!", "ok");
               renderLists();
             } else if (res.collision) {
@@ -1268,13 +1332,22 @@ function openLinkSearchDialog(tagToLink) {
         h2.textContent = origTitle;
         searchInput.oninput = origHandler;
         show("Kopplar tag…");
-        gasCall('setTag', {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink})
+        gasCall('addTag', {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink})
           .then(res => {
             if (res.ok) {
               const oldData = tagCache.get(tag);
-              const oldMeta = metaCache.get(tag);
-              if (oldData) { tagCache.delete(tag); tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null }); }
-              if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
+              if (oldData) {
+                if (tag.startsWith("S")) {
+                  // Syntetisk artikel fick sin första riktiga tag → byt cache-nyckel
+                  tagCache.delete(tag);
+                  tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null, altTags: oldData.altTags || [] });
+                  const oldMeta = metaCache.get(tag);
+                  if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
+                } else {
+                  // Befintlig artikel fick ytterligare alt-tag → appenda
+                  oldData.altTags = [...(oldData.altTags || []), res.tag];
+                }
+              }
               show(`Tag kopplad till "${name}"`, "ok");
               renderLists();
             } else if (res.collision) {
@@ -1416,18 +1489,19 @@ async function startCamera(){
     const scanned=normTag(res.text||""); if(!scanned||scanned===lastCode)return;
     busy=true; scanBox.classList.add("flash"); setTimeout(()=>scanBox.classList.remove("flash"),220);
 
-    const cached=tagCache.get(scanned);
-    if(cached){
+    const hit=lookupByTag(scanned);
+    if(hit){
+      const primaryTag=hit.tag, cached=hit.item;
       const {name,type}=cached; await flashFeedback(name);
       if(type==="singel"){
-        const le=appendLog(`${name} – uppdateras`,scanned); show("Uppdaterar…");
-        gasCall('logTag', {tag: scanned, name, type: "singel", qty: 1, user: userName})
-          .then(() => {markAsDone(le);addUndoButton(le,scanned);});
-        setLocalMeta(scanned,{lastMs:Date.now(),user:userName}); recomputeMaxLast(); renderLists(); cooldown(scanned); busy=false; return;
+        const le=appendLog(`${name} – uppdateras`,primaryTag); show("Uppdaterar…");
+        gasCall('logTag', {tag: primaryTag, name, type: "singel", qty: 1, user: userName})
+          .then(() => {markAsDone(le);addUndoButton(le,primaryTag);});
+        setLocalMeta(primaryTag,{lastMs:Date.now(),user:userName}); recomputeMaxLast(); renderLists(); cooldown(primaryTag); busy=false; return;
       }
-      const meta=metaCache.get(scanned)||{};
+      const meta=metaCache.get(primaryTag)||{};
       const localItem={name:cached.name,type:cached.type,place:cached.place,sheetName:cached.sheetName,rowNum:cached.rowNum,qty:meta.qty||0,unit:meta.unit||"",user:meta.user||"",last:meta.lastMs,comment:cached.comment||"",minQty:cached.minQty||0,step:cached.step||""};
-      prepareContainerDialog(localItem,scanned); busy=false; return;
+      prepareContainerDialog(localItem,primaryTag); busy=false; return;
     }
     await flashFeedback("Läser av…");
     if(preloadDone){showLinkTagDialog(scanned);return;}
@@ -1469,7 +1543,7 @@ gasCall('preload').then(res => {
   placeSet.clear();
 
   res.forEach(rec => {
-    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum] = rec;
+    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags] = rec;
     if (!name) return;
     const nt = normTag(t);
     const plc = normPlace(place);
@@ -1483,7 +1557,8 @@ gasCall('preload').then(res => {
       step: (step || "").trim(),
       comment: (comment || "").trim(),
       rowNum: rowNum || null,
-      sheetName: isSynthetic ? plc : null
+      sheetName: isSynthetic ? plc : null,
+      altTags: Array.isArray(altTags) ? altTags : []
     });
 
     placeSet.add(plc);

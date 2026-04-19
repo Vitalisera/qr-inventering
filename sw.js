@@ -1,4 +1,4 @@
-const CACHE = 'vitalisera-inv-v6';
+const CACHE = 'vitalisera-inv-v7';
 const PRECACHE = [
   './',
   'style.css',
@@ -34,7 +34,8 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   if (e.request.url.includes('script.google.com')) return;
 
-  const isAppFile = NETWORK_FIRST.some(f => e.request.url.includes(f));
+  const isAppFile = e.request.mode === 'navigate' ||
+                    NETWORK_FIRST.some(f => e.request.url.includes(f));
 
   if (isAppFile) {
     // Network-first: always try fresh, fall back to cache

@@ -945,7 +945,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (n && n !== dialogItem.name) {
       dialogItem.name = n;
       tagCache.set(tag, { ...tagCache.get(tag), name: n });
-      gasCall('updateName', {tag, newName: n}).catch(console.log);
+      gasCall('updateName', {tag, newName: n, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum}).catch(console.log);
       renderLists();
     }
   };

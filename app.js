@@ -21,6 +21,21 @@ async function gasCall(fn, params = {}) {
   }
 }
 
+// Kastar om svaret har ok:false. Används för alla muterande anrop så att .then() inte
+// råkar markera operationen som lyckad när servern faktiskt returnerade ett fel.
+function assertOk(r) {
+  if (r && r.ok === false) throw new Error(r.msg || r.error || 'Okänt serverfel');
+  return r;
+}
+
+function markLogFail(le, err) {
+  if (!le) return;
+  const icon = le.querySelector(".icon"); if (icon) icon.textContent = "⚠️";
+  const msg = le.querySelector(".msg");
+  if (msg) msg.textContent += " – " + (err?.message || 'fel');
+  show("Kunde inte spara", "warn");
+}
+
 /* ===== Utils ===== */
 const qs=(s,p=document)=>p.querySelector(s), qsa=(s,p=document)=>Array.from(p.querySelectorAll(s));
 const normTag=x=>{const s=String(x||"").trim();return s.startsWith("S")?s:s.replace(/[^\d]/g,"");};
@@ -883,7 +898,9 @@ function prepareSingleDialog(item, tag) {
     const le = appendLog(`${item.name} – uppdateras`, tag);
     show("Uppdaterar…");
     gasCall('logTag', {tag, name: item.name, type: "singel", qty: 1, user: userName, sheetName: item.sheetName, rowNum: item.rowNum})
-      .then(() => { markAsDone(le); addUndoButton(le, tag); });
+      .then(assertOk)
+      .then(() => { markAsDone(le); addUndoButton(le, tag); })
+      .catch(err => markLogFail(le, err));
     setLocalMeta(tag, { lastMs: Date.now(), user: userName });
     recomputeMaxLast();
     renderLists();
@@ -1104,8 +1121,9 @@ function prepareContainerDialog(item, tag, opts = {}) {
     setBtnBusy(incBtn, true); dlgInput.disabled = true;
     const le = appendLog(`${dialogItem.name} – nytt antal ${newCount}`);
     gasCall('updateCount', {tag, newCount, user: userName, sheetName: _sn, rowNum: _rn})
+      .then(assertOk)
       .then(() => { markAsDone(le); setBtnBusy(incBtn, false, "Öka antal"); dlgInput.disabled = false; show(`${dialogItem.name}: nytt antal ${newCount}.`, "ok"); closeDialog(); })
-      .catch(err => { setBtnBusy(incBtn, false, "Öka antal"); dlgInput.disabled = false; setMsg("Kunde inte spara. Försök igen.", "warn"); console.log(err); });
+      .catch(err => { markLogFail(le, err); setBtnBusy(incBtn, false, "Öka antal"); dlgInput.disabled = false; setMsg("Kunde inte spara. Försök igen.", "warn"); console.log(err); });
   };
 
   newBtn.onclick = () => {
@@ -1118,8 +1136,9 @@ function prepareContainerDialog(item, tag, opts = {}) {
     setBtnBusy(newBtn, true); dlgInput.disabled = true;
     const le = appendLog(`${dialogItem.name} – total ändrad till ${newCount}`);
     gasCall('updateCount', {tag, newCount, user: userName, sheetName: _sn, rowNum: _rn})
+      .then(assertOk)
       .then(() => { markAsDone(le); setBtnBusy(newBtn, false, "Ny total"); dlgInput.disabled = false; show(`${dialogItem.name}: total ändrad till ${newCount}.`, "ok"); closeDialog(); })
-      .catch(err => { setBtnBusy(newBtn, false, "Ny total"); dlgInput.disabled = false; setMsg("Kunde inte spara. Försök igen.", "warn"); console.log(err); });
+      .catch(err => { markLogFail(le, err); setBtnBusy(newBtn, false, "Ny total"); dlgInput.disabled = false; setMsg("Kunde inte spara. Försök igen.", "warn"); console.log(err); });
   };
 
   // Spara övriga fält
@@ -1423,10 +1442,12 @@ function prepareNewItemDialog(scanned){
     const le=appendLog(`${name} – tillagd (${qty})`,currentTag);
     show("Sparar…");
     gasCall('logTag', {tag: currentTag, name, type, qty, user: userName, sheetName: place||null})
+      .then(assertOk)
       .then(() => {
         markAsDone(le);
         if(unit) gasCall('updateMeta', {tag: currentTag, args: {unit, userName}});
-      });
+      })
+      .catch(err => markLogFail(le, err));
     tagCache.set(currentTag,{name,type,place});
     setLocalMeta(currentTag,{qty,unit,lastMs:Date.now(),user:userName});
     recomputeMaxLast();renderLists();closeDialog();cooldown(currentTag);
@@ -1496,7 +1517,9 @@ async function startCamera(){
       if(type==="singel"){
         const le=appendLog(`${name} – uppdateras`,primaryTag); show("Uppdaterar…");
         gasCall('logTag', {tag: primaryTag, name, type: "singel", qty: 1, user: userName})
-          .then(() => {markAsDone(le);addUndoButton(le,primaryTag);});
+          .then(assertOk)
+          .then(() => {markAsDone(le);addUndoButton(le,primaryTag);})
+          .catch(err => markLogFail(le, err));
         setLocalMeta(primaryTag,{lastMs:Date.now(),user:userName}); recomputeMaxLast(); renderLists(); cooldown(primaryTag); busy=false; return;
       }
       const meta=metaCache.get(primaryTag)||{};
@@ -1512,7 +1535,9 @@ async function startCamera(){
       if(type==="singel"){
         const le=appendLog(`${item.name} – uppdateras`,scanned); show("Uppdaterar…");
         gasCall('logTag', {tag: scanned, name: item.name, type: "singel", qty: 1, user: userName})
-          .then(() => {markAsDone(le);addUndoButton(le,scanned);});
+          .then(assertOk)
+          .then(() => {markAsDone(le);addUndoButton(le,scanned);})
+          .catch(err => markLogFail(le, err));
         tagCache.set(scanned,{name:item.name,type:"singel",place:normPlace(item.place)});
         setLocalMeta(scanned,{lastMs:Date.now(),user:userName}); recomputeMaxLast(); renderLists(); cooldown(scanned); busy=false; return;
       }

@@ -1,11 +1,15 @@
-const CACHE = 'vitalisera-inv-v12';
-const PRECACHE = [
+const CACHE = 'vitalisera-inv-v13';
+// Egna assets — om någon av dessa failar är appen trasig, all-or-nothing är OK.
+const PRECACHE_OWN = [
   './',
   'style.css',
   'app.js',
   'manifest.json',
   'icon-192.png',
-  'icon-512.png',
+  'icon-512.png'
+];
+// Externa CDN-beroenden — om unpkg/fonts är nere ska inte hela installationen falla.
+const PRECACHE_EXTERNAL = [
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap',
   'https://unpkg.com/@zxing/library@0.20.0'
 ];
@@ -15,19 +19,26 @@ const NETWORK_FIRST = ['app.js', 'style.css', 'index.html'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE)
-      .then(c => c.addAll(PRECACHE))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE).then(c =>
+      c.addAll(PRECACHE_OWN).then(() =>
+        Promise.allSettled(PRECACHE_EXTERNAL.map(url =>
+          fetch(url, { mode: 'no-cors' })
+            .then(r => c.put(url, r))
+            .catch(err => console.warn('[sw] precache external failed:', url, err))
+        ))
+      )
+    ).then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', e => {
+  // Rensa gamla versioner men claimar INTE öppna tabs — gamla tabs får behålla sin gamla
+  // app.js-instans i minnet tills användaren reloadar, så att HTML/JS/CSS alltid matchar.
   e.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.map(k => k !== CACHE ? caches.delete(k) : null))
     )
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', e => {

@@ -39,6 +39,8 @@ function markLogFail(le, err) {
 /* ===== Utils ===== */
 const qs=(s,p=document)=>p.querySelector(s), qsa=(s,p=document)=>Array.from(p.querySelectorAll(s));
 const normTag=x=>{const s=String(x||"").trim();return s.startsWith("S")?s:s.replace(/[^\d]/g,"");};
+// Escape för säker interpolation i innerHTML — Sheet-data kan innehålla <, >, ", ', &.
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // Preferenser för ikoner i listan (togglas i Inställningar-dialogen).
 const prefs = {
@@ -170,7 +172,7 @@ function appendLog(msg, tag, icon = "⏳") {
   const e = document.createElement("button");
   e.type = "button";
   e.className = "logEntry clickable";
-  e.innerHTML = `<span class="icon">${icon}</span><span class="msg">${msg}</span>`;
+  e.innerHTML = `<span class="icon">${esc(icon)}</span><span class="msg">${esc(msg)}</span>`;
   e.onclick = () => openContainerForTag(tag);
   logList.prepend(e);
   while (logList.children.length > MAX_LOG) logList.removeChild(logList.lastChild);
@@ -242,27 +244,39 @@ function flushUpdates() {
   console.log("Skickar batch:", batch.map(b => b.args.tag));
 
   gasCall('batch', {batch})
-    .then(() => {
+    .then(res => {
       busy = false;
       overlay.classList.remove("blurred");
       overlay.style.pointerEvents = "";
 
-      console.log("Synk klar för:", batch.map(b => b.args.tag));
-
-      for (const u of batch) {
-        const { tag } = u.args;
-        const cur = tagCache.get(tag);
-        if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
+      // Backend returnerar {ok, results:[{tag, ok, msg}]}. Matcha per index eftersom
+      // tag kan förekomma flera gånger i samma batch (två metaMetadata-jobb på samma rad).
+      const results = Array.isArray(res?.results) ? res.results : [];
+      const failedTags = [];
+      for (let i = 0; i < batch.length; i++) {
+        const tag = batch[i].args.tag;
+        const r = results[i];
+        if (!r || r.ok === false) {
+          failedTags.push(tag);
+        } else {
+          const cur = tagCache.get(tag);
+          if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
+        }
       }
+
+      console.log("Synk klar:", batch.length - failedTags.length, "ok,", failedTags.length, "fail");
 
       renderLists();
 
       const msgLine = document.querySelector("#msgLine");
-      if (msgLine) {
-        msgLine.className = "msgLine ok";
-        msgLine.textContent = "☑️ Synkroniserad med Google Sheets";
+      if (failedTags.length > 0) {
+        const label = `⚠️ ${failedTags.length} ${failedTags.length === 1 ? 'rad' : 'rader'} kunde inte sparas`;
+        if (msgLine) { msgLine.className = "msgLine warn"; msgLine.textContent = label; }
+        show(label, "warn", { autoreset: false });
+      } else {
+        if (msgLine) { msgLine.className = "msgLine ok"; msgLine.textContent = "☑️ Synkroniserad med Google Sheets"; }
+        show("☑️ Synkroniserad med Google Sheets", "ok", { autoreset: false });
       }
-      show("☑️ Synkroniserad med Google Sheets", "ok", { autoreset: false });
 
       setTimeout(() => {
         if (msgLine) msgLine.textContent = "";
@@ -485,8 +499,14 @@ document.addEventListener('click', function(e) {
 });
 
 /* ===== Sök ===== */
+let _linkModeCleanup = null;
 function openSearchDialog(){searchInput.value="";searchResults.innerHTML="";overlay.classList.add("blurred");searchDialog.classList.remove("hidden");searchInput.focus();}
-function closeSearchDialog(){searchDialog.classList.add("hidden");overlay.classList.remove("blurred");}
+function closeSearchDialog(){
+  if (_linkModeCleanup) { try { _linkModeCleanup(); } catch(e){} _linkModeCleanup = null; }
+  searchDialog.classList.add("hidden");
+  overlay.classList.remove("blurred");
+  busy = false;
+}
 searchFab?.addEventListener('click', openSearchDialog);
 closesearchFab?.addEventListener('click', closeSearchDialog);
 searchInput?.addEventListener('input', e => renderSearchResults(e.target.value));
@@ -506,7 +526,7 @@ function renderSearchResults(q){
     if(name.toLocaleLowerCase('sv').includes(qn)){
       const btn=document.createElement('button');
       btn.type="button"; btn.className="statusRow";
-      btn.innerHTML=`<span class="sr-name">${name}</span><span class="sr-date">${(metaCache.get(tag)?.lastStr)||""}</span>`;
+      btn.innerHTML=`<span class="sr-name">${esc(name)}</span><span class="sr-date">${esc(metaCache.get(tag)?.lastStr||"")}</span>`;
       const _tag = tag;
       addSafeTap(btn,
         () => { closeSearchDialog(); openContainerForTag(_tag); },
@@ -681,10 +701,10 @@ function renderLists() {
     row.dataset.tag = t;
 
     row.innerHTML = `
-      <span class="sr-name">${name}${renderRowIcons(t, item, hasComment)}</span>
-      <span class="sr-min">${item.minQty ?? ""}</span>
-      <span class="sr-lastcount">${meta.qty ?? ""}</span>
-      <span class="sr-date">${meta.lastStr || ""}</span>`;
+      <span class="sr-name">${esc(name)}${renderRowIcons(t, item, hasComment)}</span>
+      <span class="sr-min">${esc(item.minQty ?? "")}</span>
+      <span class="sr-lastcount">${esc(meta.qty ?? "")}</span>
+      <span class="sr-date">${esc(meta.lastStr || "")}</span>`;
 
     addSafeTap(row, (e) => { if (!e.target.closest('.infoIcon')) openContainerForTag(t); });
 
@@ -859,11 +879,11 @@ function prepareSingleDialog(item, tag) {
   const oldDate = toYMD(meta.lastMs);
   dlgInfo.innerHTML = `
     <div class="metaTop">
-      <span class="metaQty">${meta.qty ?? 0} ${meta.unit ?? ""}</span>
-      ${meta.user ? `<span class="metaBy"> • ${meta.user}</span>` : ""}
-      ${oldDate ? `<span class="metaBy"> • ${oldDate}</span>` : ""}
+      <span class="metaQty">${esc(meta.qty ?? 0)} ${esc(meta.unit ?? "")}</span>
+      ${meta.user ? `<span class="metaBy"> • ${esc(meta.user)}</span>` : ""}
+      ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
     </div>
-    <div class="metaDate">Nytt datum: <input type="date" id="singleDateEdit" value="${todayYMD}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
+    <div class="metaDate">Nytt datum: <input type="date" id="singleDateEdit" value="${esc(todayYMD)}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
   `;
 
   dlgBtns.innerHTML = `
@@ -972,11 +992,11 @@ function prepareContainerDialog(item, tag, opts = {}) {
   const oldDate = toYMD(dialogItem.lastMs);
   dlgInfo.innerHTML = `
     <div class="metaTop">
-      <span class="metaQty">${dialogItem.qty} ${dialogItem.unit}</span>
-      ${dialogItem.user ? `<span class="metaBy"> • ${dialogItem.user}</span>` : ""}
-      ${oldDate ? `<span class="metaBy"> • ${oldDate}</span>` : ""}
+      <span class="metaQty">${esc(dialogItem.qty)} ${esc(dialogItem.unit)}</span>
+      ${dialogItem.user ? `<span class="metaBy"> • ${esc(dialogItem.user)}</span>` : ""}
+      ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
     </div>
-    <div class="metaDate">Nytt datum: <input type="date" id="containerDateEdit" value="${isoDate}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
+    <div class="metaDate">Nytt datum: <input type="date" id="containerDateEdit" value="${esc(isoDate)}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
     <p class="metaText">Lägg till eller ange ny total:</p>
   `;
 
@@ -1018,10 +1038,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
   extra.className = "extraFields";
   extra.innerHTML = `
     <label>Kommentar</label>
-    <textarea id="commentEdit" rows="2">${dialogItem.comment || ""}</textarea>
+    <textarea id="commentEdit" rows="2">${esc(dialogItem.comment || "")}</textarea>
 
     <label>Enhet</label>
-    <input id="unitEdit" type="text" value="${dialogItem.unit}">
+    <input id="unitEdit" type="text" value="${esc(dialogItem.unit)}">
 
     <label>Typ</label>
     <select id="typeEdit">
@@ -1030,11 +1050,11 @@ function prepareContainerDialog(item, tag, opts = {}) {
     </select>
 
     <label>Antal som ska finnas under kurs</label>
-    <input id="minQtyEdit" type="number" inputmode="decimal" value="${dialogItem.minQty}">
+    <input id="minQtyEdit" type="number" inputmode="decimal" value="${esc(dialogItem.minQty)}">
 
     <label>Tag</label>
     <div style="display:flex;gap:8px;align-items:center">
-      <input id="tagDisplay" type="text" value="${tag.startsWith('S') ? '(ingen tag)' : tag}" readonly style="flex:1;opacity:0.7">
+      <input id="tagDisplay" type="text" value="${esc(tag.startsWith('S') ? '(ingen tag)' : tag)}" readonly style="flex:1;opacity:0.7">
       <button id="scanTagBtn" class="btn" type="button">Skanna tag</button>
     </div>
 
@@ -1306,7 +1326,7 @@ function cancelTagScan() {
 function showLinkTagDialog(scannedTag) {
   resetDialog();
   dlgTitle.textContent = "Okänd tag";
-  dlgInfo.innerHTML = `Tag <b>${scannedTag}</b> hittades inte.`;
+  dlgInfo.innerHTML = `Tag <b>${esc(scannedTag)}</b> hittades inte.`;
   dlgBtns.innerHTML = `
     <button id="createNewFromScan" class="btn">Skapa ny artikel</button>
     <button id="linkExistingBtn" class="btn">Koppla till befintlig</button>
@@ -1333,6 +1353,13 @@ function openLinkSearchDialog(tagToLink) {
   h2.textContent = "Välj artikel att koppla tag till";
 
   const origHandler = searchInput.oninput;
+  const origFabClick = closesearchFab.onclick;
+  // Central cleanup — körs av closeSearchDialog oavsett om man avbryter eller slutför.
+  _linkModeCleanup = () => {
+    h2.textContent = origTitle;
+    searchInput.oninput = origHandler;
+    closesearchFab.onclick = origFabClick;
+  };
   searchInput.oninput = (e) => {
     const qn = (e.target.value || "").toLocaleLowerCase('sv').trim();
     searchResults.innerHTML = "";
@@ -1345,11 +1372,9 @@ function openLinkSearchDialog(tagToLink) {
       const btn = document.createElement('button');
       btn.type = "button"; btn.className = "statusRow";
       const hasTag = !tag.startsWith("S");
-      btn.innerHTML = `<span class="sr-name">${name}</span><span class="sr-date">${hasTag ? "har tag" : "ingen tag"}</span>`;
+      btn.innerHTML = `<span class="sr-name">${esc(name)}</span><span class="sr-date">${hasTag ? "har tag" : "ingen tag"}</span>`;
       btn.onclick = () => {
         closeSearchDialog();
-        h2.textContent = origTitle;
-        searchInput.oninput = origHandler;
         show("Kopplar tag…");
         gasCall('addTag', {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink})
           .then(res => {
@@ -1383,13 +1408,9 @@ function openLinkSearchDialog(tagToLink) {
     }
   };
 
-  closesearchFab.onclick = () => {
-    closeSearchDialog();
-    h2.textContent = origTitle;
-    searchInput.oninput = origHandler;
-    closesearchFab.onclick = () => { closeSearchDialog(); };
-    cooldown(tagToLink);
-  };
+  // FAB har default addEventListener → closeSearchDialog (rad 511).
+  // onclick-override körs först och lägger till cooldown. Återställs centralt i _linkModeCleanup.
+  closesearchFab.onclick = () => { cooldown(tagToLink); };
 }
 
 function populatePlaceDropdown(){
@@ -1405,7 +1426,7 @@ function prepareNewItemDialog(scanned){
   const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ (singel/behållare), enhet och plats.<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, batterier).<br>Tryck "Skanna tag" för att koppla en QR-kod.';}
 
   const isManual=String(scanned).startsWith('M');
-  dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${scanned}</b>. Ange uppgifter:`;
+  dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${esc(scanned)}</b>. Ange uppgifter:`;
   newItemFields.classList.remove("hidden");
   populatePlaceDropdown();
 

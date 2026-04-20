@@ -539,13 +539,21 @@ function renderSearchResults(q){
 }
 
 /* ===== Preload helpers ===== */
+const PRELOAD_CACHE_KEY = 'vitaliseraPreloadCache_v1';
 function preloadData() {
   gasCall('preload').then(initData);
 }
-function initData(records) {
+function initData(records, { fromCache = false } = {}) {
   if (!Array.isArray(records)) {
     console.warn("initData: ogiltigt svar, behåller befintlig cache", records);
     return;
+  }
+
+  // Snapshot pending edits innan rebuild — server-datan kan vara före lokala ändringar
+  // som ännu inte batch-flushats, så vi får inte tappa pendingSync + lokala värden.
+  const pendingSnapshot = [];
+  for (const [t, item] of tagCache.entries()) {
+    if (item?.pendingSync) pendingSnapshot.push({ t, item, meta: metaCache.get(t) });
   }
 
   tagCache.clear();
@@ -581,9 +589,26 @@ function initData(records) {
     });
   });
 
+  // Re-applyera pending edits ovanpå server-data
+  for (const { t, item, meta } of pendingSnapshot) {
+    const server = tagCache.get(t);
+    tagCache.set(t, server ? { ...server, ...item } : item);
+    if (meta) metaCache.set(t, meta);
+  }
+
   recomputeMaxLast();
   renderLists();
   statusDefault();
+
+  // Både cache- och server-hydrering släpper skanning. Edits mot stale cache
+  // är säkra: logTag/updateCount resolvar tag-sökning igen på servern vid anrop.
+  preloadDone = true;
+
+  // Persistera bara fräsch server-data (inte en rescue-render från disk)
+  if (!fromCache) {
+    try { localStorage.setItem(PRELOAD_CACHE_KEY, JSON.stringify({ data: records, ts: Date.now() })); }
+    catch (e) { console.warn('preloadCache write failed', e); }
+  }
 }
 
 /* ===== Öppna container eller artikel ===== */
@@ -1571,59 +1596,34 @@ async function startCamera(){
 /* ===== Preload ===== */
 window._lastCacheTs = 0;
 loadPlaceFilter();
-show("Laddar inventeringslistor...", null, { autoreset: false });
+
+// Stale-while-revalidate: rendera från localStorage direkt om möjligt,
+// hämta sen färsk server-data i bakgrunden.
+let hadCachedPreload = false;
+try {
+  const raw = localStorage.getItem(PRELOAD_CACHE_KEY);
+  if (raw) {
+    const cached = JSON.parse(raw);
+    if (Array.isArray(cached?.data)) {
+      initData(cached.data, { fromCache: true });
+      hadCachedPreload = true;
+      show("Uppdaterar i bakgrunden…", null, { autoreset: false });
+    }
+  }
+} catch (e) { console.warn('preloadCache read failed', e); }
+
+if (!hadCachedPreload) show("Laddar inventeringslistor...", null, { autoreset: false });
 
 gasCall('preload').then(res => {
   if (res?.error) {
     show("Fel: " + res.error, "warn", { autoreset: false });
     return;
   }
-  if (!Array.isArray(res)) {
-    console.warn("preloadTagsWithMeta: ogiltigt svar", res);
-    statusDefault();
-    return;
-  }
-
-  tagCache.clear();
-  metaCache.clear();
-  placeSet.clear();
-
-  res.forEach(rec => {
-    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags] = rec;
-    if (!name) return;
-    const nt = normTag(t);
-    const plc = normPlace(place);
-    const isSynthetic = nt.startsWith("S");
-
-    tagCache.set(nt, {
-      name,
-      type,
-      place: plc,
-      minQty: Number(minQty) || 0,
-      step: (step || "").trim(),
-      comment: (comment || "").trim(),
-      rowNum: rowNum || null,
-      sheetName: plc,
-      altTags: Array.isArray(altTags) ? altTags : []
-    });
-
-    placeSet.add(plc);
-    metaCache.set(nt, {
-      qty: Number(qty) || 0,
-      unit,
-      user,
-      lastMs: toDayMs(last),
-      lastStr: fmtDate(last)
-    });
-  });
-
-  recomputeMaxLast();
-  preloadDone = true;
-  renderLists();
-  statusDefault();
+  initData(res);
 }).catch(err => {
   console.error("Preload failed:", err);
-  show("Kunde inte ladda data. Kontrollera anslutningen.", "warn", { autoreset: false });
+  if (hadCachedPreload) show("Offline — visar senast sparade data", "warn");
+  else show("Kunde inte ladda data. Kontrollera anslutningen.", "warn", { autoreset: false });
 });
 
 // Tyst polling av servercache

@@ -144,6 +144,19 @@ header h1 {
 }
 .list { display: flex; flex-direction: column; gap: 6px; }
 
+/* Kategori-underrubrik (markant: fet, egen bakgrund, ram-bottom) */
+.categoryHeader {
+  font-size: 0.95rem; font-weight: 700;
+  color: var(--primary);
+  background: var(--white);
+  padding: 10px 12px 6px;
+  margin-top: 4px;
+  border-bottom: 2px solid var(--primary);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.categoryHeader:first-child { margin-top: 0; }
+
 /* Rubrikrad (sticky) */
 .headerRow {
   display: flex; align-items: center;

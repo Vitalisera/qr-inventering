@@ -117,6 +117,7 @@ let visibleTags = [];
 let currentDialogTag = null;
 let extraFieldsExpanded = false;
 let invertGroups = localStorage.getItem('vitaliseraInvertGroups') === '1';
+let groupByCategory = localStorage.getItem('vitaliseraGroupByCategory') === '1';
 
 /* ===== Status ===== */
 function statusDefault(){
@@ -344,6 +345,19 @@ function openFilterDialog() {
   row0.addEventListener('click', e => { if (e.target !== chk0) chk0.checked = !chk0.checked; });
   placeList.appendChild(row0);
 
+  const rowCat = document.createElement('div');
+  rowCat.className = 'placeRow';
+  const chkCat = document.createElement('input');
+  chkCat.type = 'checkbox';
+  chkCat.dataset.groupbycat = '1';
+  chkCat.checked = !!groupByCategory;
+  const txtCat = document.createElement('div');
+  txtCat.className = 'placeTxt';
+  txtCat.textContent = 'Gruppera efter kategori';
+  rowCat.append(chkCat, txtCat);
+  rowCat.addEventListener('click', e => { if (e.target !== chkCat) chkCat.checked = !chkCat.checked; });
+  placeList.appendChild(rowCat);
+
   const title1 = document.createElement('div');
   title1.style.marginTop = '12px';
   title1.style.fontWeight = '600';
@@ -417,6 +431,10 @@ clearFilterBtn?.addEventListener('click', () => {
 applyFilterBtn?.addEventListener('click', () => {
   const onlyLowBox = placeList.querySelector('input[data-onlylow="1"]');
   onlyLow = !!onlyLowBox?.checked;
+
+  const groupByCatBox = placeList.querySelector('input[data-groupbycat="1"]');
+  groupByCategory = !!groupByCatBox?.checked;
+  localStorage.setItem('vitaliseraGroupByCategory', groupByCategory ? '1' : '0');
 
   const boxes = placeList.querySelectorAll('input[type="checkbox"][data-place]');
   const selPlaces = new Set();
@@ -539,7 +557,7 @@ function renderSearchResults(q){
 }
 
 /* ===== Preload helpers ===== */
-const PRELOAD_CACHE_KEY = 'vitaliseraPreloadCache_v1';
+const PRELOAD_CACHE_KEY = 'vitaliseraPreloadCache_v2';
 function preloadData() {
   gasCall('preload').then(initData);
 }
@@ -561,7 +579,7 @@ function initData(records, { fromCache = false } = {}) {
   placeSet.clear();
 
   records.forEach(rec => {
-    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags] = rec;
+    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags, category] = rec;
     if (!name) return;
     const nt = normTag(t);
     const plc = normPlace(place);
@@ -571,6 +589,7 @@ function initData(records, { fromCache = false } = {}) {
       name,
       type,
       place: plc,
+      category: (category || "").trim(),
       minQty: Number(minQty) || 0,
       step: (step || "").trim(),
       comment: (comment || "").trim(),
@@ -681,9 +700,6 @@ function addSafeTap(el, onTap, onLong) {
 
 /* ===== Rendera listor ===== */
 function renderLists() {
-  const fragInv = document.createDocumentFragment();
-  const fragEj  = document.createDocumentFragment();
-
   const makeHeader = () => {
     const h = document.createElement("div");
     h.className = "statusRow headerRow";
@@ -701,6 +717,8 @@ function renderLists() {
   );
 
   const _visible = [];
+  const invItems = [];
+  const ejItems  = [];
   for (const t of allTags) {
     const item = tagCache.get(t) || {};
     const meta = metaCache.get(t) || {};
@@ -743,15 +761,44 @@ function renderLists() {
       meta.lastMs >= windowStart &&
       meta.lastMs <= windowEnd;
 
-    (isInv ? fragInv : fragEj).appendChild(row);
+    (isInv ? invItems : ejItems).push({ row, category: (item.category || "").trim() });
   }
+
+  const makeCatHeader = (label) => {
+    const h = document.createElement("div");
+    h.className = "categoryHeader";
+    h.textContent = label;
+    return h;
+  };
+  const appendByCategory = (target, items) => {
+    if (!groupByCategory) {
+      for (const { row } of items) target.appendChild(row);
+      return;
+    }
+    const buckets = new Map();
+    const noCat = [];
+    for (const entry of items) {
+      if (!entry.category) { noCat.push(entry.row); continue; }
+      if (!buckets.has(entry.category)) buckets.set(entry.category, []);
+      buckets.get(entry.category).push(entry.row);
+    }
+    const cats = [...buckets.keys()].sort((a, b) => a.localeCompare(b, 'sv'));
+    for (const c of cats) {
+      target.appendChild(makeCatHeader(c));
+      for (const row of buckets.get(c)) target.appendChild(row);
+    }
+    if (noCat.length) {
+      target.appendChild(makeCatHeader("(Ingen kategori)"));
+      for (const row of noCat) target.appendChild(row);
+    }
+  };
 
   listInv.innerHTML = "";
   listEj.innerHTML = "";
   listInv.appendChild(makeHeader());
   listEj.appendChild(makeHeader());
-  listInv.appendChild(fragInv);
-  listEj.appendChild(fragEj);
+  appendByCategory(listInv, invItems);
+  appendByCategory(listEj, ejItems);
   visibleTags = _visible;
 
   const headerInv = listInv.closest(".group")?.querySelector(".groupTitle");

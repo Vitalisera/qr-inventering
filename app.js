@@ -1504,10 +1504,10 @@ async function startCamera(){
       prepareContainerDialog(localItem,primaryTag); busy=false; return;
     }
     await flashFeedback("Läser av…");
-    if(preloadDone){showLinkTagDialog(scanned);return;}
+    if(preloadDone){busy=false;showLinkTagDialog(scanned);return;}
     show("Hämtar uppgifter…",null,{autoreset:false});
     gasCall('lookup', {tag: scanned}).then(item => {
-      if(!item){showLinkTagDialog(scanned);busy=false;return;}
+      if(!item){busy=false;showLinkTagDialog(scanned);return;}
       const type=(item.type||"singel").toLowerCase();
       if(type==="singel"){
         const le=appendLog(`${item.name} – uppdateras`,scanned); show("Uppdaterar…");

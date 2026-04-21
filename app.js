@@ -1124,7 +1124,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     });
   }
 
-  // Unika kategorier för samma flik (för datalist-förslag).
+  // Unika kategorier för samma flik (för kategorival i select).
   const sheetForItem = item.sheetName || item.place || "";
   const categorySet = new Set();
   for (const v of tagCache.values()) {
@@ -1134,8 +1134,13 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (sheetForItem && vSheet !== sheetForItem) continue;
     categorySet.add(c);
   }
-  const categoryOptions = [...categorySet].sort((a,b) => a.localeCompare(b, 'sv'))
-    .map(c => `<option value="${esc(c)}">`).join('');
+  const currentCat = (dialogItem.category || "").trim();
+  const catList = [...categorySet].sort((a,b) => a.localeCompare(b, 'sv'));
+  // Se till att nuvarande värde alltid finns med i listan även om det inte finns på andra rader på fliken
+  if (currentCat && !catList.includes(currentCat)) catList.unshift(currentCat);
+  const categoryOptions = catList.map(c =>
+    `<option value="${esc(c)}"${c === currentCat ? " selected" : ""}>${esc(c)}</option>`
+  ).join('');
 
   const extra = document.createElement("div");
   extra.className = "extraFields";
@@ -1144,8 +1149,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
     <textarea id="commentEdit" rows="2">${esc(dialogItem.comment || "")}</textarea>
 
     <label>Kategori</label>
-    <input id="categoryEdit" type="text" list="categoryOptions" value="${esc(dialogItem.category || "")}">
-    <datalist id="categoryOptions">${categoryOptions}</datalist>
+    <select id="categoryEdit">
+      <option value=""${!currentCat ? " selected" : ""}>(ingen)</option>
+      ${categoryOptions}
+      <option value="__new__">+ Ny kategori…</option>
+    </select>
+    <input id="categoryNew" type="text" placeholder="Ange ny kategori" style="display:none;margin-top:4px">
 
     <label>Enhet</label>
     <input id="unitEdit" type="text" value="${esc(dialogItem.unit)}">
@@ -1178,6 +1187,17 @@ function prepareContainerDialog(item, tag, opts = {}) {
     toggleMore.textContent = vis ? "Fler fält" : "Färre fält";
     extraFieldsExpanded = !vis;
   };
+
+  // Kategori: visa ny-textinput när "+ Ny kategori…" valts
+  const catSel = extra.querySelector("#categoryEdit");
+  const catNew = extra.querySelector("#categoryNew");
+  if (catSel && catNew) {
+    catSel.addEventListener("change", () => {
+      const isNew = catSel.value === "__new__";
+      catNew.style.display = isNew ? "block" : "none";
+      if (isNew) { catNew.value = ""; catNew.focus(); }
+    });
+  }
 
   // Skanna tag-knapp
   const scanTagBtn = extra.querySelector("#scanTagBtn");
@@ -1299,7 +1319,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const comment = commentEl.value.trim();
     const unit = unitEl.value.trim();
     const typeVal = (qs("#typeEdit")?.value || "singel").toLowerCase();
-    const category = (qs("#categoryEdit")?.value || "").trim();
+    const catRaw = (qs("#categoryEdit")?.value || "").trim();
+    const category = catRaw === "__new__"
+      ? (qs("#categoryNew")?.value || "").trim()
+      : catRaw;
 
     setBtnBusy(saveBtn, true);
 

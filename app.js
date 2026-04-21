@@ -1579,16 +1579,22 @@ function prepareNewItemDialog(scanned){
     const place=(qs('#manualPlace')?.value||"").trim()||"Okänd";
     const le=appendLog(`${name} – tillagd (${qty})`,currentTag);
     show("Sparar…");
+    // Optimistisk write FÖRE gasCall. pendingSync:true gör att initData preserverar posten
+    // om preload-pollen råkar träffa innan logTag-svaret hunnit fram.
+    tagCache.set(currentTag,{name,type,place,sheetName:place,category:'',minQty:0,comment:'',step:'',rowNum:null,altTags:[],pendingSync:true});
+    setLocalMeta(currentTag,{qty,unit,lastMs:Date.now(),user:userName});
+    recomputeMaxLast();renderLists();
     gasCall('logTag', {tag: currentTag, name, type, qty, user: userName, sheetName: place||null})
       .then(assertOk)
-      .then(() => {
+      .then((res) => {
         markAsDone(le);
+        const cur=tagCache.get(currentTag);
+        if(cur) tagCache.set(currentTag,{...cur,rowNum:res?.row||cur.rowNum,pendingSync:false});
+        renderLists();
         if(unit) gasCall('updateMeta', {tag: currentTag, args: {unit, userName}});
       })
       .catch(err => markLogFail(le, err));
-    tagCache.set(currentTag,{name,type,place});
-    setLocalMeta(currentTag,{qty,unit,lastMs:Date.now(),user:userName});
-    recomputeMaxLast();renderLists();closeDialog();cooldown(currentTag);
+    closeDialog();cooldown(currentTag);
   };
   qs("#cancelNewBtn").onclick=()=>{closeDialog();show("Avbrutet","warn");cooldown(currentTag);};
   openDialog(manualName);

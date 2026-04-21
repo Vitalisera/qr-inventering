@@ -331,7 +331,29 @@ body:has(.dialog:not(.hidden))::after {
 .extraFields .tagRow input { flex: 1; cursor: pointer; }
 .extraFields .tagRow .btn { flex-shrink: 0; }
 .extraFields #saveMetaBtn { display: block; width: 100%; margin-top: 14px; }
-.metaDate input[type="date"] { text-align: center; }
+/* iOS Safari ignorerar .dialog input-styling för input[type=date] och renderar
+   fältet bredare och högre än mängd-inputen. Tvinga explicit sizing här. */
+.metaDate input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 90%;
+  max-width: 360px;
+  box-sizing: border-box;
+  margin: 6px auto;
+  padding: 0 12px;
+  height: 44px;
+  line-height: 44px;
+  font-size: 1.1rem;
+  font-family: inherit;
+  text-align: center;
+}
+.metaDate input[type="date"]::-webkit-date-and-time-value {
+  text-align: center;
+  font-size: 1.1rem;
+  line-height: 44px;
+  margin: 0;
+}
 .btn.smallBtn {
   font-size: 0.9em; padding: 10px 16px;
   margin: 12px auto 0; display: block;

@@ -963,7 +963,7 @@ function prepareSingleDialog(item, tag) {
 
   dlgTitle.textContent = item.name || "Okänd artikel";
   dlgTitle.contentEditable = "false";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Tryck <b>"Registrera inventering"</b> för att bekräfta.<br>"Fler fält" öppnar redigering av kommentar, enhet, typ och min-mängd.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Registrera inventering</b> bekräftar dagens inventering med ditt namn och datum.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera artikeln.<br>"Fler fält" öppnar kommentar, kategori, enhet, typ, min-mängd och tag.';}
 
   const todayYMD = toYMD(Date.now());
   const oldDate = toYMD(meta.lastMs);
@@ -1029,7 +1029,7 @@ function prepareSingleDialog(item, tag) {
 
 function prepareContainerDialog(item, tag, opts = {}) {
   resetDialog();
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Öka mängd</b> = lägg till det du skriver i fältet.<br><b>Ny total</b> = ersätt med det du skriver.<br>Tryck på artikelnamnet för att redigera det.<br>"Fler fält" visar kommentar, enhet, typ och min-mängd.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Öka mängd</b> = lägg till det du skriver i fältet.<br><b>Ny total</b> = ersätt totalen med det du skriver.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"Fler fält" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
 
   const editMode = opts.editMode === true;
   const meta = metaCache.get(tag) || {};
@@ -1659,7 +1659,7 @@ function populateNewCategoryDropdown(forPlace){
 function prepareNewItemDialog(scanned){
   let currentTag=scanned;
   lastCode=scanned; resetDialog(); dlgTitle.textContent="Ny artikel";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ (singel/behållare), enhet och plats.<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, batterier).<br>Tryck "Skanna tag" för att koppla en QR-kod.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, plats och kategori. <b>Enhet är obligatorisk.</b><br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Saknas enhet eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
 
   const isManual=String(scanned).startsWith('M');
   dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${esc(scanned)}</b>. Ange uppgifter:`;

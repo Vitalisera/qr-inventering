@@ -25,8 +25,9 @@
     <button id="addBtn" aria-label="Ny artikel">+</button>
   </header>
   <div class="help-box" id="help-header">
-    Inventeringsapp för Vitalisera. Skanna QR-koder med kameran eller välj artiklar i listan för att registrera inventering.
-    Tryck <b>+</b> för att skapa en ny artikel manuellt.
+    Inventeringsapp för Vitalisera.<br>
+    <b>Skanna QR</b> läser QR/streckkod med kameran. <b>Sök</b> hittar artiklar med fritext. <b>⚙️</b> filtrerar platser och väljer ikoner.<br>
+    Tryck <b>+</b> för att skapa en ny artikel manuellt, eller tryck på en rad i listan nedan.
   </div>
 
   <!-- KAMERA -->
@@ -51,8 +52,9 @@
       <div class="help-box" id="help-lists">
         <b>Inventerat</b> = artiklar uppdaterade senaste 5 dagarna.<br>
         <b>Ej inventerat</b> = övriga artiklar.<br>
-        Tryck på en rad för att öppna artikeln.<br>
-        Tryck på rubrikerna för att byta ordning.
+        <b>Röd bakgrund</b> = mängden understiger "ska finnas under kurs".<br>
+        <b>Gul markering</b> = ändring väntar på synk mot Sheetet.<br>
+        Tryck på en rad för att öppna artikeln. Tryck på rubrikerna för att byta ordning.
       </div>
       <div id="listInventerat" class="list"></div>
     </div>
@@ -80,10 +82,11 @@
     <h2 id="dialogTitle" contenteditable="true"></h2>
     <span class="help-toggle dark" data-help="article">?</span>
     <div class="help-box" id="help-article">
-      <b>Behållare:</b> välj "Öka mängd" eller ange "Ny total".<br>
-      <b>Singel:</b> tryck "Registrera inventering" för att bekräfta.<br>
-      Tryck på artikelnamnet för att redigera det.<br>
-      "Fler fält" visar kommentar, enhet, typ och min-mängd.
+      <b>Behållare:</b> "Öka mängd" lägger till det du skriver, "Ny total" ersätter totalen.<br>
+      <b>Singel:</b> "Registrera inventering" bekräftar dagens inventering.<br>
+      <b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>
+      Tryck på artikelnamnet för att byta namn.<br>
+      "Fler fält" visar kommentar, kategori, enhet, typ, min-mängd och tag.
     </div>
     <p id="dialogInfo"></p>
     <div id="newItemFields" class="hidden">
@@ -107,7 +110,11 @@
 <div id="filterDialog" class="dialog hidden">
   <h2>Inställningar <span class="help-toggle dark" data-help="filter">?</span></h2>
   <div class="help-box" id="help-filter">
-    Välj vilka platser som ska visas i listorna och vilka ikoner som ska visas efter artikelnamnet. Kryssa i "Visa endast artiklar med för lågt saldo" för att bara se artiklar som behöver fyllas på. Tryck "Använd" för att spara.
+    <b>Visa endast ... lågt saldo</b> döljer artiklar där mängden räcker.<br>
+    <b>Gruppera efter kategori</b> delar upp listan i kategori-block.<br>
+    <b>Visa från</b> styr vilka platser som ska synas; siffran (inv/total) visar hur långt du kommit per plats.<br>
+    <b>Visa ikoner</b> väljer vilka symboler som ritas efter artikelnamnet: 🏷️ tag, • singel, ℹ️ kommentar.<br>
+    Tryck "Använd" för att spara, "Välj alla" för att nollställa platsvalet.
   </div>
   <div id="placeList" class="checklist"></div>
   <div class="actions">

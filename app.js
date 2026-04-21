@@ -225,9 +225,14 @@ function addUndoButton(logEntry, tag) {
 /* ===== Bundlad uppdateringskö ===== */
 const updateQueue = [];
 let updateTimer = null;
+let flushInFlight = null;
 function queueUpdate(fnName, args) {
   updateQueue.push({ fnName, args });
   if (!updateTimer) updateTimer = setTimeout(flushUpdates, 1000);
+}
+async function waitForPendingSync() {
+  if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; flushUpdates(); }
+  if (flushInFlight) { try { await flushInFlight; } catch (_) {} }
 }
 function flushUpdates() {
   if (updateQueue.length === 0) return;
@@ -244,7 +249,7 @@ function flushUpdates() {
 
   console.log("Skickar batch:", batch.map(b => b.args.tag));
 
-  gasCall('batch', {batch})
+  flushInFlight = gasCall('batch', {batch})
     .then(res => {
       busy = false;
       overlay.classList.remove("blurred");
@@ -304,7 +309,8 @@ function flushUpdates() {
         msgLine.textContent = "❌ Fel vid synkning – försök igen.";
       }
       show("Fel vid synkning", "warn", { autoreset: false });
-    });
+    })
+    .finally(() => { flushInFlight = null; });
 }
 
 /* ===== Meta ===== */
@@ -1225,6 +1231,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
     </div>
 
     <button id="saveMetaBtn" class="btn">Spara fält</button>
+
+    <div class="deleteRow">
+      <button id="deleteItemBtn" class="btn delete" type="button">Radera artikel</button>
+    </div>
   `;
   dlg.querySelectorAll(".extraFields").forEach(e => e.remove());
   dlg.appendChild(extra);
@@ -1421,6 +1431,77 @@ function prepareContainerDialog(item, tag, opts = {}) {
   };
 
   cancelBtn.onclick = () => { closeDialog(); show("Avbrutet", "warn"); };
+
+  // Radera artikel
+  const deleteBtn = extra.querySelector("#deleteItemBtn");
+  if (deleteBtn) {
+    // Nya artiklar (pendingSync) saknar bekräftad rowNum — radering skulle misslyckas.
+    const cached = tagCache.get(tag);
+    const canDelete = !!_rn && !cached?.pendingSync;
+    if (!canDelete) {
+      deleteBtn.disabled = true;
+      deleteBtn.title = "Vänta tills artikeln synkats";
+    }
+    let confirmArmed = false;
+    let armTimer = null;
+    deleteBtn.onclick = async () => {
+      if (!confirmArmed) {
+        confirmArmed = true;
+        const prev = deleteBtn.textContent;
+        deleteBtn.textContent = "Tryck igen för att bekräfta";
+        deleteBtn.classList.add("confirm");
+        armTimer = setTimeout(() => {
+          confirmArmed = false;
+          deleteBtn.textContent = prev;
+          deleteBtn.classList.remove("confirm");
+        }, 4000);
+        return;
+      }
+      clearTimeout(armTimer);
+      // Frys hela dialogen under radering — annars kan Spara-klick lägga till updateMeta
+      // i kön EFTER att raden raderats, och raderar i princip vad som nu ligger på samma row.
+      const frozen = dlg.querySelectorAll("button, input, textarea, select");
+      frozen.forEach(el => { el.dataset._wasDisabled = el.disabled ? "1" : "0"; el.disabled = true; });
+      setBtnBusy(deleteBtn, true);
+      setMsg("Raderar…", "");
+      const tagAtClick = tag;
+      const thawDialog = () => {
+        frozen.forEach(el => { el.disabled = el.dataset._wasDisabled === "1"; delete el.dataset._wasDisabled; });
+      };
+      try {
+        // deleteRow shiftar rader — flush:a köade batch-jobb först annars skrivs
+        // uppdateringar till fel rad.
+        if (updateQueue.length > 0 || flushInFlight) {
+          setMsg("Synkar pending ändringar…", "");
+          await waitForPendingSync();
+        }
+        const res = await gasCall('deleteItem', { tag, sheetName: _sn, rowNum: _rn });
+        if (!res || res.ok === false) {
+          setMsg(res?.msg || "Kunde inte radera", "warn");
+          setBtnBusy(deleteBtn, false);
+          thawDialog();
+          confirmArmed = false;
+          deleteBtn.textContent = "Radera artikel";
+          deleteBtn.classList.remove("confirm");
+          return;
+        }
+        tagCache.delete(tag);
+        metaCache.delete(tag);
+        recomputeMaxLast();
+        renderLists();
+        // Stäng bara dialogen om samma artikel fortfarande är öppen.
+        if (currentDialogTag === tagAtClick) closeDialog();
+        show(`"${item.name || tag}" raderad`, "ok");
+      } catch (err) {
+        setMsg("Fel: " + (err?.message || err), "warn");
+        setBtnBusy(deleteBtn, false);
+        thawDialog();
+        confirmArmed = false;
+        deleteBtn.textContent = "Radera artikel";
+        deleteBtn.classList.remove("confirm");
+      }
+    };
+  }
 
   openDialog(dlgInput);
 }

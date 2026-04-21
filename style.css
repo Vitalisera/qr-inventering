@@ -342,6 +342,21 @@ body:has(.dialog:not(.hidden))::after {
 .extraFields .tagRow input { flex: 1; cursor: pointer; }
 .extraFields .tagRow .btn { flex-shrink: 0; }
 .extraFields #saveMetaBtn { display: block; width: 100%; margin-top: 14px; }
+.extraFields .deleteRow { display: flex; justify-content: center; margin-top: 28px; }
+.dialog .btn.delete {
+  background: #c0392b; color: #fff;
+  font-size: 0.8rem; padding: 6px 14px; min-height: 0;
+  opacity: 0.85;
+}
+.dialog .btn.delete:hover { opacity: 1; }
+.dialog .btn.delete.confirm {
+  background: #a12a1e; opacity: 1;
+  animation: deletePulse 1s ease-in-out infinite;
+}
+@keyframes deletePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192, 57, 43, 0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(192, 57, 43, 0); }
+}
 /* iOS Safari ignorerar .dialog input-styling för input[type=date] och renderar
    fältet bredare och högre än mängd-inputen. Tvinga explicit sizing här. */
 .metaDate input[type="date"] {

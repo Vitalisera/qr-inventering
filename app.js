@@ -497,6 +497,16 @@ applyFilterBtn?.addEventListener('click', () => {
 });
 cancelFilterBtn?.addEventListener('click', () => closeFilterDialog());
 
+// Stäng iOS text-selection innan knappklick så selection-handles inte stjäl tryck.
+document.addEventListener('pointerdown', e => {
+  if (e.target.closest('.dialog .actions .btn')) {
+    const el = document.activeElement;
+    if (el && el !== document.body && typeof el.blur === 'function') el.blur();
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+  }
+}, true);
+
 /* ===== Kommentar-popup ===== */
 document.addEventListener('click', function(e) {
   const icon = e.target.closest('.infoIcon');

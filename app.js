@@ -1168,13 +1168,13 @@ function prepareContainerDialog(item, tag, opts = {}) {
     <label>Antal som ska finnas under kurs</label>
     <input id="minQtyEdit" type="number" inputmode="decimal" value="${esc(dialogItem.minQty)}">
 
-    <label>Tag</label>
+    <label>Tag <span style="font-weight:400;font-size:0.8em;opacity:0.7">(sparas direkt vid skanning)</span></label>
     <div style="display:flex;gap:8px;align-items:center">
       <input id="tagDisplay" type="text" value="${esc(tag.startsWith('S') ? '(ingen tag)' : tag)}" readonly style="flex:1;opacity:0.7">
       <button id="scanTagBtn" class="btn" type="button">Skanna tag</button>
     </div>
 
-    <button id="saveMetaBtn" class="btn">Spara övriga fält</button>
+    <button id="saveMetaBtn" class="btn">Spara fält</button>
   `;
   dlg.querySelectorAll(".extraFields").forEach(e => e.remove());
   dlg.appendChild(extra);
@@ -1416,9 +1416,10 @@ function startTagScanMode(cb) {
   cameraVisible = true;
   s.className = ""; s.textContent = "Skanna tag att koppla – tryck Avbryt för att avbryta";
   startBtn.textContent = "Avbryt";
-  if (!cameraOn) {
-    startTagCamera();
-  }
+  // Starta alltid om readern så tag-scan-callbacken registreras. Om huvudscannern
+  // redan kör är dess callback installerad på readern; utan reset här skulle
+  // tag-callbacken aldrig köras.
+  startTagCamera();
 }
 
 async function startTagCamera() {
@@ -1560,6 +1561,27 @@ function populatePlaceDropdown(){
   const places=[...placeSet].sort((a,b)=>a.localeCompare(b,'sv'));
   for(const p of places){const o=document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o);}
 }
+function populateNewCategoryDropdown(forPlace){
+  const sel = qs('#manualCategory');
+  const newInput = qs('#manualCategoryNew');
+  if (!sel) return;
+  const place = (forPlace || '').trim();
+  const categorySet = new Set();
+  for (const v of tagCache.values()) {
+    const c = (v?.category || '').trim();
+    if (!c) continue;
+    const vSheet = v.sheetName || v.place || '';
+    if (place && vSheet !== place) continue;
+    categorySet.add(c);
+  }
+  const cats = [...categorySet].sort((a,b) => a.localeCompare(b, 'sv'));
+  sel.innerHTML =
+    '<option value="">Kategori (valfri)</option>' +
+    cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('') +
+    '<option value="__new__">+ Ny kategori…</option>';
+  if (newInput) { newInput.style.display = 'none'; newInput.value = ''; }
+}
+
 function prepareNewItemDialog(scanned){
   let currentTag=scanned;
   lastCode=scanned; resetDialog(); dlgTitle.textContent="Ny artikel";
@@ -1569,6 +1591,20 @@ function prepareNewItemDialog(scanned){
   dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${esc(scanned)}</b>. Ange uppgifter:`;
   newItemFields.classList.remove("hidden");
   populatePlaceDropdown();
+  populateNewCategoryDropdown(qs('#manualPlace')?.value || '');
+  const placeSel = qs('#manualPlace');
+  if (placeSel) {
+    placeSel.onchange = () => populateNewCategoryDropdown(placeSel.value);
+  }
+  const catSel = qs('#manualCategory');
+  const catNew = qs('#manualCategoryNew');
+  if (catSel && catNew) {
+    catSel.onchange = () => {
+      const isNew = catSel.value === '__new__';
+      catNew.style.display = isNew ? 'block' : 'none';
+      if (isNew) { catNew.value = ''; catNew.focus(); }
+    };
+  }
 
   const tagRow=document.createElement('div');
   tagRow.className='tagScanRow';
@@ -1600,11 +1636,15 @@ function prepareNewItemDialog(scanned){
     const qty=parseFloat((manualQty.value||"1").replace(",","."))||1;
     const unit=(qs('#manualUnit')?.value||"").trim();
     const place=(qs('#manualPlace')?.value||"").trim()||"Okänd";
+    const catRaw=(qs('#manualCategory')?.value||"").trim();
+    const category = catRaw === '__new__'
+      ? (qs('#manualCategoryNew')?.value||'').trim()
+      : catRaw;
     const le=appendLog(`${name} – tillagd (${qty})`,currentTag);
     show("Sparar…");
     // Optimistisk write FÖRE gasCall. pendingSync:true gör att initData preserverar posten
     // om preload-pollen råkar träffa innan logTag-svaret hunnit fram.
-    tagCache.set(currentTag,{name,type,place,sheetName:place,category:'',minQty:0,comment:'',step:'',rowNum:null,altTags:[],pendingSync:true});
+    tagCache.set(currentTag,{name,type,place,sheetName:place,category,minQty:0,comment:'',step:'',rowNum:null,altTags:[],pendingSync:true});
     setLocalMeta(currentTag,{qty,unit,lastMs:Date.now(),user:userName});
     recomputeMaxLast();renderLists();
     gasCall('logTag', {tag: currentTag, name, type, qty, user: userName, sheetName: place||null})
@@ -1614,7 +1654,10 @@ function prepareNewItemDialog(scanned){
         const cur=tagCache.get(currentTag);
         if(cur) tagCache.set(currentTag,{...cur,rowNum:res?.row||cur.rowNum,pendingSync:false});
         renderLists();
-        if(unit) gasCall('updateMeta', {tag: currentTag, args: {unit, userName}});
+        const metaArgs = {userName};
+        if (unit) metaArgs.unit = unit;
+        if (category) metaArgs.category = category;
+        if (unit || category) gasCall('updateMeta', {tag: currentTag, args: metaArgs});
       })
       .catch(err => markLogFail(le, err));
     closeDialog();cooldown(currentTag);

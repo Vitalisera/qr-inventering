@@ -933,7 +933,7 @@ function closeDialog(){
     cooldown(lastCode || "__dlg__");
   });
 }
-function resetDialog(){dlgTitle.textContent="";dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";manualName.value="";manualQty.value="";dlg.querySelectorAll('.tagScanRow,.extraFields').forEach(el=>el.remove());}
+function resetDialog(){dlgTitle.textContent="";dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;manualName.value="";manualQty.value="";dlg.querySelectorAll('.tagScanRow,.extraFields').forEach(el=>el.remove());}
 
 /* ===== Behållare-dialog ===== */
 /* ===== Singel-bekräftelsedialog ===== */
@@ -1209,13 +1209,18 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const add = parseFloat((dlgInput.value || "").replace(",", "."));
     if (!validNumber(add)) { markError(dlgInput, true); setMsg("Ogiltigt tal i fältet.", "warn"); return; }
     const newCount = (Number(dialogItem.qty) || 0) + add;
-
-    setBtnBusy(incBtn, true); dlgInput.disabled = true;
     const le = appendLog(`${dialogItem.name} – nytt antal ${newCount}`);
+
+    // Optimistic: uppdatera lokalt + stäng dialog direkt. Synk i bakgrunden.
+    setLocalMeta(tag, { qty: newCount, lastMs: Date.now(), user: userName });
+    recomputeMaxLast(); renderLists();
+    show(`${dialogItem.name}: nytt antal ${newCount}.`, "ok");
+    closeDialog();
+
     gasCall('updateCount', {tag, newCount, user: userName, sheetName: _sn, rowNum: _rn})
       .then(assertOk)
-      .then(() => { markAsDone(le); setBtnBusy(incBtn, false, "Öka antal"); dlgInput.disabled = false; show(`${dialogItem.name}: nytt antal ${newCount}.`, "ok"); closeDialog(); })
-      .catch(err => { markLogFail(le, err); setBtnBusy(incBtn, false, "Öka antal"); dlgInput.disabled = false; setMsg("Kunde inte spara. Försök igen.", "warn"); console.log(err); });
+      .then(() => markAsDone(le))
+      .catch(err => markLogFail(le, err));
   };
 
   newBtn.onclick = () => {
@@ -1224,13 +1229,17 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const val = parseFloat((dlgInput.value || "").replace(",", "."));
     if (!validNumber(val)) { markError(dlgInput, true); setMsg("Ogiltigt tal i fältet.", "warn"); return; }
     const newCount = val;
-
-    setBtnBusy(newBtn, true); dlgInput.disabled = true;
     const le = appendLog(`${dialogItem.name} – total ändrad till ${newCount}`);
+
+    setLocalMeta(tag, { qty: newCount, lastMs: Date.now(), user: userName });
+    recomputeMaxLast(); renderLists();
+    show(`${dialogItem.name}: total ändrad till ${newCount}.`, "ok");
+    closeDialog();
+
     gasCall('updateCount', {tag, newCount, user: userName, sheetName: _sn, rowNum: _rn})
       .then(assertOk)
-      .then(() => { markAsDone(le); setBtnBusy(newBtn, false, "Ny total"); dlgInput.disabled = false; show(`${dialogItem.name}: total ändrad till ${newCount}.`, "ok"); closeDialog(); })
-      .catch(err => { markLogFail(le, err); setBtnBusy(newBtn, false, "Ny total"); dlgInput.disabled = false; setMsg("Kunde inte spara. Försök igen.", "warn"); console.log(err); });
+      .then(() => markAsDone(le))
+      .catch(err => markLogFail(le, err));
   };
 
   // Spara övriga fält

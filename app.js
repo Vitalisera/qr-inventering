@@ -369,6 +369,23 @@ function openFilterDialog() {
     : new Set(Array.from(tagCache.values()).map(v => (v.place && String(v.place).trim()) || "Okänd"));
 
   const places = [...placeSource].sort((a, b) => a.localeCompare(b, 'sv'));
+
+  // Räkna inventerat/total per flik (samma 5-dagarsfönster som i renderLists).
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const windowStart = now - INVENTORY_WINDOW_DAYS * DAY_MS;
+  const windowEnd   = now + INVENTORY_WINDOW_DAYS * DAY_MS;
+  const placeCounts = new Map();
+  for (const [t, item] of tagCache.entries()) {
+    if (!item?.name) continue;
+    const p = (item.place && String(item.place).trim()) || "Okänd";
+    const c = placeCounts.get(p) || { total: 0, inv: 0 };
+    c.total++;
+    const meta = metaCache.get(t);
+    if (meta?.lastMs && meta.lastMs >= windowStart && meta.lastMs <= windowEnd) c.inv++;
+    placeCounts.set(p, c);
+  }
+
   for (const p0 of places) {
     const p = (p0 && String(p0).trim()) || "Okänd";
     const row = document.createElement('div');
@@ -379,7 +396,8 @@ function openFilterDialog() {
     chk.checked = !activePlaces || activePlaces.has(p);
     const txt = document.createElement('div');
     txt.className = 'placeTxt';
-    txt.textContent = p;
+    const c = placeCounts.get(p) || { total: 0, inv: 0 };
+    txt.textContent = `${p} (${c.inv}/${c.total})`;
     row.append(chk, txt);
     row.addEventListener('click', e => { if (e.target !== chk) chk.checked = !chk.checked; });
     placeList.appendChild(row);

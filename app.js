@@ -1883,12 +1883,15 @@ try {
 
 if (!hadCachedPreload) show("Laddar inventeringslistor...", null, { autoreset: false });
 
-// Retry preload med backoff: GAS cold-start kan ta 5-10s, engångs-500:or händer.
+// Retry preload med backoff: GAS cold-start kan ta 5-10s, mobilnät-hick ger "Load failed".
 async function preloadWithRetry(){
-  const delays = [0, 1500, 4000]; // 3 försök: genast, +1.5s, +4s
+  const delays = [0, 2000, 5000, 10000, 20000]; // 5 försök, totalt ~37s
   let lastErr;
   for (let i = 0; i < delays.length; i++) {
-    if (delays[i]) await new Promise(r => setTimeout(r, delays[i]));
+    if (delays[i]) {
+      if (!hadCachedPreload) show(`Försöker igen (${i+1}/${delays.length})…`, null, { autoreset: false });
+      await new Promise(r => setTimeout(r, delays[i]));
+    }
     try { return await gasCall('preload'); }
     catch (err) { lastErr = err; console.warn(`Preload-försök ${i+1} misslyckades:`, err?.message); }
   }

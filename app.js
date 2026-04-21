@@ -623,10 +623,10 @@ function initData(records, { fromCache = false } = {}) {
       name,
       type,
       place: plc,
-      category: (category || "").trim(),
+      category: String(category || "").trim(),
       minQty: Number(minQty) || 0,
-      step: (step || "").trim(),
-      comment: (comment || "").trim(),
+      step: String(step || "").trim(),
+      comment: String(comment || "").trim(),
       rowNum: rowNum || null,
       sheetName: plc,
       altTags: Array.isArray(altTags) ? altTags : []
@@ -635,8 +635,8 @@ function initData(records, { fromCache = false } = {}) {
     placeSet.add(plc);
     metaCache.set(nt, {
       qty: Number(qty) || 0,
-      unit,
-      user,
+      unit: String(unit || ""),
+      user: String(user || ""),
       lastMs: toDayMs(last),
       lastStr: fmtDate(last)
     });

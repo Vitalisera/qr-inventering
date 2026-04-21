@@ -963,7 +963,7 @@ function prepareSingleDialog(item, tag) {
 
   dlgTitle.textContent = item.name || "Okänd artikel";
   dlgTitle.contentEditable = "false";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Tryck <b>"Registrera inventering"</b> för att bekräfta.<br>"Fler fält" öppnar redigering av kommentar, enhet, typ och min-antal.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Tryck <b>"Registrera inventering"</b> för att bekräfta.<br>"Fler fält" öppnar redigering av kommentar, enhet, typ och min-mängd.';}
 
   const todayYMD = toYMD(Date.now());
   const oldDate = toYMD(meta.lastMs);
@@ -973,7 +973,7 @@ function prepareSingleDialog(item, tag) {
       ${meta.user ? `<span class="metaBy"> • ${esc(meta.user)}</span>` : ""}
       ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
     </div>
-    <div class="metaDate">Nytt datum: <input type="date" id="singleDateEdit" value="${esc(todayYMD)}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
+    <div class="metaDate" style="margin-top:8px">Nytt datum:<input type="date" id="singleDateEdit" value="${esc(todayYMD)}"></div>
   `;
 
   dlgBtns.innerHTML = `
@@ -1029,7 +1029,7 @@ function prepareSingleDialog(item, tag) {
 
 function prepareContainerDialog(item, tag, opts = {}) {
   resetDialog();
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Öka antal</b> = lägg till det du skriver i fältet.<br><b>Ny total</b> = ersätt med det du skriver.<br>Tryck på artikelnamnet för att redigera det.<br>"Fler fält" visar kommentar, enhet, typ och min-antal.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Öka mängd</b> = lägg till det du skriver i fältet.<br><b>Ny total</b> = ersätt med det du skriver.<br>Tryck på artikelnamnet för att redigera det.<br>"Fler fält" visar kommentar, enhet, typ och min-mängd.';}
 
   const editMode = opts.editMode === true;
   const meta = metaCache.get(tag) || {};
@@ -1080,22 +1080,24 @@ function prepareContainerDialog(item, tag, opts = {}) {
   dlgTitle.addEventListener("focusout", commitName);
 
   const oldDate = toYMD(dialogItem.lastMs);
+  const unitSuffix = (dialogItem.unit || "").trim();
   dlgInfo.innerHTML = `
     <div class="metaTop">
       <span class="metaQty">${esc(dialogItem.qty)} ${esc(dialogItem.unit)}</span>
       ${dialogItem.user ? `<span class="metaBy"> • ${esc(dialogItem.user)}</span>` : ""}
       ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
     </div>
-    <div class="metaDate">Nytt datum: <input type="date" id="containerDateEdit" value="${esc(isoDate)}" style="font-size:0.95em;border:1px solid #8aacae;border-radius:6px;padding:2px 6px;"></div>
-    <p class="metaText">Lägg till eller ange ny total:</p>
+    <div class="metaDate" style="margin-top:8px">Nytt datum:<input type="date" id="containerDateEdit" value="${esc(isoDate)}"></div>
+    <p class="metaText">Lägg till eller ange ny total${unitSuffix ? ` (${esc(unitSuffix)})` : ""}:</p>
   `;
 
   dlgInput.classList.remove("hidden");
   dlgInput.style.display = "block";
   dlgInput.value = dialogItem.qty;
+  dlgInput.placeholder = unitSuffix ? `Mängd (${unitSuffix})` : "Mängd";
 
   dlgBtns.innerHTML = `
-    <button id="incBtn" class="btn">Öka antal</button>
+    <button id="incBtn" class="btn">Öka mängd</button>
     <button id="newBtn" class="btn">Ny total</button>
     <button id="toggleMore" class="btn">Fler fält</button>
     <button id="cancelUpdate" class="btn cancel">Stäng</button>
@@ -1142,6 +1144,14 @@ function prepareContainerDialog(item, tag, opts = {}) {
     `<option value="${esc(c)}"${c === currentCat ? " selected" : ""}>${esc(c)}</option>`
   ).join('');
 
+  // Unika enheter för enhets-select.
+  const currentUnit = (dialogItem.unit || "").trim();
+  const unitList = collectUnits();
+  if (currentUnit && !unitList.includes(currentUnit)) unitList.unshift(currentUnit);
+  const unitOptions = unitList.map(u =>
+    `<option value="${esc(u)}"${u === currentUnit ? " selected" : ""}>${esc(u)}</option>`
+  ).join('');
+
   const extra = document.createElement("div");
   extra.className = "extraFields";
   extra.innerHTML = `
@@ -1157,7 +1167,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
     <input id="categoryNew" type="text" placeholder="Ange ny kategori" style="display:none;margin-top:4px">
 
     <label>Enhet</label>
-    <input id="unitEdit" type="text" value="${esc(dialogItem.unit)}">
+    <select id="unitEdit">
+      <option value=""${!currentUnit ? " selected" : ""}>(ingen)</option>
+      ${unitOptions}
+      <option value="__new__">+ Ny enhet…</option>
+    </select>
+    <input id="unitNew" type="text" placeholder="Ange ny enhet" style="display:none;margin-top:4px">
 
     <label>Typ</label>
     <select id="typeEdit">
@@ -1165,12 +1180,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
       <option value="behållare"${(item.type||"")==="behållare"?" selected":""}>Behållare</option>
     </select>
 
-    <label>Antal som ska finnas under kurs</label>
+    <label>Mängd som ska finnas under kurs</label>
     <input id="minQtyEdit" type="number" inputmode="decimal" value="${esc(dialogItem.minQty)}">
 
     <label>Tag <span style="font-weight:400;font-size:0.8em;opacity:0.7">(sparas direkt vid skanning)</span></label>
-    <div style="display:flex;gap:8px;align-items:center">
-      <input id="tagDisplay" type="text" value="${esc(tag.startsWith('S') ? '(ingen tag)' : tag)}" readonly style="flex:1;opacity:0.7">
+    <div class="tagRow">
+      <input id="tagDisplay" type="text" value="${esc(tag.startsWith('S') ? '(ingen tag)' : tag)}" readonly title="Klicka för att se hela taggen">
       <button id="scanTagBtn" class="btn" type="button">Skanna tag</button>
     </div>
 
@@ -1199,9 +1214,31 @@ function prepareContainerDialog(item, tag, opts = {}) {
     });
   }
 
+  // Enhet: visa ny-textinput när "+ Ny enhet…" valts
+  const unitSel = extra.querySelector("#unitEdit");
+  const unitNew = extra.querySelector("#unitNew");
+  if (unitSel && unitNew) {
+    unitSel.addEventListener("change", () => {
+      const isNew = unitSel.value === "__new__";
+      unitNew.style.display = isNew ? "block" : "none";
+      if (isNew) { unitNew.value = ""; unitNew.focus(); }
+    });
+  }
+
   // Skanna tag-knapp
   const scanTagBtn = extra.querySelector("#scanTagBtn");
   const tagDisplay = extra.querySelector("#tagDisplay");
+  if (tagDisplay) {
+    tagDisplay.addEventListener("click", () => {
+      const cached = tagCache.get(tag);
+      const primary = tag.startsWith("S") ? null : tag;
+      const alts = cached?.altTags || [];
+      const all = [primary, ...alts].filter(Boolean);
+      if (!all.length) { show("Ingen tag kopplad ännu", "warn"); return; }
+      const label = all.length === 1 ? "Tag" : "Taggar";
+      show(`${label}: ${all.join(" • ")}`, "ok", { autoreset: false });
+    });
+  }
   if (scanTagBtn) {
     scanTagBtn.onclick = () => {
       startTagScanMode((scannedTag) => {
@@ -1264,12 +1301,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const add = parseFloat((dlgInput.value || "").replace(",", "."));
     if (!validNumber(add)) { markError(dlgInput, true); setMsg("Ogiltigt tal i fältet.", "warn"); return; }
     const newCount = (Number(dialogItem.qty) || 0) + add;
-    const le = appendLog(`${dialogItem.name} – nytt antal ${newCount}`);
+    const le = appendLog(`${dialogItem.name} – ny mängd ${newCount}`);
 
     // Optimistic: uppdatera lokalt + stäng dialog direkt. Synk i bakgrunden.
     setLocalMeta(tag, { qty: newCount, lastMs: Date.now(), user: userName });
     recomputeMaxLast(); renderLists();
-    show(`${dialogItem.name}: nytt antal ${newCount}.`, "ok");
+    show(`${dialogItem.name}: ny mängd ${newCount}.`, "ok");
     closeDialog();
 
     gasCall('updateCount', {tag, newCount, user: userName, sheetName: _sn, rowNum: _rn})
@@ -1317,7 +1354,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (hasErr) { setMsg("Kontrollera fälten markerade i rött.", "warn"); return; }
 
     const comment = commentEl.value.trim();
-    const unit = unitEl.value.trim();
+    const unitRaw = unitEl.value.trim();
+    const unit = unitRaw === "__new__"
+      ? (qs("#unitNew")?.value || "").trim()
+      : unitRaw;
     const typeVal = (qs("#typeEdit")?.value || "singel").toLowerCase();
     const catRaw = (qs("#categoryEdit")?.value || "").trim();
     const category = catRaw === "__new__"
@@ -1375,7 +1415,7 @@ function updateDialogWithFreshData(tag, freshItem) {
 
   const changed = [];
   const metaNow = metaCache.get(tag) || {};
-  if (normalizeNum(freshItem.qty) !== normalizeNum(metaNow.qty)) changed.push("antal");
+  if (normalizeNum(freshItem.qty) !== normalizeNum(metaNow.qty)) changed.push("mängd");
   if (normalizeStr(freshItem.unit) !== normalizeStr(metaNow.unit)) changed.push("enhet");
   if (normalizeStr(freshItem.comment) !== normalizeStr(old.comment)) changed.push("kommentar");
   if (normalizeNum(freshItem.minQty) !== normalizeNum(old.minQty)) changed.push("minnivå");
@@ -1396,7 +1436,19 @@ function updateDialogWithFreshData(tag, freshItem) {
     const unitEl = qs("#unitEdit");
     const commentEl = qs("#commentEdit");
     const minEl = qs("#minQtyEdit");
-    if (unitEl) unitEl.value = merged.unit || "";
+    if (unitEl) {
+      const freshUnit = (merged.unit || "").trim();
+      // Om fresh-enheten inte finns som option, infoga den (före __new__-sentinel)
+      // så att select kan visa den selected. Annars faller value tillbaka till tom.
+      if (freshUnit && !Array.from(unitEl.options).some(o => o.value === freshUnit)) {
+        const opt = document.createElement("option");
+        opt.value = freshUnit;
+        opt.textContent = freshUnit;
+        const sentinel = unitEl.querySelector('option[value="__new__"]');
+        unitEl.insertBefore(opt, sentinel);
+      }
+      unitEl.value = freshUnit;
+    }
     if (commentEl) commentEl.value = merged.comment || "";
     if (minEl) minEl.value = merged.minQty ?? "";
   }
@@ -1561,6 +1613,27 @@ function populatePlaceDropdown(){
   const places=[...placeSet].sort((a,b)=>a.localeCompare(b,'sv'));
   for(const p of places){const o=document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o);}
 }
+function collectUnits(){
+  const set = new Set();
+  for (const v of tagCache.values()) {
+    const u = (v?.unit || '').trim();
+    if (u) set.add(u);
+  }
+  return [...set].sort((a,b) => a.localeCompare(b, 'sv'));
+}
+
+function populateNewUnitDropdown(){
+  const sel = qs('#manualUnit');
+  const newInput = qs('#manualUnitNew');
+  if (!sel) return;
+  const units = collectUnits();
+  sel.innerHTML =
+    '<option value="">Välj enhet…</option>' +
+    units.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join('') +
+    '<option value="__new__">+ Ny enhet…</option>';
+  if (newInput) { newInput.style.display = 'none'; newInput.value = ''; }
+}
+
 function populateNewCategoryDropdown(forPlace){
   const sel = qs('#manualCategory');
   const newInput = qs('#manualCategoryNew');
@@ -1591,6 +1664,7 @@ function prepareNewItemDialog(scanned){
   dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${esc(scanned)}</b>. Ange uppgifter:`;
   newItemFields.classList.remove("hidden");
   populatePlaceDropdown();
+  populateNewUnitDropdown();
   populateNewCategoryDropdown(qs('#manualPlace')?.value || '');
   const placeSel = qs('#manualPlace');
   if (placeSel) {
@@ -1603,6 +1677,15 @@ function prepareNewItemDialog(scanned){
       const isNew = catSel.value === '__new__';
       catNew.style.display = isNew ? 'block' : 'none';
       if (isNew) { catNew.value = ''; catNew.focus(); }
+    };
+  }
+  const unitSel = qs('#manualUnit');
+  const unitNewInput = qs('#manualUnitNew');
+  if (unitSel && unitNewInput) {
+    unitSel.onchange = () => {
+      const isNew = unitSel.value === '__new__';
+      unitNewInput.style.display = isNew ? 'block' : 'none';
+      if (isNew) { unitNewInput.value = ''; unitNewInput.focus(); }
     };
   }
 
@@ -1634,7 +1717,11 @@ function prepareNewItemDialog(scanned){
     if(!name){show("Ange benämning","warn");return;}
     const type=manualType.value;
     const qty=parseFloat((manualQty.value||"1").replace(",","."))||1;
-    const unit=(qs('#manualUnit')?.value||"").trim();
+    const unitRaw=(qs('#manualUnit')?.value||"").trim();
+    const unit = unitRaw === '__new__'
+      ? (qs('#manualUnitNew')?.value||'').trim()
+      : unitRaw;
+    if(!unit){show("Ange enhet","warn");return;}
     const place=(qs('#manualPlace')?.value||"").trim()||"Okänd";
     const catRaw=(qs('#manualCategory')?.value||"").trim();
     const category = catRaw === '__new__'

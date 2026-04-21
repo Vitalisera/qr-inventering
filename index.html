@@ -80,10 +80,10 @@
     <h2 id="dialogTitle" contenteditable="true"></h2>
     <span class="help-toggle dark" data-help="article">?</span>
     <div class="help-box" id="help-article">
-      <b>Behållare:</b> välj "Öka antal" eller ange "Ny total".<br>
+      <b>Behållare:</b> välj "Öka mängd" eller ange "Ny total".<br>
       <b>Singel:</b> tryck "Registrera inventering" för att bekräfta.<br>
       Tryck på artikelnamnet för att redigera det.<br>
-      "Fler fält" visar kommentar, enhet, typ och min-antal.
+      "Fler fält" visar kommentar, enhet, typ och min-mängd.
     </div>
     <p id="dialogInfo"></p>
     <div id="newItemFields" class="hidden">
@@ -92,13 +92,14 @@
         <option value="singel">Singel</option>
         <option value="behållare">Behållare</option>
       </select>
-      <input id="manualUnit" placeholder="Enhet (t.ex. st, kg, liter)" autocomplete="off" />
+      <select id="manualUnit"></select>
+      <input id="manualUnitNew" type="text" placeholder="Ange ny enhet" autocomplete="off" style="display:none" />
       <select id="manualPlace"></select>
       <select id="manualCategory"></select>
       <input id="manualCategoryNew" type="text" placeholder="Ange ny kategori" autocomplete="off" style="display:none" />
-      <input id="manualQty" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Antal (1 som standard)" autocomplete="off" />
+      <input id="manualQty" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd just nu (1 som standard)" autocomplete="off" />
     </div>
-    <input id="dialogInput" class="hidden" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Antal" autocomplete="off" />
+    <input id="dialogInput" class="hidden" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd" autocomplete="off" />
     <div id="dialogBtns" class="actions"></div>
   </div>
 

@@ -445,6 +445,14 @@ function openFilterDialog() {
     placeList.appendChild(row);
   }
 
+  const versionLabel = qs('#versionLabel');
+  if (versionLabel && 'caches' in window) {
+    caches.keys().then(keys => {
+      const cache = keys.find(k => k.startsWith('vitalisera-inv-'));
+      versionLabel.textContent = cache ? 'Version ' + cache.replace('vitalisera-inv-', '') : '';
+    }).catch(() => {});
+  }
+
   overlay.classList.add("blurred");
   filterDialog.classList.remove("hidden");
 }

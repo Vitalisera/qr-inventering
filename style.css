@@ -295,6 +295,13 @@ body:has(.dialog:not(.hidden))::after {
   display: flex; justify-content: center;
   gap: 10px; flex-wrap: wrap; margin-top: 10px;
 }
+.version-label {
+  margin-top: 14px;
+  font-size: 0.78rem;
+  color: #8aa0a6;
+  text-align: center;
+  opacity: 0.75;
+}
 .dialog .btn {
   flex: 1; min-width: 0;
   background: var(--primary); color: #fff;

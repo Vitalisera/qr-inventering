@@ -977,9 +977,9 @@ function prepareSingleDialog(item, tag) {
   `;
 
   dlgBtns.innerHTML = `
-    <button id="confirmSingle" class="btn">Registrera inventering</button>
     <button id="editSingle" class="btn cancel">Fler fält</button>
     <button id="cancelSingle" class="btn cancel">Stäng</button>
+    <button id="confirmSingle" class="btn">Registrera inventering</button>
     <div id="msgLine" class="msgLine"></div>
   `;
 
@@ -1124,11 +1124,28 @@ function prepareContainerDialog(item, tag, opts = {}) {
     });
   }
 
+  // Unika kategorier för samma flik (för datalist-förslag).
+  const sheetForItem = item.sheetName || item.place || "";
+  const categorySet = new Set();
+  for (const v of tagCache.values()) {
+    const c = (v?.category || "").trim();
+    if (!c) continue;
+    const vSheet = v.sheetName || v.place || "";
+    if (sheetForItem && vSheet !== sheetForItem) continue;
+    categorySet.add(c);
+  }
+  const categoryOptions = [...categorySet].sort((a,b) => a.localeCompare(b, 'sv'))
+    .map(c => `<option value="${esc(c)}">`).join('');
+
   const extra = document.createElement("div");
   extra.className = "extraFields";
   extra.innerHTML = `
     <label>Kommentar</label>
     <textarea id="commentEdit" rows="2">${esc(dialogItem.comment || "")}</textarea>
+
+    <label>Kategori</label>
+    <input id="categoryEdit" type="text" list="categoryOptions" value="${esc(dialogItem.category || "")}">
+    <datalist id="categoryOptions">${categoryOptions}</datalist>
 
     <label>Enhet</label>
     <input id="unitEdit" type="text" value="${esc(dialogItem.unit)}">
@@ -1282,10 +1299,11 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const comment = commentEl.value.trim();
     const unit = unitEl.value.trim();
     const typeVal = (qs("#typeEdit")?.value || "singel").toLowerCase();
+    const category = (qs("#categoryEdit")?.value || "").trim();
 
     setBtnBusy(saveBtn, true);
 
-    tagCache.set(tag, { ...tagCache.get(tag), comment, unit, minQty, type: typeVal, pendingSync: true });
+    tagCache.set(tag, { ...tagCache.get(tag), comment, unit, minQty, type: typeVal, category, pendingSync: true });
 
     const patch = { unit };
     if (date) patch.lastStr = date;
@@ -1297,7 +1315,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
 
     renderLists();
 
-    const payload = { tag, comment, unit, minQty, type: typeVal, userName, sheetName: _sn, rowNum: _rn };
+    const payload = { tag, comment, unit, minQty, type: typeVal, category, userName, sheetName: _sn, rowNum: _rn };
     if (date) payload.lastYMD = date;
     queueUpdate("updateMeta", payload);
 

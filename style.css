@@ -331,7 +331,7 @@ body:has(.dialog:not(.hidden))::after {
 .extraFields .tagRow input { flex: 1; cursor: pointer; }
 .extraFields .tagRow .btn { flex-shrink: 0; }
 .extraFields #saveMetaBtn { display: block; width: 100%; margin-top: 14px; }
-.metaDate input[type="date"] { width: 100%; box-sizing: border-box; padding: 8px 10px; text-align: center; font: inherit; border: 1px solid #8aacae; border-radius: 8px; }
+.metaDate input[type="date"] { text-align: center; }
 .btn.smallBtn {
   font-size: 0.9em; padding: 10px 16px;
   margin: 12px auto 0; display: block;

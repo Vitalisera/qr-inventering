@@ -1614,9 +1614,10 @@ function populatePlaceDropdown(){
   for(const p of places){const o=document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o);}
 }
 function collectUnits(){
+  // Enheten lagras i metaCache (via initData/setLocalMeta), inte tagCache.
   const set = new Set();
-  for (const v of tagCache.values()) {
-    const u = (v?.unit || '').trim();
+  for (const m of metaCache.values()) {
+    const u = (m?.unit || '').trim();
     if (u) set.add(u);
   }
   return [...set].sort((a,b) => a.localeCompare(b, 'sv'));

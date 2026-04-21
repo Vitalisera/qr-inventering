@@ -328,6 +328,22 @@ function savePlaceFilter(){
   else localStorage.setItem('vitaliseraPlaceFilter', JSON.stringify([...activePlaces]));
   localStorage.setItem('vitaliseraOnlyLow', onlyLow ? '1' : '0');
 }
+/* Rensa activePlaces från platser som inte längre finns i tagCache. Annars kan en
+   sparad plats som försvunnit (t.ex. inkompatibel flik borttagen från preload)
+   filtrera bort alla artiklar utan att kunna avbockas från filterdialogen. */
+function sanitizePlaceFilter(){
+  if (!activePlaces) return;
+  if (tagCache.size === 0) return;
+  const existing = new Set();
+  for (const v of tagCache.values()) {
+    existing.add((v?.place && String(v.place).trim()) || "Okänd");
+  }
+  const cleaned = new Set([...activePlaces].filter(p => existing.has(p)));
+  if (cleaned.size === activePlaces.size) return;
+  activePlaces = cleaned.size ? cleaned : null;
+  if (!activePlaces) localStorage.removeItem('vitaliseraPlaceFilter');
+  else localStorage.setItem('vitaliseraPlaceFilter', JSON.stringify([...activePlaces]));
+}
 
 function openFilterDialog() {
   placeList.innerHTML = "";
@@ -634,6 +650,7 @@ function initData(records, { fromCache = false } = {}) {
   }
 
   recomputeMaxLast();
+  sanitizePlaceFilter();
   renderLists();
   statusDefault();
 

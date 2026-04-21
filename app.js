@@ -1883,28 +1883,41 @@ try {
 
 if (!hadCachedPreload) show("Laddar inventeringslistor...", null, { autoreset: false });
 
-gasCall('preload').then(res => {
+// Retry preload med backoff: GAS cold-start kan ta 5-10s, engångs-500:or händer.
+async function preloadWithRetry(){
+  const delays = [0, 1500, 4000]; // 3 försök: genast, +1.5s, +4s
+  let lastErr;
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i]) await new Promise(r => setTimeout(r, delays[i]));
+    try { return await gasCall('preload'); }
+    catch (err) { lastErr = err; console.warn(`Preload-försök ${i+1} misslyckades:`, err?.message); }
+  }
+  throw lastErr;
+}
+preloadWithRetry().then(res => {
   if (res?.error) {
-    show("Fel: " + res.error, "warn", { autoreset: false });
+    show("Fel från server: " + res.error, "warn", { autoreset: false });
     return;
   }
   initData(res);
 }).catch(err => {
-  console.error("Preload failed:", err);
-  if (hadCachedPreload) show("Offline — visar senast sparade data", "warn");
-  else show("Kunde inte ladda data. Kontrollera anslutningen.", "warn", { autoreset: false });
+  console.error("Preload failed after retries:", err);
+  const reason = err?.message || 'okänt fel';
+  if (hadCachedPreload) show("Kunde inte uppdatera (" + reason + ") — visar senast sparade data", "warn", { autoreset: false });
+  else show("Kunde inte ladda: " + reason, "warn", { autoreset: false });
+}).finally(() => {
+  // Tyst polling av servercache — startas först när bootstrap är klart så vi
+  // inte får race mellan preloadWithRetry och pollern under GAS cold-start.
+  setInterval(() => {
+    gasCall('cacheTs').then(ts => {
+      if (ts > (window._lastCacheTs || 0)) {
+        window._lastCacheTs = ts;
+        console.log("Servercache uppdaterad, laddar om data tyst...");
+        gasCall('preload').then(initData);
+      }
+    }).catch(() => {});
+  }, 15000);
 });
-
-// Tyst polling av servercache
-setInterval(() => {
-  gasCall('cacheTs').then(ts => {
-    if (ts > (window._lastCacheTs || 0)) {
-      window._lastCacheTs = ts;
-      console.log("Servercache uppdaterad, laddar om data tyst...");
-      gasCall('preload').then(initData);
-    }
-  }).catch(() => {});
-}, 15000);
 
 /* Tangentbordsdetektering */
 (function(){

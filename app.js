@@ -992,7 +992,7 @@ function closeDialog(){
     cooldown(lastCode || "__dlg__");
   });
 }
-function resetDialog(){dlgTitle.textContent="";dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;manualName.value="";manualQty.value="";dlg.querySelectorAll('.tagScanRow,.extraFields').forEach(el=>el.remove());}
+function resetDialog(){dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;manualName.value="";manualQty.value="";dlg.querySelectorAll('.tagScanRow,.extraFields').forEach(el=>el.remove());}
 
 /* ===== Behållare-dialog ===== */
 /* ===== Singel-bekräftelsedialog ===== */
@@ -1117,8 +1117,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
       renderLists();
     }
   };
-  dlgTitle.addEventListener("input", () => (pendingName = dlgTitle.textContent.trim()));
-  dlgTitle.addEventListener("focusout", commitName);
+  // .oninput/.onblur (INTE addEventListener) — dlgTitle är en permanent DOM-nod
+  // som återanvänds för varje dialog-öppning. addEventListener skulle stacka
+  // gamla lyssnare med stale closures över gamla tag/rowNum, så ett namnbyte
+  // skulle triggra updateName för varje tidigare öppnad artikel.
+  dlgTitle.oninput = () => (pendingName = dlgTitle.textContent.trim());
+  dlgTitle.onblur = commitName;
 
   const oldDate = toYMD(dialogItem.lastMs);
   const unitSuffix = (dialogItem.unit || "").trim();

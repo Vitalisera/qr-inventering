@@ -156,6 +156,16 @@ header h1 {
   text-transform: uppercase;
 }
 .categoryHeader:first-child { margin-top: 0; }
+/* Plats-grupprubrik: större och mer framträdande än kategori */
+.categoryHeader.placeHeader {
+  font-size: 1.05rem;
+  margin-top: 10px;
+  background: var(--primary);
+  color: var(--white);
+  border-bottom: none;
+  border-radius: 6px;
+}
+.categoryHeader.placeHeader + .categoryHeader { margin-top: 4px; }
 
 /* Rubrikrad (sticky) */
 .headerRow {
@@ -191,12 +201,10 @@ header h1 {
 
 /* Kolumnlayout */
 .headerRow .sr-name, .statusRow .sr-name {
-  flex: 2.4 1 0; text-align: left; padding-left: 10px;
+  flex: 3 1 0; text-align: left; padding-left: 10px;
 }
 .sr-name { word-break: break-word; margin-right: 4px; }
 .sr-syn { font-size: 0.8em; color: #888; font-weight: normal; }
-.headerRow .sr-place, .statusRow .sr-place { flex: 1 1 0; text-align: center; font-size: 0.8em; color: #666; word-break: break-word; }
-@media (prefers-color-scheme: dark) { .statusRow .sr-place { color: #aaa; } }
 .headerRow .sr-min, .statusRow .sr-min { flex: 0.6 1 0; text-align: center; }
 .headerRow .sr-lastcount, .statusRow .sr-lastcount { flex: 1 1 0; text-align: center; }
 .headerRow .sr-date, .statusRow .sr-date { flex: 1.2 1 0; text-align: center; font-size: 0.85em; }

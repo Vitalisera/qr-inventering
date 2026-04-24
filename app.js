@@ -4,7 +4,7 @@
  */
 
 /* ===== GAS API wrapper ===== */
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwkwxkn6CT3EVctM_xTdYJ3FHfOMYyRqQCp_-zIfODY4ZLx9RISGAVYVnWBbbLY4emMbg/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbx2TWEYfWS2U_DrtQhZrCfJssJXXjqIca-3DUiJ53wbvAxP_eTMy1ZFF5OAxB4ZaUARhQ/exec';
 
 async function gasCall(fn, params = {}) {
   const res = await fetch(GAS_URL, {
@@ -154,6 +154,7 @@ let currentDialogTag = null;
 let extraFieldsExpanded = false;
 let invertGroups = localStorage.getItem('vitaliseraInvertGroups') === '1';
 let groupByCategory = localStorage.getItem('vitaliseraGroupByCategory') === '1';
+let groupByPlace = localStorage.getItem('vitaliseraGroupByPlace') === '1';
 
 /* ===== Status ===== */
 function statusDefault(){
@@ -416,6 +417,19 @@ function openFilterDialog() {
   rowCat.addEventListener('click', e => { if (e.target !== chkCat) chkCat.checked = !chkCat.checked; });
   placeList.appendChild(rowCat);
 
+  const rowPlc = document.createElement('div');
+  rowPlc.className = 'placeRow';
+  const chkPlc = document.createElement('input');
+  chkPlc.type = 'checkbox';
+  chkPlc.dataset.groupbyplace = '1';
+  chkPlc.checked = !!groupByPlace;
+  const txtPlc = document.createElement('div');
+  txtPlc.className = 'placeTxt';
+  txtPlc.textContent = 'Gruppera efter plats';
+  rowPlc.append(chkPlc, txtPlc);
+  rowPlc.addEventListener('click', e => { if (e.target !== chkPlc) chkPlc.checked = !chkPlc.checked; });
+  placeList.appendChild(rowPlc);
+
   const title1 = document.createElement('div');
   title1.style.marginTop = '12px';
   title1.style.fontWeight = '600';
@@ -519,6 +533,10 @@ applyFilterBtn?.addEventListener('click', () => {
   const groupByCatBox = placeList.querySelector('input[data-groupbycat="1"]');
   groupByCategory = !!groupByCatBox?.checked;
   localStorage.setItem('vitaliseraGroupByCategory', groupByCategory ? '1' : '0');
+
+  const groupByPlcBox = placeList.querySelector('input[data-groupbyplace="1"]');
+  groupByPlace = !!groupByPlcBox?.checked;
+  localStorage.setItem('vitaliseraGroupByPlace', groupByPlace ? '1' : '0');
 
   const boxes = placeList.querySelectorAll('input[type="checkbox"][data-place]');
   const selPlaces = new Set();
@@ -857,7 +875,6 @@ function renderLists() {
     h.className = "statusRow headerRow";
     h.innerHTML = `
       <span class="sr-name">Benämning</span>
-      <span class="sr-place">Plats</span>
       <span class="sr-min">Min</span>
       <span class="sr-lastcount">Senast</span>
       <span class="sr-date">Datum</span>`;
@@ -898,7 +915,6 @@ function renderLists() {
 
     row.innerHTML = `
       <span class="sr-name">${esc(name)}${renderRowIcons(t, item, hasComment)}</span>
-      <span class="sr-place">${esc(place || "")}</span>
       <span class="sr-min">${esc(item.minQty ?? "")}</span>
       <span class="sr-lastcount">${esc(meta.qty ?? "")}</span>
       <span class="sr-date">${esc(meta.lastStr || "")}</span>`;
@@ -915,35 +931,61 @@ function renderLists() {
       meta.lastMs >= windowStart &&
       meta.lastMs <= windowEnd;
 
-    (isInv ? invItems : ejItems).push({ row, category: (item.category || "").trim() });
+    (isInv ? invItems : ejItems).push({
+      row,
+      category: (item.category || "").trim(),
+      place: (item.place || "").trim() || "Okänd"
+    });
   }
 
-  const makeCatHeader = (label) => {
+  const makeGroupHeader = (label, variant) => {
     const h = document.createElement("div");
-    h.className = "categoryHeader";
+    h.className = variant === "place" ? "categoryHeader placeHeader" : "categoryHeader";
     h.textContent = label;
     return h;
   };
-  const appendByCategory = (target, items) => {
-    if (!groupByCategory) {
-      for (const { row } of items) target.appendChild(row);
-      return;
-    }
+  const bucketBy = (items, key) => {
     const buckets = new Map();
-    const noCat = [];
+    const noKey = [];
     for (const entry of items) {
-      if (!entry.category) { noCat.push(entry.row); continue; }
-      if (!buckets.has(entry.category)) buckets.set(entry.category, []);
-      buckets.get(entry.category).push(entry.row);
+      const v = entry[key];
+      if (!v) { noKey.push(entry); continue; }
+      if (!buckets.has(v)) buckets.set(v, []);
+      buckets.get(v).push(entry);
     }
+    return { buckets, noKey };
+  };
+  const appendFlat = (target, items) => {
+    for (const { row } of items) target.appendChild(row);
+  };
+  const appendGrouped = (target, items) => {
+    if (!groupByPlace && !groupByCategory) { appendFlat(target, items); return; }
+    if (groupByPlace) {
+      const { buckets, noKey } = bucketBy(items, "place");
+      const places = [...buckets.keys()].sort((a, b) => a.localeCompare(b, 'sv'));
+      for (const p of places) {
+        target.appendChild(makeGroupHeader(p, "place"));
+        appendByCategory(target, buckets.get(p));
+      }
+      if (noKey.length) {
+        target.appendChild(makeGroupHeader("(Ingen plats)", "place"));
+        appendByCategory(target, noKey);
+      }
+    } else {
+      appendByCategory(target, items);
+    }
+  };
+  const appendByCategory = (target, items) => {
+    if (!groupByCategory) { appendFlat(target, items); return; }
+    const { buckets, noKey } = bucketBy(items, "category");
     const cats = [...buckets.keys()].sort((a, b) => a.localeCompare(b, 'sv'));
     for (const c of cats) {
-      target.appendChild(makeCatHeader(c));
-      for (const row of buckets.get(c)) target.appendChild(row);
+      target.appendChild(makeGroupHeader(c));
+      for (const { row } of buckets.get(c)) target.appendChild(row);
     }
-    if (noCat.length) {
-      target.appendChild(makeCatHeader("(Ingen kategori)"));
-      for (const row of noCat) target.appendChild(row);
+    if (noKey.length) {
+      target.appendChild(makeGroupHeader("(Ingen kategori)"));
+      for (const { row } of noKey) target.appendChild(row);
     }
   };
 
@@ -951,8 +993,8 @@ function renderLists() {
   listEj.innerHTML = "";
   listInv.appendChild(makeHeader());
   listEj.appendChild(makeHeader());
-  appendByCategory(listInv, invItems);
-  appendByCategory(listEj, ejItems);
+  appendGrouped(listInv, invItems);
+  appendGrouped(listEj, ejItems);
   visibleTags = _visible;
 
   const headerInv = listInv.closest(".group")?.querySelector(".groupTitle");

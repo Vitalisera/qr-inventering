@@ -1891,6 +1891,14 @@ function prepareNewItemDialog(scanned){
   newItemFields.parentNode.insertBefore(aiChip, dlgBtns);
   const applyAiSuggest=(s)=>{
     if(s.type) manualType.value = s.type === 'behållare' ? 'behållare' : 'singel';
+    // Plats först — det påverkar kategori-dropdownens innehåll
+    if(s.place){
+      const placeSel = qs('#manualPlace');
+      if(placeSel && [...placeSel.options].some(o => o.value === s.place)){
+        placeSel.value = s.place;
+        populateNewCategoryDropdown(s.place);
+      }
+    }
     const setSelect=(selId, newId, val)=>{
       if(!val) return;
       const sel=qs(selId); const newIn=qs(newId);
@@ -1913,6 +1921,7 @@ function prepareNewItemDialog(scanned){
       if(!s || !s.ok){ aiChip.classList.add('hidden'); return; }
       if(manualName.value.trim() !== n) return; // namn ändrats under anropet
       const parts=[];
+      if(s.place) parts.push(s.place);
       if(s.category) parts.push(s.category);
       if(s.unit) parts.push(s.unit);
       if(s.type) parts.push(s.type);

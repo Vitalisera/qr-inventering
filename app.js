@@ -28,6 +28,42 @@ function assertOk(r) {
   return r;
 }
 
+/* ===== AI-assistenter =====
+ * Backend tolererar att secret saknas (om AI_SHARED_SECRET inte satt i Script Properties).
+ * localStorage-nyckel 'vitaliseraAiSecret' kan sättas manuellt av admin om skydd behövs.
+ */
+const _aiSuggestCache = new Map(); // 'name|place' → {category,unit,type}
+const _aiSearchCache = new Map();  // query.lowercase → [{name,reason}]
+function _aiGetSecret() { try { return localStorage.getItem('vitaliseraAiSecret') || ''; } catch (_) { return ''; } }
+
+async function aiSuggest(name, place) {
+  const n = (name || '').trim();
+  const p = (place || '').trim();
+  if (n.length < 3) return null;
+  const key = n.toLowerCase() + '|' + p.toLowerCase();
+  if (_aiSuggestCache.has(key)) return _aiSuggestCache.get(key);
+  try {
+    const res = await gasCall('aiSuggest', { name: n, place: p, secret: _aiGetSecret() });
+    if (res && res.ok) { _aiSuggestCache.set(key, res); return res; }
+  } catch (_) {}
+  return null;
+}
+
+async function aiSearch(query, candidates) {
+  const q = (query || '').trim();
+  if (!q || !Array.isArray(candidates) || !candidates.length) return null;
+  const key = q.toLowerCase();
+  if (_aiSearchCache.has(key)) return _aiSearchCache.get(key);
+  try {
+    const res = await gasCall('aiSearch', { query: q, candidates, secret: _aiGetSecret() });
+    if (res && res.ok && Array.isArray(res.results)) {
+      _aiSearchCache.set(key, res.results);
+      return res.results;
+    }
+  } catch (_) {}
+  return null;
+}
+
 function markLogFail(le, err) {
   if (!le) return;
   const icon = le.querySelector(".icon"); if (icon) icon.textContent = "⚠️";
@@ -586,11 +622,17 @@ function closeSearchDialog(){
 searchFab?.addEventListener('click', openSearchDialog);
 closesearchFab?.addEventListener('click', closeSearchDialog);
 searchInput?.addEventListener('input', e => renderSearchResults(e.target.value));
+let _searchAiTimer = null;
 function renderSearchResults(q){
   const qn=(q||"").toLocaleLowerCase('sv').trim();
   searchResults.innerHTML="";
+  if(_searchAiTimer){ clearTimeout(_searchAiTimer); _searchAiTimer=null; }
   if(!qn) return;
   const rows=[];
+  const directNames=new Set();
+  // Kandidater för ev. AI-sökning: namn som passerar filter men INTE matchar substring
+  const aiCandidates=[];
+  const nameToTag=new Map();
   for(const [tag,val] of tagCache.entries()){
     const name=val?.name||""; if(!name) continue;
     if(activePlaces && !activePlaces.has(val.place||"Okänd")) continue;
@@ -599,7 +641,9 @@ function renderSearchResults(q){
       const isLow = (val.minQty||0) && (meta.qty < val.minQty);
       if(!isLow) continue;
     }
-    if(name.toLocaleLowerCase('sv').includes(qn)){
+    const isMatch = name.toLocaleLowerCase('sv').includes(qn);
+    if(isMatch){
+      directNames.add(name);
       const btn=document.createElement('button');
       btn.type="button"; btn.className="statusRow";
       btn.innerHTML=`<span class="sr-name">${esc(name)}</span><span class="sr-date">${esc(metaCache.get(tag)?.lastStr||"")}</span>`;
@@ -609,9 +653,39 @@ function renderSearchResults(q){
         () => { closeSearchDialog(); const c = tagCache.get(_tag); if (c) prepareContainerDialog(c, _tag, { editMode: true }); }
       );
       rows.push(btn);
+    } else {
+      aiCandidates.push(name);
+      nameToTag.set(name, tag);
     }
   }
   rows.slice(0,200).forEach(b=>searchResults.appendChild(b));
+
+  // AI-sökning: kör bara om få direkta träffar och query är substantiell.
+  if(qn.length >= 3 && rows.length < 8 && aiCandidates.length > 0){
+    _searchAiTimer = setTimeout(async () => {
+      const results = await aiSearch(q, aiCandidates);
+      if(!results || !results.length) return;
+      // Avbryt om query ändrats under anropet
+      if(searchInput.value.trim().toLocaleLowerCase('sv') !== qn) return;
+      const header = document.createElement('div');
+      header.className = 'searchAiHeader';
+      header.textContent = 'Liknande (AI)';
+      searchResults.appendChild(header);
+      for(const r of results){
+        const tag = nameToTag.get(r.name);
+        if(!tag) continue;
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'statusRow aiResult';
+        btn.innerHTML = `<span class="sr-name">${esc(r.name)}</span><span class="sr-reason">${esc(r.reason||'')}</span>`;
+        const _tag = tag;
+        addSafeTap(btn,
+          () => { closeSearchDialog(); openContainerForTag(_tag); },
+          () => { closeSearchDialog(); const c = tagCache.get(_tag); if (c) prepareContainerDialog(c, _tag, { editMode: true }); }
+        );
+        searchResults.appendChild(btn);
+      }
+    }, 700);
+  }
 }
 
 /* ===== Preload helpers ===== */
@@ -992,7 +1066,8 @@ function closeDialog(){
     cooldown(lastCode || "__dlg__");
   });
 }
-function resetDialog(){dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;manualName.value="";manualQty.value="";dlg.querySelectorAll('.tagScanRow,.extraFields').forEach(el=>el.remove());}
+let _aiSuggestTimer = null;
+function resetDialog(){dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;manualName.value="";manualName.oninput=null;manualQty.value="";if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip').forEach(el=>el.remove());}
 
 /* ===== Behållare-dialog ===== */
 /* ===== Singel-bekräftelsedialog ===== */
@@ -1809,6 +1884,44 @@ function prepareNewItemDialog(scanned){
       if (isNew) { unitNewInput.value = ''; unitNewInput.focus(); }
     };
   }
+
+  // AI-chip: föreslår kategori/enhet/typ baserat på artikelnamn
+  const aiChip=document.createElement('div');
+  aiChip.className='aiChip hidden';
+  newItemFields.parentNode.insertBefore(aiChip, dlgBtns);
+  const applyAiSuggest=(s)=>{
+    if(s.type) manualType.value = s.type === 'behållare' ? 'behållare' : 'singel';
+    const setSelect=(selId, newId, val)=>{
+      if(!val) return;
+      const sel=qs(selId); const newIn=qs(newId);
+      if(!sel) return;
+      const match=[...sel.options].some(o => o.value === val);
+      if(match){ sel.value = val; if(newIn){ newIn.style.display='none'; newIn.value=''; } }
+      else { sel.value='__new__'; if(newIn){ newIn.style.display='block'; newIn.value=val; } }
+    };
+    setSelect('#manualUnit','#manualUnitNew', s.unit);
+    setSelect('#manualCategory','#manualCategoryNew', s.category);
+    aiChip.classList.add('hidden');
+  };
+  manualName.oninput = () => {
+    if(_aiSuggestTimer) clearTimeout(_aiSuggestTimer);
+    const n=manualName.value.trim();
+    if(n.length < 3){ aiChip.classList.add('hidden'); return; }
+    _aiSuggestTimer = setTimeout(async () => {
+      const place = qs('#manualPlace')?.value || '';
+      const s = await aiSuggest(n, place);
+      if(!s || !s.ok){ aiChip.classList.add('hidden'); return; }
+      if(manualName.value.trim() !== n) return; // namn ändrats under anropet
+      const parts=[];
+      if(s.category) parts.push(s.category);
+      if(s.unit) parts.push(s.unit);
+      if(s.type) parts.push(s.type);
+      if(!parts.length){ aiChip.classList.add('hidden'); return; }
+      aiChip.innerHTML = `<button type="button" class="aiChipBtn">📎 ${esc(parts.join(' · '))}</button><span class="aiChipHint">Tryck för att fylla i</span>`;
+      aiChip.querySelector('.aiChipBtn').onclick = () => applyAiSuggest(s);
+      aiChip.classList.remove('hidden');
+    }, 600);
+  };
 
   const tagRow=document.createElement('div');
   tagRow.className='tagScanRow';

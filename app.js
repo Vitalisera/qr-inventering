@@ -665,7 +665,8 @@ function renderSearchResults(q){
     const loading = document.createElement('div');
     loading.className = 'searchAiLoading';
     loading.innerHTML = '<span class="aiSpinner"></span> Söker med AI…';
-    searchResults.appendChild(loading);
+    // Lägg HÖGST UPP så den alltid syns, även om substring-träffar skjuter ner den
+    searchResults.insertBefore(loading, searchResults.firstChild);
     _searchAiTimer = setTimeout(async () => {
       const results = await aiSearch(q, aiCandidates);
       // Avbryt om query ändrats under anropet

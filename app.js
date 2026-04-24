@@ -354,7 +354,7 @@ function flushUpdates() {
 function setLocalMeta(tag,patch){const prev=metaCache.get(tag)||{};let next={...prev,...patch};if(typeof next.lastMs==="number"){next.lastMs=toDayMs(next.lastMs);next.lastStr=toDayStr(next.lastMs);}else if(typeof next.lastStr==="string"&&next.lastStr){const ms=parseLocalYMD(next.lastStr);next.lastMs=toDayMs(ms);next.lastStr=toDayStr(next.lastMs);}else if(prev.lastMs){next.lastMs=prev.lastMs;next.lastStr=prev.lastStr||toDayStr(prev.lastMs);}else{next.lastMs=null;next.lastStr="";}metaCache.set(tag,next);}
 function recomputeMaxLast(){let max=null;for(const v of metaCache.values())if(v.lastMs!=null)max=(max==null||v.lastMs>max)?v.lastMs:max;maxLastMs=max;}
 
-/* ===== Filter (flik = plats) ===== */
+/* ===== Filter (flik-selector + gruppering) ===== */
 function loadPlaceFilter(){
   try{
     const raw = localStorage.getItem('vitaliseraPlaceFilter');
@@ -1336,11 +1336,35 @@ function prepareContainerDialog(item, tag, opts = {}) {
     `<option value="${esc(u)}"${u === currentUnit ? " selected" : ""}>${esc(u)}</option>`
   ).join('');
 
+  // Unika platser (kolumn B) för samma flik.
+  const placeSetEdit = new Set();
+  for (const v of tagCache.values()) {
+    const sp = (v?.sheetPlace || "").trim();
+    if (!sp) continue;
+    const vSheet = v.sheetName || v.place || "";
+    if (sheetForItem && vSheet !== sheetForItem) continue;
+    placeSetEdit.add(sp);
+  }
+  const currentPlace = (dialogItem.sheetPlace || "").trim();
+  const placeListEdit = [...placeSetEdit].sort((a,b) => a.localeCompare(b, 'sv'));
+  if (currentPlace && !placeListEdit.includes(currentPlace)) placeListEdit.unshift(currentPlace);
+  const placeOptionsEdit = placeListEdit.map(p =>
+    `<option value="${esc(p)}"${p === currentPlace ? " selected" : ""}>${esc(p)}</option>`
+  ).join('');
+
   const extra = document.createElement("div");
   extra.className = "extraFields";
   extra.innerHTML = `
     <label>Kommentar</label>
     <textarea id="commentEdit" rows="2">${esc(dialogItem.comment || "")}</textarea>
+
+    <label>Plats</label>
+    <select id="placeEdit">
+      <option value=""${!currentPlace ? " selected" : ""}>(ingen)</option>
+      ${placeOptionsEdit}
+      <option value="__new__">+ Ny plats…</option>
+    </select>
+    <input id="placeNew" type="text" placeholder="Ange ny plats" style="display:none;margin-top:4px">
 
     <label>Kategori</label>
     <select id="categoryEdit">
@@ -1390,6 +1414,17 @@ function prepareContainerDialog(item, tag, opts = {}) {
     toggleMore.textContent = vis ? "Fler fält" : "Färre fält";
     extraFieldsExpanded = !vis;
   };
+
+  // Plats: visa ny-textinput när "+ Ny plats…" valts
+  const placeSelEdit = extra.querySelector("#placeEdit");
+  const placeNewEdit = extra.querySelector("#placeNew");
+  if (placeSelEdit && placeNewEdit) {
+    placeSelEdit.addEventListener("change", () => {
+      const isNew = placeSelEdit.value === "__new__";
+      placeNewEdit.style.display = isNew ? "block" : "none";
+      if (isNew) { placeNewEdit.value = ""; placeNewEdit.focus(); }
+    });
+  }
 
   // Kategori: visa ny-textinput när "+ Ny kategori…" valts
   const catSel = extra.querySelector("#categoryEdit");
@@ -1551,10 +1586,14 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const category = catRaw === "__new__"
       ? (qs("#categoryNew")?.value || "").trim()
       : catRaw;
+    const placeRaw = (qs("#placeEdit")?.value || "").trim();
+    const sheetPlace = placeRaw === "__new__"
+      ? (qs("#placeNew")?.value || "").trim()
+      : placeRaw;
 
     setBtnBusy(saveBtn, true);
 
-    tagCache.set(tag, { ...tagCache.get(tag), comment, unit, minQty, type: typeVal, category, pendingSync: true });
+    tagCache.set(tag, { ...tagCache.get(tag), comment, unit, minQty, type: typeVal, category, sheetPlace, pendingSync: true });
 
     const patch = { unit };
     if (date) patch.lastStr = date;
@@ -1566,7 +1605,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
 
     renderLists();
 
-    const payload = { tag, comment, unit, minQty, type: typeVal, category, userName, sheetName: _sn, rowNum: _rn };
+    const payload = { tag, comment, unit, minQty, type: typeVal, category, place: sheetPlace, userName, sheetName: _sn, rowNum: _rn };
     if (date) payload.lastYMD = date;
     queueUpdate("updateMeta", payload);
 
@@ -1868,7 +1907,7 @@ function openLinkSearchDialog(tagToLink) {
 function populatePlaceDropdown(){
   const sel=qs('#manualPlace'); if(!sel)return;
   sel.innerHTML='';
-  const opt0=document.createElement('option'); opt0.value=''; opt0.textContent='Välj plats…'; sel.appendChild(opt0);
+  const opt0=document.createElement('option'); opt0.value=''; opt0.textContent='Välj flik…'; sel.appendChild(opt0);
   const places=[...placeSet].sort((a,b)=>a.localeCompare(b,'sv'));
   for(const p of places){const o=document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o);}
 }
@@ -1891,6 +1930,27 @@ function populateNewUnitDropdown(){
     '<option value="">Välj enhet…</option>' +
     units.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join('') +
     '<option value="__new__">+ Ny enhet…</option>';
+  if (newInput) { newInput.style.display = 'none'; newInput.value = ''; }
+}
+
+function populateSheetPlaceDropdown(forSheet){
+  const sel = qs('#manualSheetPlace');
+  const newInput = qs('#manualSheetPlaceNew');
+  if (!sel) return;
+  const sheet = (forSheet || '').trim();
+  const placeSetLocal = new Set();
+  for (const v of tagCache.values()) {
+    const sp = (v?.sheetPlace || '').trim();
+    if (!sp) continue;
+    const vSheet = v.sheetName || v.place || '';
+    if (sheet && vSheet !== sheet) continue;
+    placeSetLocal.add(sp);
+  }
+  const places = [...placeSetLocal].sort((a,b) => a.localeCompare(b, 'sv'));
+  sel.innerHTML =
+    '<option value="">Plats (valfri)</option>' +
+    places.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('') +
+    '<option value="__new__">+ Ny plats…</option>';
   if (newInput) { newInput.style.display = 'none'; newInput.value = ''; }
 }
 
@@ -1918,17 +1978,30 @@ function populateNewCategoryDropdown(forPlace){
 function prepareNewItemDialog(scanned){
   let currentTag=scanned;
   lastCode=scanned; resetDialog(); dlgTitle.textContent="Ny artikel";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, plats och kategori. <b>Enhet är obligatorisk.</b><br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Saknas enhet eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, flik, plats och kategori. <b>Enhet är obligatorisk.</b><br><b>Flik</b> = vilket Sheet-blad raden skapas i. <b>Plats</b> = fysisk placering (kolumn B).<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Saknas enhet, flik, plats eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
 
   const isManual=String(scanned).startsWith('M');
   dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${esc(scanned)}</b>. Ange uppgifter:`;
   newItemFields.classList.remove("hidden");
   populatePlaceDropdown();
   populateNewUnitDropdown();
+  populateSheetPlaceDropdown(qs('#manualPlace')?.value || '');
   populateNewCategoryDropdown(qs('#manualPlace')?.value || '');
   const placeSel = qs('#manualPlace');
   if (placeSel) {
-    placeSel.onchange = () => populateNewCategoryDropdown(placeSel.value);
+    placeSel.onchange = () => {
+      populateSheetPlaceDropdown(placeSel.value);
+      populateNewCategoryDropdown(placeSel.value);
+    };
+  }
+  const spSel = qs('#manualSheetPlace');
+  const spNew = qs('#manualSheetPlaceNew');
+  if (spSel && spNew) {
+    spSel.onchange = () => {
+      const isNew = spSel.value === '__new__';
+      spNew.style.display = isNew ? 'block' : 'none';
+      if (isNew) { spNew.value = ''; spNew.focus(); }
+    };
   }
   const catSel = qs('#manualCategory');
   const catNew = qs('#manualCategoryNew');
@@ -2034,6 +2107,10 @@ function prepareNewItemDialog(scanned){
       : unitRaw;
     if(!unit){show("Ange enhet","warn");return;}
     const place=(qs('#manualPlace')?.value||"").trim()||"Okänd";
+    const spRaw=(qs('#manualSheetPlace')?.value||"").trim();
+    const sheetPlace = spRaw === '__new__'
+      ? (qs('#manualSheetPlaceNew')?.value||'').trim()
+      : spRaw;
     const catRaw=(qs('#manualCategory')?.value||"").trim();
     const category = catRaw === '__new__'
       ? (qs('#manualCategoryNew')?.value||'').trim()
@@ -2042,7 +2119,7 @@ function prepareNewItemDialog(scanned){
     show("Sparar…");
     // Optimistisk write FÖRE gasCall. pendingSync:true gör att initData preserverar posten
     // om preload-pollen råkar träffa innan logTag-svaret hunnit fram.
-    tagCache.set(currentTag,{name,type,place,sheetName:place,category,minQty:0,comment:'',step:'',rowNum:null,altTags:[],pendingSync:true});
+    tagCache.set(currentTag,{name,type,place,sheetName:place,sheetPlace,category,minQty:0,comment:'',step:'',rowNum:null,altTags:[],pendingSync:true});
     setLocalMeta(currentTag,{qty,unit,lastMs:Date.now(),user:userName});
     recomputeMaxLast();renderLists();
     gasCall('logTag', {tag: currentTag, name, type, qty, user: userName, sheetName: place||null})
@@ -2055,7 +2132,8 @@ function prepareNewItemDialog(scanned){
         const metaArgs = {userName};
         if (unit) metaArgs.unit = unit;
         if (category) metaArgs.category = category;
-        if (unit || category) gasCall('updateMeta', {tag: currentTag, args: metaArgs});
+        if (sheetPlace) metaArgs.place = sheetPlace;
+        if (unit || category || sheetPlace) gasCall('updateMeta', {tag: currentTag, args: metaArgs});
       })
       .catch(err => markLogFail(le, err));
     closeDialog();cooldown(currentTag);

@@ -26,7 +26,7 @@
   </header>
   <div class="help-box" id="help-header">
     Inventeringsapp för Vitalisera.<br>
-    <b>Skanna QR</b> läser QR/streckkod med kameran. <b>Sök</b> hittar artiklar med fritext. <b>⚙️</b> filtrerar platser och väljer ikoner.<br>
+    <b>Skanna QR</b> läser QR/streckkod med kameran. <b>Sök</b> hittar artiklar med fritext. <b>⚙️</b> filtrerar flikar och väljer ikoner.<br>
     Tryck <b>+</b> för att skapa en ny artikel manuellt, eller tryck på en rad i listan nedan.
   </div>
 
@@ -98,6 +98,8 @@
       <select id="manualUnit"></select>
       <input id="manualUnitNew" type="text" placeholder="Ange ny enhet" autocomplete="off" style="display:none" />
       <select id="manualPlace"></select>
+      <select id="manualSheetPlace"></select>
+      <input id="manualSheetPlaceNew" type="text" placeholder="Ange ny plats" autocomplete="off" style="display:none" />
       <select id="manualCategory"></select>
       <input id="manualCategoryNew" type="text" placeholder="Ange ny kategori" autocomplete="off" style="display:none" />
       <input id="manualQty" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd just nu (1 som standard)" autocomplete="off" />
@@ -112,9 +114,9 @@
   <div class="help-box" id="help-filter">
     <b>Visa endast ... lågt saldo</b> döljer artiklar där mängden räcker.<br>
     <b>Gruppera efter kategori</b> delar upp listan i kategori-block.<br>
-    <b>Visa från</b> styr vilka platser som ska synas; siffran (inv/total) visar hur långt du kommit per plats.<br>
+    <b>Visa från</b> styr vilka flikar som ska synas; siffran (inv/total) visar hur långt du kommit per flik.<br>
     <b>Visa ikoner</b> väljer vilka symboler som ritas efter artikelnamnet: 🏷️ tag, • singel, ℹ️ kommentar.<br>
-    Tryck "Använd" för att spara, "Välj alla" för att nollställa platsvalet.
+    Tryck "Använd" för att spara, "Välj alla" för att nollställa flikvalet.
   </div>
   <div id="placeList" class="checklist"></div>
   <div class="actions">
@@ -148,7 +150,7 @@
     <source src="https://actions.google.com/sounds/v1/cartoon/wood_plank_clicks.ogg" type="audio/ogg" />
   </audio>
 
-  <script src="app.js?v=43"></script>
+  <script src="app.js?v=45"></script>
 
   <script>
     if ('serviceWorker' in navigator) {

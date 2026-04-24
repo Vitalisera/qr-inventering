@@ -194,6 +194,7 @@ header h1 {
   flex: 3 1 0; text-align: left; padding-left: 10px;
 }
 .sr-name { word-break: break-word; margin-right: 4px; }
+.sr-syn { font-size: 0.8em; color: #888; font-weight: normal; }
 .headerRow .sr-min, .statusRow .sr-min { flex: 0.6 1 0; text-align: center; }
 .headerRow .sr-lastcount, .statusRow .sr-lastcount { flex: 1 1 0; text-align: center; }
 .headerRow .sr-date, .statusRow .sr-date { flex: 1.2 1 0; text-align: center; font-size: 0.85em; }

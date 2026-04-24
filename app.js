@@ -641,12 +641,18 @@ function renderSearchResults(q){
       const isLow = (val.minQty||0) && (meta.qty < val.minQty);
       if(!isLow) continue;
     }
-    const isMatch = name.toLocaleLowerCase('sv').includes(qn);
+    const nameLower = name.toLocaleLowerCase('sv');
+    const isNameMatch = nameLower.includes(qn);
+    const matchedSyn = !isNameMatch && Array.isArray(val.synonyms)
+      ? val.synonyms.find(s => String(s).toLocaleLowerCase('sv').includes(qn))
+      : null;
+    const isMatch = isNameMatch || !!matchedSyn;
     if(isMatch){
       directNames.add(name);
       const btn=document.createElement('button');
       btn.type="button"; btn.className="statusRow";
-      btn.innerHTML=`<span class="sr-name">${esc(name)}</span><span class="sr-date">${esc(metaCache.get(tag)?.lastStr||"")}</span>`;
+      const synHint = matchedSyn ? ` <span class="sr-syn">(${esc(matchedSyn)})</span>` : '';
+      btn.innerHTML=`<span class="sr-name">${esc(name)}${synHint}</span><span class="sr-date">${esc(metaCache.get(tag)?.lastStr||"")}</span>`;
       const _tag = tag;
       addSafeTap(btn,
         () => { closeSearchDialog(); openContainerForTag(_tag); },
@@ -723,7 +729,7 @@ function initData(records, { fromCache = false } = {}) {
   placeSet.clear();
 
   records.forEach(rec => {
-    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags, category] = rec;
+    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags, category, synonyms] = rec;
     if (!name) return;
     const nt = normTag(t);
     const plc = normPlace(place);
@@ -739,7 +745,8 @@ function initData(records, { fromCache = false } = {}) {
       comment: String(comment || "").trim(),
       rowNum: rowNum || null,
       sheetName: plc,
-      altTags: Array.isArray(altTags) ? altTags : []
+      altTags: Array.isArray(altTags) ? altTags : [],
+      synonyms: Array.isArray(synonyms) ? synonyms : []
     });
 
     placeSet.add(plc);

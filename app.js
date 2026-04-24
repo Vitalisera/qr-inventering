@@ -662,11 +662,22 @@ function renderSearchResults(q){
 
   // AI-sökning: kör bara om få direkta träffar och query är substantiell.
   if(qn.length >= 3 && rows.length < 8 && aiCandidates.length > 0){
+    const loading = document.createElement('div');
+    loading.className = 'searchAiLoading';
+    loading.innerHTML = '<span class="aiSpinner"></span> Söker med AI…';
+    searchResults.appendChild(loading);
     _searchAiTimer = setTimeout(async () => {
       const results = await aiSearch(q, aiCandidates);
-      if(!results || !results.length) return;
       // Avbryt om query ändrats under anropet
-      if(searchInput.value.trim().toLocaleLowerCase('sv') !== qn) return;
+      if(searchInput.value.trim().toLocaleLowerCase('sv') !== qn){ loading.remove(); return; }
+      loading.remove();
+      if(!results || !results.length){
+        const empty = document.createElement('div');
+        empty.className = 'searchAiEmpty';
+        empty.textContent = 'AI hittade inget liknande.';
+        searchResults.appendChild(empty);
+        return;
+      }
       const header = document.createElement('div');
       header.className = 'searchAiHeader';
       header.textContent = 'Liknande (AI)';
@@ -1915,11 +1926,14 @@ function prepareNewItemDialog(scanned){
     if(_aiSuggestTimer) clearTimeout(_aiSuggestTimer);
     const n=manualName.value.trim();
     if(n.length < 3){ aiChip.classList.add('hidden'); return; }
+    // Visa laddningsindikator omedelbart
+    aiChip.innerHTML = '<span class="aiSpinner"></span><span class="aiChipHint">AI tänker…</span>';
+    aiChip.classList.remove('hidden');
     _aiSuggestTimer = setTimeout(async () => {
       const place = qs('#manualPlace')?.value || '';
       const s = await aiSuggest(n, place);
-      if(!s || !s.ok){ aiChip.classList.add('hidden'); return; }
       if(manualName.value.trim() !== n) return; // namn ändrats under anropet
+      if(!s || !s.ok){ aiChip.classList.add('hidden'); return; }
       const parts=[];
       if(s.place) parts.push(s.place);
       if(s.category) parts.push(s.category);

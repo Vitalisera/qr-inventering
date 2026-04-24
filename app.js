@@ -1898,9 +1898,10 @@ function prepareNewItemDialog(scanned){
   }
 
   // AI-chip: föreslår kategori/enhet/typ baserat på artikelnamn
+  // Placeras DIREKT EFTER manualName så den syns under namnfältet när iOS-tangentbordet är uppe
   const aiChip=document.createElement('div');
   aiChip.className='aiChip hidden';
-  newItemFields.parentNode.insertBefore(aiChip, dlgBtns);
+  manualName.parentNode.insertBefore(aiChip, manualName.nextSibling);
   const applyAiSuggest=(s)=>{
     if(s.type) manualType.value = s.type === 'behållare' ? 'behållare' : 'singel';
     // Plats först — det påverkar kategori-dropdownens innehåll

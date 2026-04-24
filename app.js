@@ -4,7 +4,7 @@
  */
 
 /* ===== GAS API wrapper ===== */
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbx2TWEYfWS2U_DrtQhZrCfJssJXXjqIca-3DUiJ53wbvAxP_eTMy1ZFF5OAxB4ZaUARhQ/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
 
 async function gasCall(fn, params = {}) {
   const res = await fetch(GAS_URL, {
@@ -747,7 +747,7 @@ function initData(records, { fromCache = false } = {}) {
   placeSet.clear();
 
   records.forEach(rec => {
-    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags, category, synonyms] = rec;
+    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags, category, synonyms, sheetPlace] = rec;
     if (!name) return;
     const nt = normTag(t);
     const plc = normPlace(place);
@@ -757,6 +757,7 @@ function initData(records, { fromCache = false } = {}) {
       name,
       type,
       place: plc,
+      sheetPlace: String(sheetPlace || "").trim(),
       category: String(category || "").trim(),
       minQty: Number(minQty) || 0,
       step: String(step || "").trim(),
@@ -934,7 +935,7 @@ function renderLists() {
     (isInv ? invItems : ejItems).push({
       row,
       category: (item.category || "").trim(),
-      place: (item.place || "").trim() || "Okänd"
+      place: (item.sheetPlace || "").trim() || "Okänd"
     });
   }
 

@@ -857,6 +857,7 @@ function renderLists() {
     h.className = "statusRow headerRow";
     h.innerHTML = `
       <span class="sr-name">Benämning</span>
+      <span class="sr-place">Plats</span>
       <span class="sr-min">Min</span>
       <span class="sr-lastcount">Senast</span>
       <span class="sr-date">Datum</span>`;
@@ -897,6 +898,7 @@ function renderLists() {
 
     row.innerHTML = `
       <span class="sr-name">${esc(name)}${renderRowIcons(t, item, hasComment)}</span>
+      <span class="sr-place">${esc(place || "")}</span>
       <span class="sr-min">${esc(item.minQty ?? "")}</span>
       <span class="sr-lastcount">${esc(meta.qty ?? "")}</span>
       <span class="sr-date">${esc(meta.lastStr || "")}</span>`;

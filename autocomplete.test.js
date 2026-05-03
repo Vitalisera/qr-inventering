@@ -129,5 +129,27 @@ test('Distance-funktion: transposition kostar 1', () => {
   if (distance('ab', 'ba') !== 1) throw new Error('ab/ba ≠ 1: ' + distance('ab', 'ba'));
 });
 
+test('Adaptiv tröskel: 4-tecken-query slipper synonym-brus', () => {
+  // "skoh" ska INTE matcha skopa/sked/skal/sil (alla distans ~2 = 50% fel)
+  const synonymer = ['skopa', 'sked', 'skal', 'sil', 'skink'];
+  const r = suggest('skoh', synonymer);
+  for (const x of r) {
+    if (x.source === 'fuzzy') throw new Error('Falsk fuzzy på "skoh": ' + x.word + ' d=' + x.distance);
+  }
+});
+
+test('Adaptiv tröskel: rena typos i 4-tecken-query funkar fortfarande', () => {
+  // "krov" → "kniv": distans 1.5 (r→n sub 1, o→i granne 0.5)
+  // qlen=4 → effektiv tröskel 1.6 → träffas
+  const r = suggest('krov', ['kniv']);
+  has(r, 'kniv');
+});
+
+test('Adaptiv tröskel: längre queries får tillbaka full tolerans', () => {
+  // "skohor" (qlen=6) → tröskel 2.4. "skohorn" distans 1 (deletion) → träffas
+  const r = suggest('skohor', ['skohorn', 'skidor']);
+  has(r, 'skohorn');
+});
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

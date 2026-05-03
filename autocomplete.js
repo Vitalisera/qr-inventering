@@ -104,12 +104,15 @@
     if (q.length < 2) return results;
     if (direct.length >= o.minPrefixHits) return results;
 
+    // Adaptiv tröskel: stoppar att korta queries (4 tecken) matchar allt med 50% fel.
+    const effThreshold = Math.min(o.fuzzyThreshold, q.length * 0.4);
+
     const fuzzy = [];
     for (const w of words) {
       const wn = norm(w);
       if (!wn || seen.has(wn)) continue;
       const d = distance(q, wn);
-      if (d <= o.fuzzyThreshold) {
+      if (d <= effThreshold) {
         fuzzy.push({ word: w, distance: d });
         seen.add(wn);
       }

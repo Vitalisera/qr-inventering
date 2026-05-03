@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 64;
+const APP_VERSION = 65;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -756,24 +756,50 @@ cancelFilterBtn?.addEventListener('click', () => closeFilterDialog());
 
 // På iOS PWA-läge är window.print() begränsad — öppna istället ny tab i Safari
 // (target=_blank tvingar ut ur standalone) som auto-triggar print efter render.
+function showPrintLoading(text) {
+  if (document.getElementById('printLoading')) return;
+  const o = document.createElement('div');
+  o.id = 'printLoading';
+  const s = document.createElement('div');
+  s.className = 'printSpinner';
+  const t = document.createElement('div');
+  t.textContent = text || 'Förbereder utskrift…';
+  o.append(s, t);
+  document.body.appendChild(o);
+}
+function hidePrintLoading() {
+  document.getElementById('printLoading')?.remove();
+}
+
 qs('#printListBtn')?.addEventListener('click', () => {
   // Applya valda inställningar först (annars skriver vi ut det gamla filtret).
-  // applyFilterBtn-handlern läser checkboxes, sparar, renderar och stänger dialogen.
   applyFilterBtn?.click();
   const isStandalone = navigator.standalone === true ||
     window.matchMedia('(display-mode: standalone)').matches;
   if (isStandalone) {
+    showPrintLoading('Öppnar utskrift…');
     const url = location.pathname + '?print=1';
     const w = window.open(url, '_blank');
-    if (!w) window.print();
+    if (!w) {
+      hidePrintLoading();
+      window.print();
+    } else {
+      // Användaren går till Safari-tabben — overlay rensas automatiskt
+      // efter 8s om de återvänder till PWA:n.
+      setTimeout(hidePrintLoading, 8000);
+    }
   } else {
-    window.print();
+    showPrintLoading('Förbereder utskrift…');
+    setTimeout(() => { window.print(); hidePrintLoading(); }, 50);
   }
 });
 
 // Auto-print om sidan laddats med ?print=1 (från PWA → Safari-tab)
 const _isPrintMode = new URLSearchParams(location.search).get('print') === '1';
 let _autoPrintPending = _isPrintMode;
+// Visa loading omedelbart — väntan mellan page-load och print-dialog kan
+// vara 1-3s på iOS Safari, vilket annars ser ut som att inget händer.
+if (_isPrintMode) showPrintLoading('Förbereder utskrift…');
 
 // Stäng iOS text-selection innan knappklick så selection-handles inte stjäl tryck.
 document.addEventListener('pointerdown', e => {
@@ -1251,7 +1277,10 @@ function renderLists() {
     _autoPrintPending = false;
     // Vänta tills sidan är helt laddad (inkl CSS/fonts) — annars visar
     // iOS Safari "Websidan är inte helt inläst. Vill du fortsätta?".
-    const triggerPrint = () => setTimeout(() => window.print(), 100);
+    const triggerPrint = () => setTimeout(() => {
+      hidePrintLoading();
+      window.print();
+    }, 100);
     if (document.readyState === 'complete') triggerPrint();
     else window.addEventListener('load', triggerPrint, { once: true });
   }

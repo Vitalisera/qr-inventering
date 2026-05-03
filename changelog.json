@@ -1,6 +1,13 @@
 {
-  "latest": 64,
+  "latest": 65,
   "versions": [
+    {
+      "version": 65,
+      "date": "2026-05-03",
+      "notes": [
+        "'Förbereder utskrift…' med spinner visas medan utskriftsdialogen laddar"
+      ]
+    },
     {
       "version": 64,
       "date": "2026-05-03",

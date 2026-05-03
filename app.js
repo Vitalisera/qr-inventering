@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 60;
+const APP_VERSION = 61;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -87,7 +87,13 @@ function showUpdateBanner(reg) {
 // eller flera versioner. lastSeenVersion uppdateras när användaren
 // stänger modalen, så samma "what's new" visas inte igen.
 async function maybeShowWhatsNew() {
-  const stored = parseInt(localStorage.getItem('vitaliseraLastSeenVersion'), 10);
+  // Test-stöd: ?asVersion=N overridar localStorage så man kan
+  // simulera "jag är användare som missat versionerna N+1...APP_VERSION"
+  // utan att faktiskt hoppa över versioner i naturligt flöde.
+  const override = parseInt(new URLSearchParams(location.search).get('asVersion'), 10);
+  const stored = !Number.isNaN(override)
+    ? override
+    : parseInt(localStorage.getItem('vitaliseraLastSeenVersion'), 10);
   if (Number.isNaN(stored)) {
     // Första gången — bara markera nuvarande version som sedd, ingen modal.
     localStorage.setItem('vitaliseraLastSeenVersion', String(APP_VERSION));
@@ -123,8 +129,11 @@ async function maybeShowWhatsNew() {
   ok.type = 'button';
   ok.className = 'btn';
   ok.textContent = 'OK';
+  const isTest = !Number.isNaN(override);
   ok.addEventListener('click', () => {
-    localStorage.setItem('vitaliseraLastSeenVersion', String(APP_VERSION));
+    // I test-mode (?asVersion=N): skriv inte localStorage, så testet kan
+    // upprepas. I riktig användning: markera versionen som sedd.
+    if (!isTest) localStorage.setItem('vitaliseraLastSeenVersion', String(APP_VERSION));
     overlay.remove();
   });
   card.appendChild(ok);

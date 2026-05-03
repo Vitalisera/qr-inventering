@@ -1,6 +1,13 @@
 {
-  "latest": 60,
+  "latest": 61,
   "versions": [
+    {
+      "version": 61,
+      "date": "2026-05-03",
+      "notes": [
+        "Test-stöd: ?asVersion=N i URL:en simulerar att du är användare på version N — bra för att testa Vad är nytt-popupen"
+      ]
+    },
     {
       "version": 60,
       "date": "2026-05-03",

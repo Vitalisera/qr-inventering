@@ -1,6 +1,14 @@
 {
-  "latest": 57,
+  "latest": 58,
   "versions": [
+    {
+      "version": 58,
+      "date": "2026-05-03",
+      "notes": [
+        "Versions-bannern dyker upp automatiskt under användning — ny version pushas ut inom 60 sekunder från release",
+        "Bannern triggas också när du växlar tillbaka till appen från app-switcher"
+      ]
+    },
     {
       "version": 57,
       "date": "2026-05-03",

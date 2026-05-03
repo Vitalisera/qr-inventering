@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 57;
+const APP_VERSION = 58;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -33,6 +33,19 @@ if ('serviceWorker' in navigator) {
     if (_swReloading) return;
     _swReloading = true;
     location.reload();
+  });
+
+  // Kolla efter ny version regelbundet OCH när PWA:n blir synlig.
+  // Pollning fångar långsessioner där användaren aldrig växlar app;
+  // visibilitychange fångar app-switcher utan att vänta på nästa poll.
+  const checkForUpdate = () => {
+    navigator.serviceWorker.getRegistration().then(reg => {
+      reg?.update().catch(() => {});
+    }).catch(() => {});
+  };
+  setInterval(checkForUpdate, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForUpdate();
   });
 }
 

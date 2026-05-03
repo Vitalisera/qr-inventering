@@ -697,12 +697,28 @@ body.kb #cameraBox { display: none !important; }
 
 /* === UTSKRIFT === */
 @media print {
-  body { background: white !important; color: black !important; padding: 0 !important; }
+  html, body {
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    position: static !important;
+  }
   header, #cameraBox, #statusContainer, .btn.fab, .dialog,
   #installOverlay, #rotateBlock, .help-toggle, .help-box,
-  .infoIcon, audio { display: none !important; }
-  #statusList { display: block !important; padding: 0 !important; gap: 12px; }
-  .group { page-break-inside: auto; margin-bottom: 16px; }
+  .infoIcon, .rowIcon, audio { display: none !important; }
+  #statusList {
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    position: static !important;
+    overflow: visible !important;
+  }
+  .group { page-break-inside: auto; margin-bottom: 12pt; }
   .groupHeader {
     background: white !important;
     color: black !important;
@@ -722,22 +738,38 @@ body.kb #cameraBox { display: none !important; }
     margin-top: 6pt !important;
     page-break-after: avoid;
   }
-  .list { display: block !important; }
+  .list { display: block !important; width: 100% !important; }
   .statusRow {
+    display: table !important;
+    table-layout: fixed;
+    width: 100% !important;
+    box-sizing: border-box;
     background: white !important;
     color: black !important;
     border: 0.5pt solid #888 !important;
     border-radius: 0 !important;
     box-shadow: none !important;
-    padding: 4pt 6pt !important;
+    padding: 0 !important;
     margin: 0 0 2pt 0 !important;
     page-break-inside: avoid;
     font-size: 10pt;
   }
+  .statusRow span {
+    display: table-cell !important;
+    vertical-align: middle;
+    padding: 3pt 6pt !important;
+    margin: 0 !important;
+    border-right: 0.5pt solid #ccc !important;
+    text-align: left;
+  }
+  /* sr-name har ingen explicit width — table-layout:fixed ger den
+     resten (55% med 4 kolumner, 65% när hideMin döljer sr-min). */
+  .statusRow .sr-min { width: 10%; text-align: center; }
+  .statusRow .sr-lastcount { width: 15%; text-align: center; }
+  .statusRow .sr-date { width: 20%; text-align: center; }
+  .statusRow span:last-child { border-right: none !important; }
   .statusRow.headerRow { font-weight: 700; border-bottom: 1.5pt solid black !important; }
   .statusRow.low { background: #eee !important; }
   .statusRow.pendingSync { border-left: 2pt solid #555 !important; }
-  .statusRow span { border-right: 0.5pt solid #ccc !important; }
-  .statusRow span:last-child { border-right: none !important; }
   @page { margin: 1cm; size: A4; }
 }

@@ -87,8 +87,8 @@ const prefs = {
 
 function renderRowIcons(t, item, hasComment) {
   const out = [];
-  if (prefs.iconTag && !t.startsWith('S')) out.push('🏷️');
-  if (prefs.iconType && item.type === 'singel') out.push('•');
+  if (prefs.iconTag && !t.startsWith('S')) out.push('<span class="rowIcon">🏷️</span>');
+  if (prefs.iconType && item.type === 'singel') out.push('<span class="rowIcon">•</span>');
   if (prefs.iconComment && hasComment) {
     out.push(`<span class="infoIcon" data-tag="${t}">ℹ️</span>`);
   }

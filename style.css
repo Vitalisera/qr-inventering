@@ -696,6 +696,56 @@ body.kb #cameraBox { display: none !important; }
 @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%); } }
 @keyframes flash { 0% { background: rgba(0,255,0,.2); } 100% { background: transparent; } }
 
+/* === WHAT'S NEW MODAL === */
+#whatsNewOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99998;
+  padding: 20px;
+  padding-top: max(20px, env(safe-area-inset-top));
+}
+.whatsNewCard {
+  background: #fff;
+  color: #222;
+  border-radius: 14px;
+  padding: 22px 22px 18px;
+  max-width: 420px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 40px rgba(0,0,0,.4);
+}
+.whatsNewCard h2 {
+  margin: 0 0 12px;
+  color: #1f5e69;
+  font-size: 1.15rem;
+}
+.whatsNewCard ul {
+  margin: 0 0 18px;
+  padding-left: 22px;
+  line-height: 1.5;
+}
+.whatsNewCard ul li { margin-bottom: 6px; }
+.whatsNewCard .btn {
+  display: block;
+  width: 100%;
+  background: #1f5e69;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+@media (prefers-color-scheme: dark) {
+  .whatsNewCard { background: #1c2326; color: #e8e8e8; }
+  .whatsNewCard h2 { color: #6db3bd; }
+}
+
 /* === UPDATE-BANNER === */
 #updateBanner {
   position: fixed;
@@ -736,8 +786,8 @@ body.kb #cameraBox { display: none !important; }
     position: static !important;
   }
   header, #cameraBox, #statusContainer, .btn.fab, .dialog,
-  #installOverlay, #rotateBlock, #updateBanner, .help-toggle, .help-box,
-  .infoIcon, .rowIcon, audio { display: none !important; }
+  #installOverlay, #rotateBlock, #updateBanner, #whatsNewOverlay,
+  .help-toggle, .help-box, .infoIcon, .rowIcon, audio { display: none !important; }
   #statusList {
     display: block !important;
     padding: 0 !important;

@@ -1,6 +1,14 @@
 {
-  "latest": 58,
+  "latest": 59,
   "versions": [
+    {
+      "version": 59,
+      "date": "2026-05-03",
+      "notes": [
+        "'Vad är nytt'-popup visas efter omstart med en sammanfattning av ändringar sedan din förra version",
+        "Update-bannern är nu enklare (bara 'Starta om') — detaljerna visas i den nya popupen istället"
+      ]
+    },
     {
       "version": 58,
       "date": "2026-05-03",

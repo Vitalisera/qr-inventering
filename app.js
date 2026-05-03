@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 58;
+const APP_VERSION = 59;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -65,42 +65,74 @@ async function fetchChangelogSince(currentVersion) {
   finally { clearTimeout(timer); }
 }
 
-async function showUpdateBanner(reg) {
+function showUpdateBanner(reg) {
   if (document.getElementById('updateBanner')) return;
-
-  const notes = await fetchChangelogSince(APP_VERSION);
-
+  // Banner är medvetet enkel — detaljerade ändringar visas i "What's new"-modal
+  // EFTER reload, då användaren faktiskt kör nya versionen.
   const banner = document.createElement('div');
   banner.id = 'updateBanner';
-
-  const left = document.createElement('div');
-  left.className = 'updateBannerLeft';
-  const title = document.createElement('div');
+  const title = document.createElement('span');
   title.className = 'updateBannerTitle';
   title.textContent = 'Ny version tillgänglig';
-  left.appendChild(title);
-
-  if (notes.length) {
-    const list = document.createElement('ul');
-    list.className = 'updateBannerNotes';
-    for (const n of notes) {
-      const li = document.createElement('li');
-      li.textContent = n;
-      list.appendChild(li);
-    }
-    left.appendChild(list);
-  }
-  banner.appendChild(left);
-
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'updateBtn';
   btn.textContent = 'Starta om';
   btn.addEventListener('click', () => reg.waiting?.postMessage('SKIP_WAITING'));
-  banner.appendChild(btn);
-
+  banner.append(title, btn);
   document.body.appendChild(banner);
 }
+
+// What's new-modal: visas vid load om användaren just hoppat över en
+// eller flera versioner. lastSeenVersion uppdateras när användaren
+// stänger modalen, så samma "what's new" visas inte igen.
+async function maybeShowWhatsNew() {
+  const stored = parseInt(localStorage.getItem('vitaliseraLastSeenVersion'), 10);
+  if (Number.isNaN(stored)) {
+    // Första gången — bara markera nuvarande version som sedd, ingen modal.
+    localStorage.setItem('vitaliseraLastSeenVersion', String(APP_VERSION));
+    return;
+  }
+  if (stored >= APP_VERSION) return;
+
+  const notes = await fetchChangelogSince(stored);
+  if (!notes.length) {
+    localStorage.setItem('vitaliseraLastSeenVersion', String(APP_VERSION));
+    return;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'whatsNewOverlay';
+
+  const card = document.createElement('div');
+  card.className = 'whatsNewCard';
+
+  const h = document.createElement('h2');
+  h.textContent = 'Nyheter sedan din förra version';
+  card.appendChild(h);
+
+  const list = document.createElement('ul');
+  for (const n of notes) {
+    const li = document.createElement('li');
+    li.textContent = n;
+    list.appendChild(li);
+  }
+  card.appendChild(list);
+
+  const ok = document.createElement('button');
+  ok.type = 'button';
+  ok.className = 'btn';
+  ok.textContent = 'OK';
+  ok.addEventListener('click', () => {
+    localStorage.setItem('vitaliseraLastSeenVersion', String(APP_VERSION));
+    overlay.remove();
+  });
+  card.appendChild(ok);
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+}
+maybeShowWhatsNew();
 
 /* ===== GAS API wrapper ===== */
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';

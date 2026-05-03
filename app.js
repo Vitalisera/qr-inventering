@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 62;
+const APP_VERSION = 63;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -1249,7 +1249,11 @@ function renderLists() {
 
   if (_autoPrintPending && _visible.length > 0) {
     _autoPrintPending = false;
-    setTimeout(() => window.print(), 100);
+    // Vänta tills sidan är helt laddad (inkl CSS/fonts) — annars visar
+    // iOS Safari "Websidan är inte helt inläst. Vill du fortsätta?".
+    const triggerPrint = () => setTimeout(() => window.print(), 100);
+    if (document.readyState === 'complete') triggerPrint();
+    else window.addEventListener('load', triggerPrint, { once: true });
   }
 }
 

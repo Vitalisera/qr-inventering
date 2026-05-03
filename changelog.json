@@ -1,6 +1,13 @@
 {
-  "latest": 62,
+  "latest": 63,
   "versions": [
+    {
+      "version": 63,
+      "date": "2026-05-03",
+      "notes": [
+        "Utskriften väntar in att sidan laddats helt — ingen 'inte helt inläst'-prompt"
+      ]
+    },
     {
       "version": 62,
       "date": "2026-05-03",

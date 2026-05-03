@@ -746,31 +746,46 @@ body.kb #cameraBox { display: none !important; }
   .whatsNewCard h2 { color: #6db3bd; }
 }
 
-/* === UPDATE-BANNER === */
+/* === UPDATE-BANNER (modal-overlay som blockerar bakgrund) === */
 #updateBanner {
   position: fixed;
-  top: 0; left: 0; right: 0;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  padding: 20px;
+}
+#updateBanner .updateBannerTitle {
+  display: block;
   background: #1f5e69;
   color: #fff;
-  padding: 10px 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  z-index: 99999;
-  box-shadow: 0 2px 10px rgba(0,0,0,.25);
-  font-size: 0.95rem;
-  padding-top: max(10px, env(safe-area-inset-top));
+  border-radius: 14px 14px 0 0;
+  padding: 18px 24px 14px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  text-align: center;
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  box-shadow: 0 12px 40px rgba(0,0,0,.4);
 }
 #updateBanner button {
   background: #fff;
   color: #1f5e69;
   border: none;
-  border-radius: 6px;
-  padding: 6px 14px;
-  font-weight: 600;
-  font-size: 0.9rem;
+  border-radius: 0 0 14px 14px;
+  padding: 14px 24px;
+  font-weight: 700;
+  font-size: 1rem;
   cursor: pointer;
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  border-top: 1px solid rgba(0,0,0,.08);
+  box-shadow: 0 12px 40px rgba(0,0,0,.4);
 }
 
 /* === UTSKRIFT === */

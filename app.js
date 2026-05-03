@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 59;
+const APP_VERSION = 60;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -77,7 +77,7 @@ function showUpdateBanner(reg) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'updateBtn';
-  btn.textContent = 'Starta om';
+  btn.textContent = 'Uppgradera version';
   btn.addEventListener('click', () => reg.waiting?.postMessage('SKIP_WAITING'));
   banner.append(title, btn);
   document.body.appendChild(banner);

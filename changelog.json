@@ -1,6 +1,14 @@
 {
-  "latest": 59,
+  "latest": 60,
   "versions": [
+    {
+      "version": 60,
+      "date": "2026-05-03",
+      "notes": [
+        "Update-prompten är nu en centrerad modal som blockerar bakgrunden — svårare att missa",
+        "Knappen heter 'Uppgradera version' istället för 'Starta om'"
+      ]
+    },
     {
       "version": 59,
       "date": "2026-05-03",

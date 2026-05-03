@@ -6,10 +6,18 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 67;
+const APP_VERSION = 68;
+
+// Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
+// update-flow (banner, controllerchange, polling, what's new). Annars
+// reloadar tabben vid uppgradering med samma URL → window.print() triggas
+// igen → "Tillåt utskrift?"-prompt vid varje uppgradering.
+const _isPrintTab = new URLSearchParams(location.search).get('print') === '1';
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
+    if (_isPrintTab) return;
+
     // Tab öppnas medan en SW redan ligger waiting (bakgrunds-uppdatering)
     if (reg.waiting && navigator.serviceWorker.controller) {
       showUpdateBanner(reg);
@@ -28,25 +36,25 @@ if ('serviceWorker' in navigator) {
     });
   }).catch(() => {});
 
-  let _swReloading = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (_swReloading) return;
-    _swReloading = true;
-    location.reload();
-  });
+  if (!_isPrintTab) {
+    let _swReloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (_swReloading) return;
+      _swReloading = true;
+      location.reload();
+    });
 
-  // Kolla efter ny version regelbundet OCH när PWA:n blir synlig.
-  // Pollning fångar långsessioner där användaren aldrig växlar app;
-  // visibilitychange fångar app-switcher utan att vänta på nästa poll.
-  const checkForUpdate = () => {
-    navigator.serviceWorker.getRegistration().then(reg => {
-      reg?.update().catch(() => {});
-    }).catch(() => {});
-  };
-  setInterval(checkForUpdate, 60000);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') checkForUpdate();
-  });
+    // Kolla efter ny version regelbundet OCH när PWA:n blir synlig.
+    const checkForUpdate = () => {
+      navigator.serviceWorker.getRegistration().then(reg => {
+        reg?.update().catch(() => {});
+      }).catch(() => {});
+    };
+    setInterval(checkForUpdate, 60000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') checkForUpdate();
+    });
+  }
 }
 
 async function fetchChangelogSince(currentVersion) {
@@ -812,11 +820,10 @@ qs('#printListBtn')?.addEventListener('click', () => {
 });
 
 // Auto-print om sidan laddats med ?print=1 (från PWA → Safari-tab)
-const _isPrintMode = new URLSearchParams(location.search).get('print') === '1';
-let _autoPrintPending = _isPrintMode;
+let _autoPrintPending = _isPrintTab;
 // Visa loading omedelbart — väntan mellan page-load och print-dialog kan
 // vara 1-3s på iOS Safari, vilket annars ser ut som att inget händer.
-if (_isPrintMode) showPrintLoading('Förbereder utskrift…');
+if (_isPrintTab) showPrintLoading('Förbereder utskrift…');
 
 // Stäng iOS text-selection innan knappklick så selection-handles inte stjäl tryck.
 document.addEventListener('pointerdown', e => {
@@ -1580,7 +1587,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   dlgBtns.innerHTML = `
     <button id="incBtn" class="btn">Öka mängd</button>
     <button id="newBtn" class="btn">Ny total</button>
-    <button id="toggleMore" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper">⚙️</button>
+    <button id="toggleMore" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     <button id="cancelUpdate" class="btn cancel">Stäng</button>
     <div id="msgLine" class="msgLine"></div>
   `;
@@ -1948,7 +1955,16 @@ function prepareContainerDialog(item, tag, opts = {}) {
   });
   qs('#commentEdit')?.addEventListener('blur', scheduleAutoSave);
 
-  cancelBtn.onclick = () => { closeDialog(); show("Avbrutet", "warn"); };
+  // pointerup + click-dedupe så Stäng funkar även när tangentbordet är uppe
+  // (iOS slukar ibland click-eventet efter input-blur).
+  let _cancelTs = 0;
+  const cancelAction = () => {
+    if (Date.now() - _cancelTs < 300) return;
+    _cancelTs = Date.now();
+    closeDialog(); show("Avbrutet", "warn");
+  };
+  cancelBtn.addEventListener('pointerup', cancelAction);
+  cancelBtn.addEventListener('click', cancelAction);
 
   // Radera artikel
   const deleteBtn = extra.querySelector("#deleteItemBtn");
@@ -2585,12 +2601,12 @@ try {
     if (Array.isArray(cached?.data)) {
       initData(cached.data, { fromCache: true });
       hadCachedPreload = true;
-      if (!_isPrintMode) show("Uppdaterar i bakgrunden…", null, { autoreset: false });
+      if (!_isPrintTab) show("Uppdaterar i bakgrunden…", null, { autoreset: false });
     }
   }
 } catch (e) { console.warn('preloadCache read failed', e); }
 
-if (!hadCachedPreload && !_isPrintMode) show("Laddar inventeringslistor...", null, { autoreset: false });
+if (!hadCachedPreload && !_isPrintTab) show("Laddar inventeringslistor...", null, { autoreset: false });
 
 // Retry preload med backoff: GAS cold-start kan ta 5-10s, mobilnät-hick ger "Load failed".
 async function preloadWithRetry(){
@@ -2609,7 +2625,7 @@ async function preloadWithRetry(){
 // I print-läge: skip nätverks-preload helt och starta inte cacheTs-polling.
 // Cache är good-enough för utskrift och vi vill att window.print() ska
 // trigga omedelbart utan väntan på GAS cold-start.
-const _bootstrapPreload = _isPrintMode
+const _bootstrapPreload = _isPrintTab
   ? Promise.resolve()
   : preloadWithRetry().then(res => {
       if (res?.error) {
@@ -2624,7 +2640,7 @@ const _bootstrapPreload = _isPrintMode
       else show("Kunde inte ladda: " + reason, "warn", { autoreset: false });
     });
 _bootstrapPreload.finally(() => {
-  if (_isPrintMode) return;
+  if (_isPrintTab) return;
   // Tyst polling av servercache — startas först när bootstrap är klart så vi
   // inte får race mellan preloadWithRetry och pollern under GAS cold-start.
   setInterval(() => {

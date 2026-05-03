@@ -1,6 +1,15 @@
 {
-  "latest": 67,
+  "latest": 68,
   "versions": [
+    {
+      "version": 68,
+      "date": "2026-05-03",
+      "notes": [
+        "Tydligare kugghjuls-ikon (vektor istället för emoji) — ser likadant ut på alla enheter",
+        "Stäng-knappen funkar nu pålitligt även när tangentbordet är uppe",
+        "'Tillåt utskrift'-prompten kommer inte längre vid varje uppgradering"
+      ]
+    },
     {
       "version": 67,
       "date": "2026-05-03",

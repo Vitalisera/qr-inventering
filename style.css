@@ -701,11 +701,14 @@ body.kb #cameraBox { display: none !important; }
   background: transparent;
   color: var(--teal, #1f5e69);
   border: 1.5pt solid var(--teal, #1f5e69);
-  font-size: 1.15rem;
-  padding: 6px 12px;
+  padding: 8px 14px;
   min-width: 0;
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
+.btn.icon-btn svg { display: block; }
 .btn.icon-btn.expanded {
   background: var(--teal, #1f5e69);
   color: #fff;

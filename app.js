@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 61;
+const APP_VERSION = 62;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -772,7 +772,8 @@ qs('#printListBtn')?.addEventListener('click', () => {
 });
 
 // Auto-print om sidan laddats med ?print=1 (från PWA → Safari-tab)
-let _autoPrintPending = new URLSearchParams(location.search).get('print') === '1';
+const _isPrintMode = new URLSearchParams(location.search).get('print') === '1';
+let _autoPrintPending = _isPrintMode;
 
 // Stäng iOS text-selection innan knappklick så selection-handles inte stjäl tryck.
 document.addEventListener('pointerdown', e => {
@@ -2482,6 +2483,8 @@ loadPlaceFilter();
 
 // Stale-while-revalidate: rendera från localStorage direkt om möjligt,
 // hämta sen färsk server-data i bakgrunden.
+// I print-läge (?print=1): skip nätverk helt, använd bara cache så
+// utskriften startar omedelbart utan att vänta på server-uppdatering.
 let hadCachedPreload = false;
 try {
   const raw = localStorage.getItem(PRELOAD_CACHE_KEY);
@@ -2490,12 +2493,12 @@ try {
     if (Array.isArray(cached?.data)) {
       initData(cached.data, { fromCache: true });
       hadCachedPreload = true;
-      show("Uppdaterar i bakgrunden…", null, { autoreset: false });
+      if (!_isPrintMode) show("Uppdaterar i bakgrunden…", null, { autoreset: false });
     }
   }
 } catch (e) { console.warn('preloadCache read failed', e); }
 
-if (!hadCachedPreload) show("Laddar inventeringslistor...", null, { autoreset: false });
+if (!hadCachedPreload && !_isPrintMode) show("Laddar inventeringslistor...", null, { autoreset: false });
 
 // Retry preload med backoff: GAS cold-start kan ta 5-10s, mobilnät-hick ger "Load failed".
 async function preloadWithRetry(){
@@ -2511,18 +2514,25 @@ async function preloadWithRetry(){
   }
   throw lastErr;
 }
-preloadWithRetry().then(res => {
-  if (res?.error) {
-    show("Fel från server: " + res.error, "warn", { autoreset: false });
-    return;
-  }
-  initData(res);
-}).catch(err => {
-  console.error("Preload failed after retries:", err);
-  const reason = err?.message || 'okänt fel';
-  if (hadCachedPreload) show("Kunde inte uppdatera (" + reason + ") — visar senast sparade data", "warn", { autoreset: false });
-  else show("Kunde inte ladda: " + reason, "warn", { autoreset: false });
-}).finally(() => {
+// I print-läge: skip nätverks-preload helt och starta inte cacheTs-polling.
+// Cache är good-enough för utskrift och vi vill att window.print() ska
+// trigga omedelbart utan väntan på GAS cold-start.
+const _bootstrapPreload = _isPrintMode
+  ? Promise.resolve()
+  : preloadWithRetry().then(res => {
+      if (res?.error) {
+        show("Fel från server: " + res.error, "warn", { autoreset: false });
+        return;
+      }
+      initData(res);
+    }).catch(err => {
+      console.error("Preload failed after retries:", err);
+      const reason = err?.message || 'okänt fel';
+      if (hadCachedPreload) show("Kunde inte uppdatera (" + reason + ") — visar senast sparade data", "warn", { autoreset: false });
+      else show("Kunde inte ladda: " + reason, "warn", { autoreset: false });
+    });
+_bootstrapPreload.finally(() => {
+  if (_isPrintMode) return;
   // Tyst polling av servercache — startas först när bootstrap är klart så vi
   // inte får race mellan preloadWithRetry och pollern under GAS cold-start.
   setInterval(() => {

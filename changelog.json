@@ -1,6 +1,13 @@
 {
-  "latest": 61,
+  "latest": 62,
   "versions": [
+    {
+      "version": 62,
+      "date": "2026-05-03",
+      "notes": [
+        "Utskriften startar omedelbart utan att vänta på serveruppdatering"
+      ]
+    },
     {
       "version": 61,
       "date": "2026-05-03",

@@ -739,9 +739,12 @@ body.kb #cameraBox { display: none !important; }
     page-break-after: avoid;
   }
   .list { display: block !important; width: 100% !important; }
+  /* Grid med fasta pt-bredder gör att alla rader (inkl headerRow)
+     får exakt samma kolumnpositioner. */
   .statusRow {
-    display: table !important;
-    table-layout: fixed;
+    display: grid !important;
+    grid-template-columns: 1fr 40pt 50pt 80pt;
+    align-items: center;
     width: 100% !important;
     box-sizing: border-box;
     background: white !important;
@@ -754,22 +757,24 @@ body.kb #cameraBox { display: none !important; }
     page-break-inside: avoid;
     font-size: 10pt;
   }
-  .statusRow span {
-    display: table-cell !important;
-    vertical-align: middle;
+  /* Med hideMin saknas .sr-min i DOM → grid blir 3 kolumner */
+  .statusRow:not(:has(.sr-min)) { grid-template-columns: 1fr 50pt 80pt; }
+  .statusRow > span {
     padding: 3pt 6pt !important;
     margin: 0 !important;
     border-right: 0.5pt solid #ccc !important;
-    text-align: left;
+    overflow: hidden;
+    word-break: break-word;
   }
-  /* sr-name har ingen explicit width — table-layout:fixed ger den
-     resten (55% med 4 kolumner, 65% när hideMin döljer sr-min). */
-  .statusRow .sr-min { width: 10%; text-align: center; }
-  .statusRow .sr-lastcount { width: 15%; text-align: center; }
-  .statusRow .sr-date { width: 20%; text-align: center; }
-  .statusRow span:last-child { border-right: none !important; }
+  .statusRow .sr-name { text-align: left; }
+  .statusRow .sr-min,
+  .statusRow .sr-lastcount,
+  .statusRow .sr-date { text-align: center; }
+  .statusRow > span:last-child { border-right: none !important; }
   .statusRow.headerRow { font-weight: 700; border-bottom: 1.5pt solid black !important; }
   .statusRow.low { background: #eee !important; }
   .statusRow.pendingSync { border-left: 2pt solid #555 !important; }
+  /* Paranoid override mot cache-issues — emoji-ikoner ska INTE synas */
+  .rowIcon { display: none !important; visibility: hidden !important; font-size: 0 !important; }
   @page { margin: 1cm; size: A4; }
 }

@@ -1086,7 +1086,7 @@ function renderLists() {
   let filterText = "";
   if (!activePlaces) filterText = " (Alla)";
   else if (activePlaces.size > 0) filterText = " (" + Array.from(activePlaces).join(", ") + ")";
-  if (headerInv) headerInv.textContent = "Inventerat" + filterText;
+  if (headerInv) headerInv.textContent = `Inventerat senaste ${INVENTORY_WINDOW_DAYS} dagarna` + filterText;
   if (headerEj)  headerEj.textContent  = "Ej inventerat" + filterText;
 
   applyGroupOrder();

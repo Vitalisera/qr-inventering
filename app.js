@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 56;
+const APP_VERSION = 57;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -703,7 +703,9 @@ cancelFilterBtn?.addEventListener('click', () => closeFilterDialog());
 // På iOS PWA-läge är window.print() begränsad — öppna istället ny tab i Safari
 // (target=_blank tvingar ut ur standalone) som auto-triggar print efter render.
 qs('#printListBtn')?.addEventListener('click', () => {
-  closeFilterDialog();
+  // Applya valda inställningar först (annars skriver vi ut det gamla filtret).
+  // applyFilterBtn-handlern läser checkboxes, sparar, renderar och stänger dialogen.
+  applyFilterBtn?.click();
   const isStandalone = navigator.standalone === true ||
     window.matchMedia('(display-mode: standalone)').matches;
   if (isStandalone) {

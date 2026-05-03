@@ -1,6 +1,15 @@
 {
-  "latest": 66,
+  "latest": 67,
   "versions": [
+    {
+      "version": 67,
+      "date": "2026-05-03",
+      "notes": [
+        "Kommentar är nu alltid synlig i artikeldialogen (slipper trycka in dig till den)",
+        "'Fler fält' har bytt namn till 'Egenskaper' och fått en kugghjuls-ikon",
+        "Ändringar i fält sparas automatiskt — ingen 'Spara fält'-knapp längre"
+      ]
+    },
     {
       "version": 66,
       "date": "2026-05-03",

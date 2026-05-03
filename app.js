@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 66;
+const APP_VERSION = 67;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -1580,10 +1580,19 @@ function prepareContainerDialog(item, tag, opts = {}) {
   dlgBtns.innerHTML = `
     <button id="incBtn" class="btn">Öka mängd</button>
     <button id="newBtn" class="btn">Ny total</button>
-    <button id="toggleMore" class="btn">Fler fält</button>
+    <button id="toggleMore" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper">⚙️</button>
     <button id="cancelUpdate" class="btn cancel">Stäng</button>
     <div id="msgLine" class="msgLine"></div>
   `;
+  const _commentInitial = (dialogItem.comment || "").trim();
+  const commentBlock = document.createElement('div');
+  commentBlock.className = 'commentBlock';
+  commentBlock.innerHTML = `
+    <label for="commentEdit">Kommentar</label>
+    <textarea id="commentEdit" rows="2">${esc(_commentInitial)}</textarea>
+  `;
+  dlg.querySelectorAll('.commentBlock').forEach(e => e.remove());
+  dlgBtns.parentNode.insertBefore(commentBlock, dlgBtns.nextSibling);
 
   const incBtn = qs("#incBtn"), newBtn = qs("#newBtn"), toggleMore = qs("#toggleMore"),
         cancelBtn = qs("#cancelUpdate"), msgLine = qs("#msgLine");
@@ -1652,9 +1661,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   const extra = document.createElement("div");
   extra.className = "extraFields";
   extra.innerHTML = `
-    <label>Kommentar</label>
-    <textarea id="commentEdit" rows="2">${esc(dialogItem.comment || "")}</textarea>
-
+    <div class="extraFieldsHeader">Egenskaper</div>
     <label>Plats</label>
     <select id="placeEdit">
       <option value=""${!currentPlace ? " selected" : ""}>(ingen)</option>
@@ -1694,8 +1701,6 @@ function prepareContainerDialog(item, tag, opts = {}) {
       <button id="scanTagBtn" class="btn" type="button">Skanna tag</button>
     </div>
 
-    <button id="saveMetaBtn" class="btn">Spara fält</button>
-
     <div class="deleteRow">
       <button id="deleteItemBtn" class="btn delete" type="button">Radera artikel</button>
     </div>
@@ -1703,7 +1708,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   dlg.querySelectorAll(".extraFields").forEach(e => e.remove());
   dlg.appendChild(extra);
   extra.style.display = extraFieldsExpanded ? "block" : "none";
-  toggleMore.textContent = extraFieldsExpanded ? "Färre fält" : "Fler fält";
+  toggleMore.classList.toggle('expanded', extraFieldsExpanded);
 
   // Lyssna på pointerup istället för click — iOS slukar ibland click-eventet
   // när det första trycket bara stänger tangentbordet (input-blur).
@@ -1714,7 +1719,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     _toggleTs = Date.now();
     const vis = extra.style.display !== "none";
     extra.style.display = vis ? "none" : "block";
-    toggleMore.textContent = vis ? "Fler fält" : "Färre fält";
+    toggleMore.classList.toggle('expanded', !vis);
     extraFieldsExpanded = !vis;
   };
   toggleMore.addEventListener('pointerup', toggleAction);
@@ -1871,9 +1876,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
       .catch(err => markLogFail(le, err));
   };
 
-  // Spara övriga fält
-  const saveBtn = extra.querySelector("#saveMetaBtn");
-  saveBtn.onclick = () => {
+  // Auto-save vid blur/change — moderna apps (Notion, Linear) auto-sparar
+  // metadata. Slipper "Spara fält"-knapp som förvirrade användaren med
+  // mode-konflikt mot Öka/Ny total. Debounce 300ms så snabb-tabbing genom
+  // flera fält bara skickar en save.
+  let _autoSaveTimer = null;
+  const autoSaveExtra = () => {
     setMsg("", "");
     const commentEl = qs("#commentEdit");
     const unitEl = qs("#unitEdit");
@@ -1884,11 +1892,9 @@ function prepareContainerDialog(item, tag, opts = {}) {
 
     const date = dateEl ? normDate(dateEl.value) : "";
     const minQty = parseFloat((minEl.value || "0").replace(",", "."));
-    let hasErr = false;
 
-    if (dateEl && !date) { markError(dateEl, true); hasErr = true; }
-    if (!validNumber(minQty) || minQty < 0) { markError(minEl, true); hasErr = true; }
-    if (hasErr) { setMsg("Kontrollera fälten markerade i rött.", "warn"); return; }
+    if (dateEl && !date) { markError(dateEl, true); setMsg("Datum är ogiltigt.", "warn"); return; }
+    if (!validNumber(minQty) || minQty < 0) { markError(minEl, true); setMsg("Min-mängd ogiltigt.", "warn"); return; }
 
     const comment = commentEl.value.trim();
     const unitRaw = unitEl.value.trim();
@@ -1905,7 +1911,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
       ? (qs("#placeNew")?.value || "").trim()
       : placeRaw;
 
-    setBtnBusy(saveBtn, true);
+    // Skip auto-save tills "+ Ny..."-text-input har innehåll. Annars
+    // skickar vi tomt värde direkt vid select-change innan användaren
+    // hunnit skriva in det nya namnet.
+    if (unitRaw === "__new__" && !unit) return;
+    if (catRaw === "__new__" && !category) return;
+    if (placeRaw === "__new__" && !sheetPlace) return;
 
     tagCache.set(tag, { ...tagCache.get(tag), comment, unit, minQty, type: typeVal, category, sheetPlace, pendingSync: true });
 
@@ -1914,17 +1925,28 @@ function prepareContainerDialog(item, tag, opts = {}) {
     setLocalMeta(tag, patch);
     recomputeMaxLast();
 
-    setMsg("Sparad lokalt – synkroniseras…", "ok");
-    show("Sparad lokalt – synkroniseras…", "warn", { autoreset: false });
+    setMsg("Sparat ✓", "ok");
 
     renderLists();
 
     const payload = { tag, comment, unit, minQty, type: typeVal, category, place: sheetPlace, userName, sheetName: _sn, rowNum: _rn };
     if (date) payload.lastYMD = date;
     queueUpdate("updateMeta", payload);
-
-    setBtnBusy(saveBtn, false);
   };
+  const scheduleAutoSave = () => {
+    clearTimeout(_autoSaveTimer);
+    _autoSaveTimer = setTimeout(autoSaveExtra, 300);
+  };
+
+  // Selects → change-event. Text/textarea/number → blur-event.
+  // Kommentar-fältet ligger utanför .extraFields (i commentBlock), använd qs().
+  ['#placeEdit', '#categoryEdit', '#unitEdit', '#typeEdit'].forEach(sel => {
+    extra.querySelector(sel)?.addEventListener('change', scheduleAutoSave);
+  });
+  ['#minQtyEdit', '#placeNew', '#categoryNew', '#unitNew'].forEach(sel => {
+    extra.querySelector(sel)?.addEventListener('blur', scheduleAutoSave);
+  });
+  qs('#commentEdit')?.addEventListener('blur', scheduleAutoSave);
 
   cancelBtn.onclick = () => { closeDialog(); show("Avbrutet", "warn"); };
 

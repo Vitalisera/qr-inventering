@@ -696,6 +696,51 @@ body.kb #cameraBox { display: none !important; }
 @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%); } }
 @keyframes flash { 0% { background: rgba(0,255,0,.2); } 100% { background: transparent; } }
 
+/* === ICON-BTN (för ⚙️ Egenskaper i container-dialog) === */
+.btn.icon-btn {
+  background: transparent;
+  color: var(--teal, #1f5e69);
+  border: 1.5pt solid var(--teal, #1f5e69);
+  font-size: 1.15rem;
+  padding: 6px 12px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.btn.icon-btn.expanded {
+  background: var(--teal, #1f5e69);
+  color: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  .btn.icon-btn { color: #6db3bd; border-color: #6db3bd; }
+  .btn.icon-btn.expanded { background: #6db3bd; color: #1c2326; }
+}
+
+/* === COMMENT-BLOCK och EXTRA-HEADER === */
+.commentBlock {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.commentBlock label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.commentBlock textarea {
+  resize: vertical;
+}
+.extraFieldsHeader {
+  font-weight: 700;
+  font-size: 1rem;
+  margin: 18px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1pt solid rgba(0,0,0,.12);
+  color: var(--teal, #1f5e69);
+}
+@media (prefers-color-scheme: dark) {
+  .extraFieldsHeader { color: #6db3bd; border-bottom-color: rgba(255,255,255,.15); }
+}
+
 /* === PRINT-LOADING OVERLAY === */
 #printLoading {
   position: fixed;

@@ -102,6 +102,90 @@
       "notes": [
         "Sökningen hittar nu artiklar även när du stavat fel"
       ]
+    },
+    {
+      "version": 44,
+      "date": "2026-04-24",
+      "notes": [
+        "Listan kan grupperas efter plats — välj i ⚙️"
+      ]
+    },
+    {
+      "version": 41,
+      "date": "2026-04-24",
+      "notes": [
+        "Plats syns nu som egen kolumn i inventeringslistan"
+      ]
+    },
+    {
+      "version": 40,
+      "date": "2026-04-24",
+      "notes": [
+        "Sökningen hittar artiklar även via deras alternativa namn (synonymer)"
+      ]
+    },
+    {
+      "version": 35,
+      "date": "2026-04-24",
+      "notes": [
+        "AI hjälper dig kategorisera nya artiklar och hittar liknande artiklar i sökningen",
+        "Plats föreslås automatiskt när du skapar en ny artikel"
+      ]
+    },
+    {
+      "version": 30,
+      "date": "2026-04-22",
+      "notes": [
+        "Bekräftelsedialog när du raderar en artikel",
+        "Versionsnummer syns längst ned i ⚙️"
+      ]
+    },
+    {
+      "version": 25,
+      "date": "2026-04-22",
+      "notes": [
+        "Enheten väljs nu från en dropdown",
+        "'Antal' har bytt namn till 'Mängd'"
+      ]
+    },
+    {
+      "version": 20,
+      "date": "2026-04-21",
+      "notes": [
+        "Listor kan grupperas efter kategori (välj i ⚙️)",
+        "Kategori-fältet är nu en dropdown med 'Ny kategori…'-alternativ",
+        "Räknare per flik visar hur många du inventerat av totalt"
+      ]
+    },
+    {
+      "version": 15,
+      "date": "2026-04-21",
+      "notes": [
+        "Snabbare uppstart — appen visar listan direkt och uppdaterar i bakgrunden"
+      ]
+    },
+    {
+      "version": 10,
+      "date": "2026-04-19",
+      "notes": [
+        "Multi-tag: en artikel kan ha flera QR-koder kopplade till sig",
+        "Listikoner i ⚙️ — välj vilka symboler som ska visas (🏷️ tag, • singel, ℹ️ kommentar)"
+      ]
+    },
+    {
+      "version": 5,
+      "date": "2026-02-26",
+      "notes": [
+        "Datum kan redigeras direkt i inventeringsdialogen",
+        "Senaste inventerare visas som kontext i dialogen"
+      ]
+    },
+    {
+      "version": 2,
+      "date": "2026-02-17",
+      "notes": [
+        "Install-överlägg vid första besök — guide för att lägga till på hemskärmen"
+      ]
     }
   ]
 }

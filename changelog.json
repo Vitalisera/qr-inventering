@@ -1,6 +1,13 @@
 {
-  "latest": 63,
+  "latest": 64,
   "versions": [
+    {
+      "version": 64,
+      "date": "2026-05-03",
+      "notes": [
+        "'Fler fält' i en singel-artikel öppnar metadata-fälten direkt — slipper trycka två gånger"
+      ]
+    },
     {
       "version": 63,
       "date": "2026-05-03",

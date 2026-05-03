@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 63;
+const APP_VERSION = 64;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -1460,6 +1460,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
   const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Öka mängd</b> = lägg till det du skriver i fältet.<br><b>Ny total</b> = ersätt totalen med det du skriver.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"Fler fält" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
 
   const editMode = opts.editMode === true;
+  // I editMode (t.ex. via Fler fält från singel) — visa extra-fälten direkt
+  // eftersom det är hela syftet med klicket. Annars måste användaren trycka
+  // 'Fler fält' två gånger för att komma till metadata-redigeringen.
+  if (editMode) extraFieldsExpanded = true;
   const meta = metaCache.get(tag) || {};
   const _sn = item.sheetName || null;
   const _rn = item.rowNum || null;

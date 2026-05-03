@@ -646,46 +646,64 @@ function renderSearchResults(q){
   searchResults.innerHTML="";
   if(_searchAiTimer){ clearTimeout(_searchAiTimer); _searchAiTimer=null; }
   if(!qn) return;
-  const rows=[];
-  const directNames=new Set();
-  // Kandidater för ev. AI-sökning: namn som passerar filter men INTE matchar substring
-  const aiCandidates=[];
-  const nameToTag=new Map();
-  for(const [tag,val] of tagCache.entries()){
-    const name=val?.name||""; if(!name) continue;
+
+  // Bygg ordlista (namn + synonymer) av filterpassade items.
+  // wordMap: norm(ord) → { tag, label, syn? }
+  const wordMap = new Map();
+  const passingTags = [];
+  for(const [tag, val] of tagCache.entries()){
+    const name = val?.name||""; if(!name) continue;
     if(activePlaces && !activePlaces.has(val.place||"Okänd")) continue;
     if(onlyLow){
       const meta = metaCache.get(tag)||{};
       const isLow = (val.minQty||0) && (meta.qty < val.minQty);
       if(!isLow) continue;
     }
-    const nameLower = name.toLocaleLowerCase('sv');
-    const isNameMatch = nameLower.includes(qn);
-    const matchedSyn = !isNameMatch && Array.isArray(val.synonyms)
-      ? val.synonyms.find(s => String(s).toLocaleLowerCase('sv').includes(qn))
-      : null;
-    const isMatch = isNameMatch || !!matchedSyn;
-    if(isMatch){
-      directNames.add(name);
-      const btn=document.createElement('button');
-      btn.type="button"; btn.className="statusRow";
-      const synHint = matchedSyn ? ` <span class="sr-syn">(${esc(matchedSyn)})</span>` : '';
-      btn.innerHTML=`<span class="sr-name">${esc(name)}${synHint}</span><span class="sr-date">${esc(metaCache.get(tag)?.lastStr||"")}</span>`;
-      const _tag = tag;
-      addSafeTap(btn,
-        () => { closeSearchDialog(); openContainerForTag(_tag); },
-        () => { closeSearchDialog(); const c = tagCache.get(_tag); if (c) prepareContainerDialog(c, _tag, { editMode: true }); }
-      );
-      rows.push(btn);
-    } else {
-      aiCandidates.push(name);
-      nameToTag.set(name, tag);
+    passingTags.push(tag);
+    const nameKey = name.toLocaleLowerCase('sv');
+    if(!wordMap.has(nameKey)) wordMap.set(nameKey, { tag, label: name });
+    if(Array.isArray(val.synonyms)){
+      for(const s of val.synonyms){
+        const sn = String(s||"").trim(); if(!sn) continue;
+        const sk = sn.toLocaleLowerCase('sv');
+        if(!wordMap.has(sk)) wordMap.set(sk, { tag, label: name, syn: sn });
+      }
     }
   }
-  rows.slice(0,200).forEach(b=>searchResults.appendChild(b));
 
-  // AI-sökning: kör bara om få direkta träffar och query är substantiell.
-  if(qn.length >= 3 && rows.length < 8 && aiCandidates.length > 0){
+  const wordlist = [...wordMap.keys()];
+  const suggestions = (typeof Autocomplete !== 'undefined')
+    ? Autocomplete.suggest(qn, wordlist, { matchMode: 'substring', maxSuggestions: 200, minPrefixHits: 8, fuzzyThreshold: 2.5 })
+    : [];
+
+  const shownTags = new Set();
+  for(const sug of suggestions){
+    const info = wordMap.get(sug.word); if(!info) continue;
+    if(shownTags.has(info.tag)) continue;
+    shownTags.add(info.tag);
+    const btn = document.createElement('button');
+    btn.type = "button"; btn.className = "statusRow";
+    const synHint = info.syn ? ` <span class="sr-syn">(${esc(info.syn)})</span>` : '';
+    const fuzzyHint = sug.source === 'fuzzy' ? ` <span class="sr-syn">(liknande)</span>` : '';
+    btn.innerHTML = `<span class="sr-name">${esc(info.label)}${synHint}${fuzzyHint}</span><span class="sr-date">${esc(metaCache.get(info.tag)?.lastStr||"")}</span>`;
+    const _tag = info.tag;
+    addSafeTap(btn,
+      () => { closeSearchDialog(); openContainerForTag(_tag); },
+      () => { closeSearchDialog(); const c = tagCache.get(_tag); if (c) prepareContainerDialog(c, _tag, { editMode: true }); }
+    );
+    searchResults.appendChild(btn);
+  }
+
+  // AI-kandidater = filterpassade artiklar som INTE redan visats
+  const aiCandidates = [];
+  for(const tag of passingTags){
+    if(!shownTags.has(tag)) {
+      const name = tagCache.get(tag)?.name; if(name) aiCandidates.push(name);
+    }
+  }
+
+  // AI-sökning: kör bara om få visade träffar och query är substantiell.
+  if(qn.length >= 3 && shownTags.size < 8 && aiCandidates.length > 0){
     const loading = document.createElement('div');
     loading.className = 'searchAiLoading';
     loading.innerHTML = '<span class="aiSpinner"></span> Söker med AI…';
@@ -708,7 +726,8 @@ function renderSearchResults(q){
       header.textContent = 'Liknande (AI)';
       searchResults.appendChild(header);
       for(const r of results){
-        const tag = nameToTag.get(r.name);
+        const info = wordMap.get(String(r.name||"").toLocaleLowerCase('sv'));
+        const tag = info?.tag;
         if(!tag) continue;
         const btn = document.createElement('button');
         btn.type = 'button'; btn.className = 'statusRow aiResult';

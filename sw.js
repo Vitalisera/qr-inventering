@@ -1,9 +1,10 @@
-const CACHE = 'vitalisera-inv-v45';
+const CACHE = 'vitalisera-inv-v46';
 // Egna assets — om någon av dessa failar är appen trasig, all-or-nothing är OK.
 const PRECACHE_OWN = [
   './',
   'style.css',
   'app.js',
+  'autocomplete.js',
   'manifest.json',
   'icon-192.png',
   'icon-512.png'
@@ -15,7 +16,7 @@ const PRECACHE_EXTERNAL = [
 ];
 
 // Network-first for app files, cache-first for static assets
-const NETWORK_FIRST = ['app.js', 'style.css', 'index.html'];
+const NETWORK_FIRST = ['app.js', 'autocomplete.js', 'style.css', 'index.html'];
 
 self.addEventListener('install', e => {
   e.waitUntil(

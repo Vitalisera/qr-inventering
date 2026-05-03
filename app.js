@@ -147,6 +147,8 @@ let busy=false,preloadDone=false,cameraOn=false;
 const tagCache=new Map(),metaCache=new Map();const placeSet=new Set();
 let maxLastMs=null;const COOLDOWN_MS=1200;let activePlaces=null;
 let onlyLow=false;
+let showUnit=false;
+let hideZero=false;
 let hasStarted = false;
 let cameraVisible = false;
 let visibleTags = [];
@@ -365,11 +367,15 @@ function loadPlaceFilter(){
     }
   }catch{ activePlaces = null; }
   try{ onlyLow = localStorage.getItem('vitaliseraOnlyLow') === '1'; }catch{ onlyLow = false; }
+  try{ showUnit = localStorage.getItem('vitaliseraShowUnit') === '1'; }catch{ showUnit = false; }
+  try{ hideZero = localStorage.getItem('vitaliseraHideZero') === '1'; }catch{ hideZero = false; }
 }
 function savePlaceFilter(){
   if(!activePlaces || activePlaces.size === 0) localStorage.removeItem('vitaliseraPlaceFilter');
   else localStorage.setItem('vitaliseraPlaceFilter', JSON.stringify([...activePlaces]));
   localStorage.setItem('vitaliseraOnlyLow', onlyLow ? '1' : '0');
+  localStorage.setItem('vitaliseraShowUnit', showUnit ? '1' : '0');
+  localStorage.setItem('vitaliseraHideZero', hideZero ? '1' : '0');
 }
 /* Rensa activePlaces från platser som inte längre finns i tagCache. Annars kan en
    sparad plats som försvunnit (t.ex. inkompatibel flik borttagen från preload)
@@ -429,6 +435,32 @@ function openFilterDialog() {
   rowPlc.append(chkPlc, txtPlc);
   rowPlc.addEventListener('click', e => { if (e.target !== chkPlc) chkPlc.checked = !chkPlc.checked; });
   placeList.appendChild(rowPlc);
+
+  const rowUnit = document.createElement('div');
+  rowUnit.className = 'placeRow';
+  const chkUnit = document.createElement('input');
+  chkUnit.type = 'checkbox';
+  chkUnit.dataset.showunit = '1';
+  chkUnit.checked = !!showUnit;
+  const txtUnit = document.createElement('div');
+  txtUnit.className = 'placeTxt';
+  txtUnit.textContent = 'Visa enhet istället för datum';
+  rowUnit.append(chkUnit, txtUnit);
+  rowUnit.addEventListener('click', e => { if (e.target !== chkUnit) chkUnit.checked = !chkUnit.checked; });
+  placeList.appendChild(rowUnit);
+
+  const rowZero = document.createElement('div');
+  rowZero.className = 'placeRow';
+  const chkZero = document.createElement('input');
+  chkZero.type = 'checkbox';
+  chkZero.dataset.hidezero = '1';
+  chkZero.checked = !!hideZero;
+  const txtZero = document.createElement('div');
+  txtZero.className = 'placeTxt';
+  txtZero.textContent = 'Dölj artiklar med saldo 0';
+  rowZero.append(chkZero, txtZero);
+  rowZero.addEventListener('click', e => { if (e.target !== chkZero) chkZero.checked = !chkZero.checked; });
+  placeList.appendChild(rowZero);
 
   const title1 = document.createElement('div');
   title1.style.marginTop = '12px';
@@ -537,6 +569,12 @@ applyFilterBtn?.addEventListener('click', () => {
   const groupByPlcBox = placeList.querySelector('input[data-groupbyplace="1"]');
   groupByPlace = !!groupByPlcBox?.checked;
   localStorage.setItem('vitaliseraGroupByPlace', groupByPlace ? '1' : '0');
+
+  const showUnitBox = placeList.querySelector('input[data-showunit="1"]');
+  showUnit = !!showUnitBox?.checked;
+
+  const hideZeroBox = placeList.querySelector('input[data-hidezero="1"]');
+  hideZero = !!hideZeroBox?.checked;
 
   const boxes = placeList.querySelectorAll('input[type="checkbox"][data-place]');
   const selPlaces = new Set();
@@ -897,7 +935,7 @@ function renderLists() {
       <span class="sr-name">Benämning</span>
       <span class="sr-min">Min</span>
       <span class="sr-lastcount">Senast</span>
-      <span class="sr-date">Datum</span>`;
+      <span class="sr-date">${showUnit ? "Enhet" : "Datum"}</span>`;
     return h;
   };
 
@@ -921,6 +959,8 @@ function renderLists() {
     const isLow = item.minQty && meta.qty < item.minQty;
     if (onlyLow && !isLow) continue;
 
+    if (hideZero && (Number(meta.qty) || 0) === 0) continue;
+
     _visible.push(t);
 
     const hasComment = !!(item.comment || "").trim();
@@ -937,7 +977,7 @@ function renderLists() {
       <span class="sr-name">${esc(name)}${renderRowIcons(t, item, hasComment)}</span>
       <span class="sr-min">${esc(item.minQty ?? "")}</span>
       <span class="sr-lastcount">${esc(meta.qty ?? "")}</span>
-      <span class="sr-date">${esc(meta.lastStr || "")}</span>`;
+      <span class="sr-date">${esc(showUnit ? (meta.unit || "") : (meta.lastStr || ""))}</span>`;
 
     addSafeTap(row, (e) => { if (!e.target.closest('.infoIcon')) openContainerForTag(t); });
 

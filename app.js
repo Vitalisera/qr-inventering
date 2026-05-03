@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 65;
+const APP_VERSION = 66;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
@@ -65,15 +65,32 @@ async function fetchChangelogSince(currentVersion) {
   finally { clearTimeout(timer); }
 }
 
-function showUpdateBanner(reg) {
+async function showUpdateBanner(reg) {
   if (document.getElementById('updateBanner')) return;
   // Banner är medvetet enkel — detaljerade ändringar visas i "What's new"-modal
-  // EFTER reload, då användaren faktiskt kör nya versionen.
+  // EFTER reload. Visa dock current → latest så användaren förstår vad som händer.
+  let latestVersion = null;
+  try {
+    const res = await fetch('changelog.json?ts=' + Date.now(), { cache: 'no-store' });
+    if (res.ok) {
+      const log = await res.json();
+      latestVersion = Number(log.latest) || null;
+    }
+  } catch {}
+
   const banner = document.createElement('div');
   banner.id = 'updateBanner';
   const title = document.createElement('span');
   title.className = 'updateBannerTitle';
-  title.textContent = 'Ny version tillgänglig';
+  const titleText = document.createElement('div');
+  titleText.textContent = 'Ny version tillgänglig';
+  title.appendChild(titleText);
+  if (latestVersion && latestVersion > APP_VERSION) {
+    const versionLine = document.createElement('div');
+    versionLine.className = 'updateBannerVersion';
+    versionLine.textContent = `Du kör version ${APP_VERSION} — version ${latestVersion} finns att uppgradera till`;
+    title.appendChild(versionLine);
+  }
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'updateBtn';
@@ -1489,10 +1506,9 @@ function prepareContainerDialog(item, tag, opts = {}) {
   const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Öka mängd</b> = lägg till det du skriver i fältet.<br><b>Ny total</b> = ersätt totalen med det du skriver.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"Fler fält" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
 
   const editMode = opts.editMode === true;
-  // I editMode (t.ex. via Fler fält från singel) — visa extra-fälten direkt
-  // eftersom det är hela syftet med klicket. Annars måste användaren trycka
-  // 'Fler fält' två gånger för att komma till metadata-redigeringen.
-  if (editMode) extraFieldsExpanded = true;
+  // Reset per dialog: editMode (Fler fält från singel) öppnar expanderat,
+  // alla andra ingångar börjar kollapsade så det blir konsekvent UX.
+  extraFieldsExpanded = editMode;
   const meta = metaCache.get(tag) || {};
   const _sn = item.sheetName || null;
   const _rn = item.rowNum || null;
@@ -1689,12 +1705,29 @@ function prepareContainerDialog(item, tag, opts = {}) {
   extra.style.display = extraFieldsExpanded ? "block" : "none";
   toggleMore.textContent = extraFieldsExpanded ? "Färre fält" : "Fler fält";
 
-  toggleMore.onclick = () => {
+  // Lyssna på pointerup istället för click — iOS slukar ibland click-eventet
+  // när det första trycket bara stänger tangentbordet (input-blur).
+  // Pointerup eldas före click, så toggle-actionen körs alltid.
+  let _toggleTs = 0;
+  const toggleAction = () => {
+    if (Date.now() - _toggleTs < 300) return; // dedupe pointerup+click
+    _toggleTs = Date.now();
     const vis = extra.style.display !== "none";
     extra.style.display = vis ? "none" : "block";
     toggleMore.textContent = vis ? "Fler fält" : "Färre fält";
     extraFieldsExpanded = !vis;
   };
+  toggleMore.addEventListener('pointerup', toggleAction);
+  toggleMore.addEventListener('click', toggleAction);
+
+  // I editMode — phantom-tap från föregående dialog kan annars landa på
+  // dlgInput och poppa upp tangentbordet. Blur omedelbart.
+  if (editMode) {
+    requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (a && a !== document.body && typeof a.blur === 'function') a.blur();
+    });
+  }
 
   // Plats: visa ny-textinput när "+ Ny plats…" valts
   const placeSelEdit = extra.querySelector("#placeEdit");

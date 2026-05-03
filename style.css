@@ -798,6 +798,12 @@ body.kb #cameraBox { display: none !important; }
   box-sizing: border-box;
   box-shadow: 0 12px 40px rgba(0,0,0,.4);
 }
+#updateBanner .updateBannerVersion {
+  font-size: 0.85rem;
+  font-weight: 400;
+  opacity: 0.85;
+  margin-top: 6px;
+}
 #updateBanner button {
   background: #fff;
   color: #1f5e69;

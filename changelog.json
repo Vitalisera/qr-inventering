@@ -1,6 +1,15 @@
 {
-  "latest": 65,
+  "latest": 66,
   "versions": [
+    {
+      "version": 66,
+      "date": "2026-05-03",
+      "notes": [
+        "Smidigare dialoger: 'Fler fält' hamnar inte längre fel när tangentbordet är uppe",
+        "Varje artikel öppnas med kompakt vy — extra-fält kommer inte med från föregående artikel",
+        "Update-prompten visar både din nuvarande och den nya versionen"
+      ]
+    },
     {
       "version": 65,
       "date": "2026-05-03",

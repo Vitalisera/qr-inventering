@@ -1,0 +1,19 @@
+{
+  "latest": 56,
+  "versions": [
+    {
+      "version": 56,
+      "date": "2026-05-03",
+      "notes": [
+        "Update-banner med versionsstöd och ändringslogg",
+        "Datum-rubrikens typsnitt fixat",
+        "Utskrift/PDF: ny knapp i ⚙️-dialogen, A4-formaterad",
+        "iOS PWA: utskrift öppnas nu i Safari-tab automatiskt",
+        "Två nya togglar: visa enhet istället för datum, dölj saldo 0",
+        "Toggle: dölj Min-kolumnen",
+        "Rubrik: 'Inventerat' → 'Inventerat senaste 5 dagarna'",
+        "Klient-sida fuzzy-sökning (Damerau-Levenshtein) — fångar typos lokalt"
+      ]
+    }
+  ]
+}

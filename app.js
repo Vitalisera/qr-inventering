@@ -3,6 +3,92 @@
  * Extraherad från GAS app.html, google.script.run → fetch/gasCall
  */
 
+/* ===== Service Worker + update-banner ===== */
+// APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
+// Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
+const APP_VERSION = 56;
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {
+    // Tab öppnas medan en SW redan ligger waiting (bakgrunds-uppdatering)
+    if (reg.waiting && navigator.serviceWorker.controller) {
+      showUpdateBanner(reg);
+    }
+    // Manuell uppdaterings-check vid varje sidladdning
+    reg.update().catch(() => {});
+
+    reg.addEventListener('updatefound', () => {
+      const newWorker = reg.installing;
+      if (!newWorker) return;
+      newWorker.addEventListener('statechange', () => {
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          showUpdateBanner(reg);
+        }
+      });
+    });
+  }).catch(() => {});
+
+  let _swReloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (_swReloading) return;
+    _swReloading = true;
+    location.reload();
+  });
+}
+
+async function fetchChangelogSince(currentVersion) {
+  // Timeout så banner inte hänger asynkront om changelog.json är slow/nere.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 3000);
+  try {
+    const res = await fetch('changelog.json?ts=' + Date.now(), { cache: 'no-store', signal: ac.signal });
+    if (!res.ok) return [];
+    const log = await res.json();
+    const versions = Array.isArray(log.versions) ? log.versions : [];
+    return versions
+      .filter(v => Number(v.version) > Number(currentVersion))
+      .flatMap(v => Array.isArray(v.notes) ? v.notes : []);
+  } catch { return []; }
+  finally { clearTimeout(timer); }
+}
+
+async function showUpdateBanner(reg) {
+  if (document.getElementById('updateBanner')) return;
+
+  const notes = await fetchChangelogSince(APP_VERSION);
+
+  const banner = document.createElement('div');
+  banner.id = 'updateBanner';
+
+  const left = document.createElement('div');
+  left.className = 'updateBannerLeft';
+  const title = document.createElement('div');
+  title.className = 'updateBannerTitle';
+  title.textContent = 'Ny version tillgänglig';
+  left.appendChild(title);
+
+  if (notes.length) {
+    const list = document.createElement('ul');
+    list.className = 'updateBannerNotes';
+    for (const n of notes) {
+      const li = document.createElement('li');
+      li.textContent = n;
+      list.appendChild(li);
+    }
+    left.appendChild(list);
+  }
+  banner.appendChild(left);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'updateBtn';
+  btn.textContent = 'Starta om';
+  btn.addEventListener('click', () => reg.waiting?.postMessage('SKIP_WAITING'));
+  banner.appendChild(btn);
+
+  document.body.appendChild(banner);
+}
+
 /* ===== GAS API wrapper ===== */
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
 

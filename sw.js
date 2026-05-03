@@ -1,10 +1,11 @@
-const CACHE = 'vitalisera-inv-v54';
+const CACHE = 'vitalisera-inv-v56';
 // Egna assets — om någon av dessa failar är appen trasig, all-or-nothing är OK.
 const PRECACHE_OWN = [
   './',
   'style.css',
   'app.js',
   'autocomplete.js',
+  'changelog.json',
   'manifest.json',
   'icon-192.png',
   'icon-512.png'
@@ -16,7 +17,7 @@ const PRECACHE_EXTERNAL = [
 ];
 
 // Network-first for app files, cache-first for static assets
-const NETWORK_FIRST = ['app.js', 'autocomplete.js', 'style.css', 'index.html'];
+const NETWORK_FIRST = ['app.js', 'autocomplete.js', 'style.css', 'index.html', 'changelog.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
@@ -28,8 +29,15 @@ self.addEventListener('install', e => {
             .catch(err => console.warn('[sw] precache external failed:', url, err))
         ))
       )
-    ).then(() => self.skipWaiting())
+    )
+    // INGEN skipWaiting() — vänta på explicit SKIP_WAITING-message från klienten,
+    // så användaren ser update-banner och kan välja när omstart sker.
   );
+});
+
+// Klienten postMessage('SKIP_WAITING') när användaren trycker "Starta om" i banner.
+self.addEventListener('message', e => {
+  if (e.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', e => {

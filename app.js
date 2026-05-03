@@ -614,10 +614,23 @@ applyFilterBtn?.addEventListener('click', () => {
 });
 cancelFilterBtn?.addEventListener('click', () => closeFilterDialog());
 
+// På iOS PWA-läge är window.print() begränsad — öppna istället ny tab i Safari
+// (target=_blank tvingar ut ur standalone) som auto-triggar print efter render.
 qs('#printListBtn')?.addEventListener('click', () => {
   closeFilterDialog();
-  window.print();
+  const isStandalone = navigator.standalone === true ||
+    window.matchMedia('(display-mode: standalone)').matches;
+  if (isStandalone) {
+    const url = location.pathname + '?print=1';
+    const w = window.open(url, '_blank');
+    if (!w) window.print();
+  } else {
+    window.print();
+  }
 });
+
+// Auto-print om sidan laddats med ?print=1 (från PWA → Safari-tab)
+let _autoPrintPending = new URLSearchParams(location.search).get('print') === '1';
 
 // Stäng iOS text-selection innan knappklick så selection-handles inte stjäl tryck.
 document.addEventListener('pointerdown', e => {
@@ -1090,6 +1103,11 @@ function renderLists() {
   if (headerEj)  headerEj.textContent  = "Ej inventerat" + filterText;
 
   applyGroupOrder();
+
+  if (_autoPrintPending && _visible.length > 0) {
+    _autoPrintPending = false;
+    setTimeout(() => window.print(), 100);
+  }
 }
 
 /* Växla ordning Inventerat/Ej inventerat */

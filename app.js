@@ -616,7 +616,7 @@ cancelFilterBtn?.addEventListener('click', () => closeFilterDialog());
 
 qs('#printListBtn')?.addEventListener('click', () => {
   closeFilterDialog();
-  setTimeout(() => window.print(), 250);
+  window.print();
 });
 
 // Stäng iOS text-selection innan knappklick så selection-handles inte stjäl tryck.

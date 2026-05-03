@@ -5,14 +5,14 @@
       "version": 61,
       "date": "2026-05-03",
       "notes": [
-        "Test-stöd: ?asVersion=N i URL:en simulerar att du är användare på version N — bra för att testa Vad är nytt-popupen"
+        "Mindre förbättringar i bakgrunden"
       ]
     },
     {
       "version": 60,
       "date": "2026-05-03",
       "notes": [
-        "Update-prompten är nu en centrerad modal som blockerar bakgrunden — svårare att missa",
+        "Uppdaterings-rutan visas nu i mitten av skärmen så den är lättare att se",
         "Knappen heter 'Uppgradera version' istället för 'Starta om'"
       ]
     },
@@ -20,37 +20,87 @@
       "version": 59,
       "date": "2026-05-03",
       "notes": [
-        "'Vad är nytt'-popup visas efter omstart med en sammanfattning av ändringar sedan din förra version",
-        "Update-bannern är nu enklare (bara 'Starta om') — detaljerna visas i den nya popupen istället"
+        "Efter en uppdatering ser du en sammanfattning av vad som ändrats"
       ]
     },
     {
       "version": 58,
       "date": "2026-05-03",
       "notes": [
-        "Versions-bannern dyker upp automatiskt under användning — ny version pushas ut inom 60 sekunder från release",
-        "Bannern triggas också när du växlar tillbaka till appen från app-switcher"
+        "Appen kollar själv om det finns en ny version — ingen omstart behövs"
       ]
     },
     {
       "version": 57,
       "date": "2026-05-03",
       "notes": [
-        "Skriv ut-knappen sparar nu valda inställningar automatiskt — ingen extra 'Använd' först"
+        "Skriv ut-knappen sparar dina inställningar automatiskt"
       ]
     },
     {
       "version": 56,
       "date": "2026-05-03",
       "notes": [
-        "Update-banner med versionsstöd och ändringslogg",
-        "Datum-rubrikens typsnitt fixat",
-        "Utskrift/PDF: ny knapp i ⚙️-dialogen, A4-formaterad",
-        "iOS PWA: utskrift öppnas nu i Safari-tab automatiskt",
-        "Två nya togglar: visa enhet istället för datum, dölj saldo 0",
-        "Toggle: dölj Min-kolumnen",
-        "Rubrik: 'Inventerat' → 'Inventerat senaste 5 dagarna'",
-        "Klient-sida fuzzy-sökning (Damerau-Levenshtein) — fångar typos lokalt"
+        "Du får besked direkt när det finns en ny version"
+      ]
+    },
+    {
+      "version": 55,
+      "date": "2026-05-03",
+      "notes": [
+        "Datum-rubriken visas nu i rätt storlek",
+        "På iPhone fungerar utskriften även när appen är installerad på hemskärmen"
+      ]
+    },
+    {
+      "version": 54,
+      "date": "2026-05-03",
+      "notes": [
+        "Rubriken 'Inventerat' heter nu 'Inventerat senaste 5 dagarna' för tydlighet"
+      ]
+    },
+    {
+      "version": 53,
+      "date": "2026-05-03",
+      "notes": [
+        "Snabbare och stabilare utskrift"
+      ]
+    },
+    {
+      "version": 52,
+      "date": "2026-05-03",
+      "notes": [
+        "Utskriften får nu rätt kolumnbredder och bryter över flera sidor"
+      ]
+    },
+    {
+      "version": 51,
+      "date": "2026-05-03",
+      "notes": [
+        "Ny knapp för att skriva ut listan eller spara den som PDF",
+        "Ny inställning: dölj Min-kolumnen för en kompaktare lista"
+      ]
+    },
+    {
+      "version": 50,
+      "date": "2026-05-03",
+      "notes": [
+        "Två nya inställningar: visa enhet istället för datum, och dölj artiklar med saldo 0",
+        "Tips: kombinera dem med plats=Kursgården för att få en ren matlista"
+      ]
+    },
+    {
+      "version": 47,
+      "date": "2026-05-03",
+      "notes": [
+        "Sökningen visar färre brus-träffar för korta sökord"
+      ]
+    },
+    {
+      "version": 46,
+      "date": "2026-05-03",
+      "notes": [
+        "Sökningen hittar nu artiklar även när du stavat fel"
       ]
     }
   ]

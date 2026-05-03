@@ -149,6 +149,7 @@ let maxLastMs=null;const COOLDOWN_MS=1200;let activePlaces=null;
 let onlyLow=false;
 let showUnit=false;
 let hideZero=false;
+let hideMin=false;
 let hasStarted = false;
 let cameraVisible = false;
 let visibleTags = [];
@@ -369,6 +370,7 @@ function loadPlaceFilter(){
   try{ onlyLow = localStorage.getItem('vitaliseraOnlyLow') === '1'; }catch{ onlyLow = false; }
   try{ showUnit = localStorage.getItem('vitaliseraShowUnit') === '1'; }catch{ showUnit = false; }
   try{ hideZero = localStorage.getItem('vitaliseraHideZero') === '1'; }catch{ hideZero = false; }
+  try{ hideMin = localStorage.getItem('vitaliseraHideMin') === '1'; }catch{ hideMin = false; }
 }
 function savePlaceFilter(){
   if(!activePlaces || activePlaces.size === 0) localStorage.removeItem('vitaliseraPlaceFilter');
@@ -376,6 +378,7 @@ function savePlaceFilter(){
   localStorage.setItem('vitaliseraOnlyLow', onlyLow ? '1' : '0');
   localStorage.setItem('vitaliseraShowUnit', showUnit ? '1' : '0');
   localStorage.setItem('vitaliseraHideZero', hideZero ? '1' : '0');
+  localStorage.setItem('vitaliseraHideMin', hideMin ? '1' : '0');
 }
 /* Rensa activePlaces från platser som inte längre finns i tagCache. Annars kan en
    sparad plats som försvunnit (t.ex. inkompatibel flik borttagen från preload)
@@ -461,6 +464,19 @@ function openFilterDialog() {
   rowZero.append(chkZero, txtZero);
   rowZero.addEventListener('click', e => { if (e.target !== chkZero) chkZero.checked = !chkZero.checked; });
   placeList.appendChild(rowZero);
+
+  const rowMin = document.createElement('div');
+  rowMin.className = 'placeRow';
+  const chkMin = document.createElement('input');
+  chkMin.type = 'checkbox';
+  chkMin.dataset.hidemin = '1';
+  chkMin.checked = !!hideMin;
+  const txtMin = document.createElement('div');
+  txtMin.className = 'placeTxt';
+  txtMin.textContent = 'Dölj Min-kolumnen';
+  rowMin.append(chkMin, txtMin);
+  rowMin.addEventListener('click', e => { if (e.target !== chkMin) chkMin.checked = !chkMin.checked; });
+  placeList.appendChild(rowMin);
 
   const title1 = document.createElement('div');
   title1.style.marginTop = '12px';
@@ -576,6 +592,9 @@ applyFilterBtn?.addEventListener('click', () => {
   const hideZeroBox = placeList.querySelector('input[data-hidezero="1"]');
   hideZero = !!hideZeroBox?.checked;
 
+  const hideMinBox = placeList.querySelector('input[data-hidemin="1"]');
+  hideMin = !!hideMinBox?.checked;
+
   const boxes = placeList.querySelectorAll('input[type="checkbox"][data-place]');
   const selPlaces = new Set();
   boxes.forEach(b => { if (b.checked) selPlaces.add(b.dataset.place); });
@@ -594,6 +613,11 @@ applyFilterBtn?.addEventListener('click', () => {
   statusDefault();
 });
 cancelFilterBtn?.addEventListener('click', () => closeFilterDialog());
+
+qs('#printListBtn')?.addEventListener('click', () => {
+  closeFilterDialog();
+  setTimeout(() => window.print(), 250);
+});
 
 // Stäng iOS text-selection innan knappklick så selection-handles inte stjäl tryck.
 document.addEventListener('pointerdown', e => {
@@ -933,7 +957,7 @@ function renderLists() {
     h.className = "statusRow headerRow";
     h.innerHTML = `
       <span class="sr-name">Benämning</span>
-      <span class="sr-min">Min</span>
+      ${hideMin ? "" : '<span class="sr-min">Min</span>'}
       <span class="sr-lastcount">Senast</span>
       <span class="sr-date">${showUnit ? "Enhet" : "Datum"}</span>`;
     return h;
@@ -975,7 +999,7 @@ function renderLists() {
 
     row.innerHTML = `
       <span class="sr-name">${esc(name)}${renderRowIcons(t, item, hasComment)}</span>
-      <span class="sr-min">${esc(item.minQty ?? "")}</span>
+      ${hideMin ? "" : `<span class="sr-min">${esc(item.minQty ?? "")}</span>`}
       <span class="sr-lastcount">${esc(meta.qty ?? "")}</span>
       <span class="sr-date">${esc(showUnit ? (meta.unit || "") : (meta.lastStr || ""))}</span>`;
 

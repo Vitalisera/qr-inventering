@@ -694,3 +694,50 @@ body.kb #cameraBox { display: none !important; }
 @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
 @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%); } }
 @keyframes flash { 0% { background: rgba(0,255,0,.2); } 100% { background: transparent; } }
+
+/* === UTSKRIFT === */
+@media print {
+  body { background: white !important; color: black !important; padding: 0 !important; }
+  header, #cameraBox, #statusContainer, .btn.fab, .dialog,
+  #installOverlay, #rotateBlock, .help-toggle, .help-box,
+  .infoIcon, audio { display: none !important; }
+  #statusList { display: block !important; padding: 0 !important; gap: 12px; }
+  .group { page-break-inside: auto; margin-bottom: 16px; }
+  .groupHeader {
+    background: white !important;
+    color: black !important;
+    border-bottom: 2pt solid black;
+    padding: 4pt 0;
+    margin-bottom: 4pt;
+    page-break-after: avoid;
+  }
+  .groupTitle { font-size: 14pt; font-weight: 700; color: black !important; }
+  .categoryHeader, .placeHeader {
+    background: white !important;
+    color: black !important;
+    border-bottom: 1pt solid #555 !important;
+    font-weight: 700;
+    font-size: 11pt;
+    padding: 4pt 0 2pt 0 !important;
+    margin-top: 6pt !important;
+    page-break-after: avoid;
+  }
+  .list { display: block !important; }
+  .statusRow {
+    background: white !important;
+    color: black !important;
+    border: 0.5pt solid #888 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 4pt 6pt !important;
+    margin: 0 0 2pt 0 !important;
+    page-break-inside: avoid;
+    font-size: 10pt;
+  }
+  .statusRow.headerRow { font-weight: 700; border-bottom: 1.5pt solid black !important; }
+  .statusRow.low { background: #eee !important; }
+  .statusRow.pendingSync { border-left: 2pt solid #555 !important; }
+  .statusRow span { border-right: 0.5pt solid #ccc !important; }
+  .statusRow span:last-child { border-right: none !important; }
+  @page { margin: 1cm; size: A4; }
+}

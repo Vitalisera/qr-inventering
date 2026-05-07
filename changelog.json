@@ -1,6 +1,13 @@
 {
-  "latest": 72,
+  "latest": 73,
   "versions": [
+    {
+      "version": 73,
+      "date": "2026-05-07",
+      "notes": [
+        "Skanner-bipet låter mer som ett snabbköp — högre och skarpare ton"
+      ]
+    },
     {
       "version": 72,
       "date": "2026-05-07",

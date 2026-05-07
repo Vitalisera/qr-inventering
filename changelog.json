@@ -1,6 +1,13 @@
 {
-  "latest": 69,
+  "latest": 70,
   "versions": [
+    {
+      "version": 70,
+      "date": "2026-05-07",
+      "notes": [
+        "Skanningen är nu mer förlåtande: QR-koder accepteras direkt och streckkoder får 3 sekunder att verifieras"
+      ]
+    },
     {
       "version": 69,
       "date": "2026-05-07",

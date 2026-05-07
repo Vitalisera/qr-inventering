@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 69;
+const APP_VERSION = 70;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -296,13 +296,14 @@ function formatName(fmt) {
   return String(fmt);
 }
 
-// Multi-frame-konsensus: kräv samma kod 2 gånger inom 800ms innan accept.
-// Skyddar mot momentana feltolkningar — en frame returnerar hallucinerad kod
-// som råkar passera checksum.
+// Multi-frame-konsensus: kräv samma kod 2 gånger inom 3 sekunder innan accept.
+// Bara för 1D-streckkoder. QR/Data Matrix bypassas i acceptScan() eftersom
+// Reed-Solomon-koden inom dem redan ger garanterad integritet.
 const _scanConsensus = { code: null, ts: 0 };
+const SCAN_CONSENSUS_TIMEOUT_MS = 3000;
 function passesScanConsensus(code) {
   const now = Date.now();
-  if (_scanConsensus.code === code && now - _scanConsensus.ts < 800) {
+  if (_scanConsensus.code === code && now - _scanConsensus.ts < SCAN_CONSENSUS_TIMEOUT_MS) {
     _scanConsensus.code = null;
     _scanConsensus.ts = 0;
     return true;
@@ -323,9 +324,11 @@ function _zxingHints() {
   } catch { return undefined; }
 }
 
-// Per-format checksum + universell konsensus. QR/Data Matrix passerar checksum
-// (zxing skyddar redan); andra format utan känd standard-checksum passerar
-// och förlitar sig på konsensus.
+// Per-format checksum + konsensus där det behövs.
+// QR_CODE/DATA_MATRIX/AZTEC/PDF_417 har inbyggd Reed-Solomon-felkorrigering;
+// zxing returnerar bara dem efter att RS-validation passerat → vi accepterar
+// direkt utan konsensus så användaren får snabb feedback.
+const _selfValidatingFormats = new Set(['QR_CODE', 'DATA_MATRIX', 'AZTEC', 'PDF_417']);
 function acceptScan(code, format) {
   const fn = formatName(format);
   if (fn === 'EAN_13' && !isValidEAN13(code)) return false;
@@ -337,6 +340,7 @@ function acceptScan(code, format) {
     if (/^\d{12}$/.test(code) && !isValidUPCA(code)) return false;
     if (/^\d{8}$/.test(code) && !isValidEAN8(code)) return false;
   }
+  if (_selfValidatingFormats.has(fn)) return true;
   return passesScanConsensus(code);
 }
 

@@ -1,6 +1,13 @@
 {
-  "latest": 71,
+  "latest": 72,
   "versions": [
+    {
+      "version": 72,
+      "date": "2026-05-07",
+      "notes": [
+        "Skanningen är snabbare igen — 'försök hårdare'-läget tog för mycket processorkraft och hindrade hittandet"
+      ]
+    },
     {
       "version": 71,
       "date": "2026-05-07",

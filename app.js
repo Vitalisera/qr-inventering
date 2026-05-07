@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 71;
+const APP_VERSION = 72;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -313,15 +313,12 @@ function passesScanConsensus(code) {
   return false;
 }
 
-// ZXing decode-hints: TRY_HARDER låter biblioteket lägga mer CPU per frame
-// på att verifiera tolkningen — färre momentana fel-läsningar i dåligt ljus.
+// ZXing decode-hints: tidigare aktiverade vi TRY_HARDER men det visade sig
+// blockera JS-tråden så att laser-animationen släpade och zxing inte hittade
+// koder alls i komplexa scener. Konsensus + lookupByTag-bypass räcker som
+// skydd mot felläsningar — vi kör default-hints (snabbare).
 function _zxingHints() {
-  try {
-    if (typeof ZXing === 'undefined' || !ZXing.DecodeHintType) return undefined;
-    const hints = new Map();
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    return hints;
-  } catch { return undefined; }
+  return undefined;
 }
 
 // Per-format checksum + konsensus där det behövs.

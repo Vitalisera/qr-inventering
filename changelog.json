@@ -1,6 +1,13 @@
 {
-  "latest": 75,
+  "latest": 76,
   "versions": [
+    {
+      "version": 76,
+      "date": "2026-05-07",
+      "notes": [
+        "Det gröna sökstrecket animeras nu från första gången kameran öppnas"
+      ]
+    },
     {
       "version": 75,
       "date": "2026-05-07",

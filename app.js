@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 75;
+const APP_VERSION = 76;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -438,6 +438,16 @@ async function showCamera(){
   qs('#cameraBox')?.classList.remove('hidden');
   cameraVisible = true;
   startBtn.textContent = "Dölj skanner";
+  // Force-restart laser-animation. iOS Safari startar inte alltid CSS-animations
+  // automatiskt när elementet just blivit synligt — utan en reflow ligger den
+  // pausad tills första style-mutation (flashFeedback) väcker den.
+  const laser = qs('#scanLaser');
+  if (laser) {
+    laser.style.animation = 'none';
+    void laser.offsetHeight;
+    laser.style.animation = '';
+    laser.style.animationPlayState = 'running';
+  }
   if (!cameraOn){ await startCamera(); }
   statusDefault();
 }

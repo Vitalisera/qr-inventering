@@ -1,6 +1,13 @@
 {
-  "latest": 74,
+  "latest": 75,
   "versions": [
+    {
+      "version": 75,
+      "date": "2026-05-07",
+      "notes": [
+        "Skanner-bipet låter nu som Systembolaget — kort 'klick'-attack följt av varm ton"
+      ]
+    },
     {
       "version": 74,
       "date": "2026-05-07",

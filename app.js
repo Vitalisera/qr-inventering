@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 74;
+const APP_VERSION = 75;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -450,39 +450,58 @@ let last=0;area.addEventListener('touchend',e=>{const now=Date.now();if(now-last
 /* ===== Audio ===== */
 let actx=null;
 function ensureAudioCtx(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch{}}
-// POS-scanner-bip à la Symbol/Zebra: square wave 2730Hz genom bandpass-filter
-// med linear ADSR-envelope. Karaktären kommer från:
-//  - 2730Hz är klassisk POS-frekvens (örat extra känsligt här)
-//  - Bandpass Q=6 rensar övertoner → "klingande" istället för rå fyrkant
-//  - Linear ADSR: 2ms attack, 10ms decay till sustain, ~40ms hold, 20ms release
-//  - Total ~72ms — skarp och distinkt utan att dröja
+// Systembolaget-stil scanner-bip: brus-transient + triangle-ton med svag pitch-down.
+// Två lager — den 10ms-långa bandpass-filtrade brus-transienten ger den karakteristiska
+// "klick"-attacken som riktiga POS-scanners har; triangle-tonen 1800→1720Hz under 140ms
+// ger den varmare följande tonen.
 function beep() {
   if (!actx) return false;
   try {
-    const t = actx.currentTime;
-    const o = actx.createOscillator();
-    const g = actx.createGain();
-    const bp = actx.createBiquadFilter();
+    const ctx = actx;
+    const t0 = ctx.currentTime + 0.001;
 
-    o.type = 'square';
-    o.frequency.setValueAtTime(2730, t);
+    // Brus-transient — kort vit-brus genom bandpass 3200Hz för "klick"-attack
+    const noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.05), ctx.sampleRate);
+    const data = noiseBuf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
-    bp.type = 'bandpass';
-    bp.frequency.setValueAtTime(2730, t);
-    bp.Q.setValueAtTime(6, t);
+    const noiseSrc = ctx.createBufferSource();
+    noiseSrc.buffer = noiseBuf;
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.value = 3200;
+    noiseFilter.Q.value = 4;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, t0);
+    noiseGain.gain.exponentialRampToValueAtTime(0.25, t0 + 0.002);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.010);
+    noiseSrc.connect(noiseFilter).connect(noiseGain).connect(ctx.destination);
+    noiseSrc.start(t0);
+    noiseSrc.stop(t0 + 0.02);
 
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.32, t + 0.002);  // attack
-    g.gain.linearRampToValueAtTime(0.22, t + 0.012);  // decay → sustain
-    g.gain.setValueAtTime(0.22, t + 0.052);           // hold sustain
-    g.gain.linearRampToValueAtTime(0, t + 0.072);     // release
+    // Ton — triangle 1800→1720Hz, lowpass 5500Hz, 140ms exp-decay
+    const tonStart = t0 + 0.006;
+    const dur = 0.140;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
 
-    o.connect(bp);
-    bp.connect(g);
-    g.connect(actx.destination);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1800, tonStart);
+    osc.frequency.exponentialRampToValueAtTime(1720, tonStart + dur);
 
-    o.start(t);
-    o.stop(t + 0.085);
+    filter.type = 'lowpass';
+    filter.frequency.value = 5500;
+    filter.Q.value = 0.7;
+
+    gain.gain.setValueAtTime(0.0001, tonStart);
+    gain.gain.exponentialRampToValueAtTime(0.38, tonStart + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, tonStart + dur);
+
+    osc.connect(filter).connect(gain).connect(ctx.destination);
+    osc.start(tonStart);
+    osc.stop(tonStart + dur + 0.02);
+
     return true;
   } catch { return false; }
 }

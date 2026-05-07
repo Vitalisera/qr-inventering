@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 70;
+const APP_VERSION = 71;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -341,6 +341,11 @@ function acceptScan(code, format) {
     if (/^\d{8}$/.test(code) && !isValidEAN8(code)) return false;
   }
   if (_selfValidatingFormats.has(fn)) return true;
+  // Känd tag = redan kopplad till en produkt → ingen risk för fel-koppling.
+  // Accept direkt utan konsensus så användaren får snabb feedback.
+  // Konsensus krävs bara för OKÄNDA koder (potentiella felläsningar som
+  // annars skulle öppna "Koppla till befintlig?"-dialog felaktigt).
+  if (lookupByTag(code)) return true;
   return passesScanConsensus(code);
 }
 

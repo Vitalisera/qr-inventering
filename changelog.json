@@ -1,6 +1,13 @@
 {
-  "latest": 70,
+  "latest": 71,
   "versions": [
+    {
+      "version": 71,
+      "date": "2026-05-07",
+      "notes": [
+        "Snabbare skanning av kända artiklar — extra-strängheten behövs bara för okända streckkoder"
+      ]
+    },
     {
       "version": 70,
       "date": "2026-05-07",

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 73;
+const APP_VERSION = 74;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -450,9 +450,42 @@ let last=0;area.addEventListener('touchend',e=>{const now=Date.now();if(now-last
 /* ===== Audio ===== */
 let actx=null;
 function ensureAudioCtx(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();}catch{}}
-// Snabbköps-bip: 2700Hz fyrkantvåg, ~120ms — typisk POS-scanner-ton.
-// Sinus 880Hz lät för "mesigt" (Robert).
-function beep(freq=2700,dur=0.12,type='square'){if(!actx)return false;try{const t=actx.currentTime;const o=actx.createOscillator(),g=actx.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.18,t+0.005);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);o.connect(g).connect(actx.destination);o.start(t);o.stop(t+dur+0.02);return true;}catch{return false;}}
+// POS-scanner-bip à la Symbol/Zebra: square wave 2730Hz genom bandpass-filter
+// med linear ADSR-envelope. Karaktären kommer från:
+//  - 2730Hz är klassisk POS-frekvens (örat extra känsligt här)
+//  - Bandpass Q=6 rensar övertoner → "klingande" istället för rå fyrkant
+//  - Linear ADSR: 2ms attack, 10ms decay till sustain, ~40ms hold, 20ms release
+//  - Total ~72ms — skarp och distinkt utan att dröja
+function beep() {
+  if (!actx) return false;
+  try {
+    const t = actx.currentTime;
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    const bp = actx.createBiquadFilter();
+
+    o.type = 'square';
+    o.frequency.setValueAtTime(2730, t);
+
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(2730, t);
+    bp.Q.setValueAtTime(6, t);
+
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.32, t + 0.002);  // attack
+    g.gain.linearRampToValueAtTime(0.22, t + 0.012);  // decay → sustain
+    g.gain.setValueAtTime(0.22, t + 0.052);           // hold sustain
+    g.gain.linearRampToValueAtTime(0, t + 0.072);     // release
+
+    o.connect(bp);
+    bp.connect(g);
+    g.connect(actx.destination);
+
+    o.start(t);
+    o.stop(t + 0.085);
+    return true;
+  } catch { return false; }
+}
 async function flashFeedback(txt){try{ensureAudioCtx();if(!beep()){blip.currentTime=0;await blip.play();}}catch{}show(txt);const laser=qs('#scanLaser');if(laser)laser.style.animationPlayState="paused";try{v.pause();}catch{}overlay.classList.add('flashOverlay');await new Promise(r=>setTimeout(r,900));overlay.classList.remove('flashOverlay');try{v.play();}catch{}if(laser)laser.style.animationPlayState="running";}
 const cooldown=t=>{lastCode=t;setTimeout(()=>lastCode="",COOLDOWN_MS);};
 const dialogOpen=()=>!dlg.classList.contains('hidden')||!nameDialog.classList.contains('hidden')||!filterDialog.classList.contains('hidden')||!searchDialog.classList.contains('hidden');

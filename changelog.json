@@ -1,6 +1,13 @@
 {
-  "latest": 73,
+  "latest": 74,
   "versions": [
+    {
+      "version": 74,
+      "date": "2026-05-07",
+      "notes": [
+        "Skanner-bipet är nu byggd som en riktig POS-scanner: 2730Hz genom bandpass-filter med snabb ADSR-envelope"
+      ]
+    },
     {
       "version": 73,
       "date": "2026-05-07",

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 68;
+const APP_VERSION = 69;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -258,6 +258,86 @@ function renderRowIcons(t, item, hasComment) {
     out.push(`<span class="infoIcon" data-tag="${t}">ℹ️</span>`);
   }
   return out.length ? ' ' + out.join('') : '';
+}
+
+// Checksum-validering per format. ZXing:s Reed-Solomon skyddar QR/Data Matrix
+// inbyggt; för 1D-streckkoder gör vi extra validering mot fel-läsningar i
+// dåligt ljus som råkar matematiskt likna en annan giltig kod.
+function isValidEAN13(code) {
+  if (!/^\d{13}$/.test(code)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(code[i]) * (i % 2 === 0 ? 1 : 3);
+  return ((10 - (sum % 10)) % 10) === Number(code[12]);
+}
+function isValidUPCA(code) {
+  if (!/^\d{12}$/.test(code)) return false;
+  let sum = 0;
+  for (let i = 0; i < 11; i++) sum += Number(code[i]) * (i % 2 === 0 ? 3 : 1);
+  return ((10 - (sum % 10)) % 10) === Number(code[11]);
+}
+function isValidEAN8(code) {
+  if (!/^\d{8}$/.test(code)) return false;
+  let sum = 0;
+  for (let i = 0; i < 7; i++) sum += Number(code[i]) * (i % 2 === 0 ? 3 : 1);
+  return ((10 - (sum % 10)) % 10) === Number(code[7]);
+}
+
+// Mappa zxing-format-enum (number eller string) till routing-key.
+function formatName(fmt) {
+  if (fmt == null) return null;
+  if (typeof fmt === 'string') return fmt;
+  // BarcodeFormat-enum kan vara number — slå upp namnet via ZXing-globalen.
+  try {
+    const bf = (typeof ZXing !== 'undefined') ? ZXing.BarcodeFormat : null;
+    if (bf) {
+      for (const k of Object.keys(bf)) if (bf[k] === fmt) return k;
+    }
+  } catch {}
+  return String(fmt);
+}
+
+// Multi-frame-konsensus: kräv samma kod 2 gånger inom 800ms innan accept.
+// Skyddar mot momentana feltolkningar — en frame returnerar hallucinerad kod
+// som råkar passera checksum.
+const _scanConsensus = { code: null, ts: 0 };
+function passesScanConsensus(code) {
+  const now = Date.now();
+  if (_scanConsensus.code === code && now - _scanConsensus.ts < 800) {
+    _scanConsensus.code = null;
+    _scanConsensus.ts = 0;
+    return true;
+  }
+  _scanConsensus.code = code;
+  _scanConsensus.ts = now;
+  return false;
+}
+
+// ZXing decode-hints: TRY_HARDER låter biblioteket lägga mer CPU per frame
+// på att verifiera tolkningen — färre momentana fel-läsningar i dåligt ljus.
+function _zxingHints() {
+  try {
+    if (typeof ZXing === 'undefined' || !ZXing.DecodeHintType) return undefined;
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    return hints;
+  } catch { return undefined; }
+}
+
+// Per-format checksum + universell konsensus. QR/Data Matrix passerar checksum
+// (zxing skyddar redan); andra format utan känd standard-checksum passerar
+// och förlitar sig på konsensus.
+function acceptScan(code, format) {
+  const fn = formatName(format);
+  if (fn === 'EAN_13' && !isValidEAN13(code)) return false;
+  if (fn === 'UPC_A' && !isValidUPCA(code)) return false;
+  if (fn === 'EAN_8' && !isValidEAN8(code)) return false;
+  // Format okänt → fall tillbaka på sifferlängd-heuristik
+  if (!fn) {
+    if (/^\d{13}$/.test(code) && !isValidEAN13(code)) return false;
+    if (/^\d{12}$/.test(code) && !isValidUPCA(code)) return false;
+    if (/^\d{8}$/.test(code) && !isValidEAN8(code)) return false;
+  }
+  return passesScanConsensus(code);
 }
 
 // Slår upp en skannad tag i tagCache — primär nyckel först, sedan altTags linjärt.
@@ -2126,7 +2206,7 @@ function startTagScanMode(cb) {
 
 async function startTagCamera() {
   try { reader && reader.reset(); } catch {}
-  reader = new ZXing.BrowserMultiFormatReader();
+  reader = new ZXing.BrowserMultiFormatReader(_zxingHints());
   const cams = await reader.listVideoInputDevices();
   let cam = lastCamera || cams.find(d => /back|rear|environment/i.test(d.label)) || cams[0];
   lastCamera = cam;
@@ -2137,6 +2217,8 @@ async function startTagCamera() {
     if (!res || !res.resultPoints || !tagScanCallback) return;
     const scanned = normTag(res.text || "");
     if (!scanned || scanned === lastCode) return;
+    const fmt = res.getBarcodeFormat ? res.getBarcodeFormat() : res.barcodeFormat;
+    if (!acceptScan(scanned, fmt)) return;
 
     const pts = res.resultPoints || [];
     const vw = v.videoWidth || 1, vh = v.videoHeight || 1;
@@ -2528,7 +2610,7 @@ startBtn?.addEventListener('click', ()=>{
 });
 function stopReader(){try{reader&&reader.reset();}catch{}cameraOn=false;statusDefault();}
 async function startCamera(){
-  stopReader(); reader=new ZXing.BrowserMultiFormatReader();
+  stopReader(); reader=new ZXing.BrowserMultiFormatReader(_zxingHints());
   const cams=await reader.listVideoInputDevices();
   let cam=lastCamera||cams.find(d=>/back|rear|environment/i.test(d.label))||cams[0];
   lastCamera=cam; if(!cam){show("Ingen kamera","warn");return;}
@@ -2546,6 +2628,8 @@ async function startCamera(){
     const bw=Math.max(...X)-Math.min(...X), bh=Math.max(...Y)-Math.min(...Y);
     if(Math.max(bw,bh)<Math.max(srect.width*0.12,srect.height*0.12))return;
     const scanned=normTag(res.text||""); if(!scanned||scanned===lastCode)return;
+    const fmt = res.getBarcodeFormat ? res.getBarcodeFormat() : res.barcodeFormat;
+    if (!acceptScan(scanned, fmt)) return;
     busy=true; scanBox.classList.add("flash"); setTimeout(()=>scanBox.classList.remove("flash"),220);
 
     const hit=lookupByTag(scanned);

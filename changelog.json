@@ -1,6 +1,14 @@
 {
-  "latest": 68,
+  "latest": 69,
   "versions": [
+    {
+      "version": 69,
+      "date": "2026-05-07",
+      "notes": [
+        "Skanningen är nu mer pålitlig: kräver två likadana avläsningar i rad innan den accepteras",
+        "ZXing-biblioteket körs i 'försök hårdare'-läge för noggrannare tolkning"
+      ]
+    },
     {
       "version": 68,
       "date": "2026-05-03",

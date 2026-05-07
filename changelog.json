@@ -1,6 +1,14 @@
 {
-  "latest": 77,
+  "latest": 78,
   "versions": [
+    {
+      "version": 78,
+      "date": "2026-05-07",
+      "notes": [
+        "Vid okänd streckkod söker appen nu automatiskt på OpenFoodFacts och föreslår produktnamn",
+        "Klick på 'Använd förslag' öppnar Skapa ny artikel med benämningen ifylld"
+      ]
+    },
     {
       "version": 77,
       "date": "2026-05-07",

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 77;
+const APP_VERSION = 78;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2318,11 +2318,34 @@ function cancelTagScan() {
 }
 
 /* ===== "Koppla till befintlig" vid okänd tag ===== */
+// OpenFoodFacts-lookup för EAN/UPC. Returnerar förslagsobjekt eller null.
+async function fetchOpenFoodFacts(barcode) {
+  if (!/^\d{8,13}$/.test(barcode)) return null;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 5000);
+  try {
+    const res = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json`,
+      { signal: ac.signal, headers: { 'Accept': 'application/json' } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.status !== 1 || !data.product) return null;
+    const p = data.product;
+    const name = (p.product_name_sv || p.product_name || '').trim();
+    if (!name) return null;
+    const brand = (p.brands || '').split(',')[0].trim();
+    const quantity = (p.quantity || '').trim();
+    return { name, brand, quantity };
+  } catch { return null; }
+  finally { clearTimeout(timer); }
+}
+
 function showLinkTagDialog(scannedTag) {
   resetDialog();
   dlgTitle.textContent = "Okänd tag";
   const offUrl = `https://se.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(scannedTag)}&search_simple=1&action=process`;
-  dlgInfo.innerHTML = `Tag <b>${esc(scannedTag)}</b> hittades inte.<br><a href="${esc(offUrl)}" target="_blank" rel="noopener">🔍 Slå upp på OpenFoodFacts</a>`;
+  dlgInfo.innerHTML = `Tag <b>${esc(scannedTag)}</b> hittades inte.<div id="offResult" data-tag="${esc(scannedTag)}" style="margin-top:10px;font-size:0.9em;opacity:0.85"><span class="aiSpinner"></span> Söker på OpenFoodFacts…</div>`;
   dlgBtns.innerHTML = `
     <button id="createNewFromScan" class="btn">Skapa ny artikel</button>
     <button id="linkExistingBtn" class="btn">Koppla till befintlig</button>
@@ -2335,6 +2358,32 @@ function showLinkTagDialog(scannedTag) {
     openLinkSearchDialog(scannedTag);
   };
   openDialog();
+
+  // Async lookup — uppdaterar dialog vid resultat. Användaren kan ha hunnit
+  // välja något annat under tiden, så kontrollera att dialogen fortfarande
+  // visar SAMMA tag innan vi muterar den.
+  fetchOpenFoodFacts(scannedTag).then(suggestion => {
+    const target = qs("#offResult");
+    if (!target || target.dataset.tag !== scannedTag) return; // dialog stängd eller ny tag öppnad
+    if (!suggestion) {
+      target.innerHTML = `Inget förslag från OpenFoodFacts. <a href="${esc(offUrl)}" target="_blank" rel="noopener">Sök manuellt</a>`;
+      return;
+    }
+    const labelParts = [suggestion.name];
+    if (suggestion.brand) labelParts.push(suggestion.brand);
+    if (suggestion.quantity) labelParts.push(suggestion.quantity);
+    const label = labelParts.join(' • ');
+    target.innerHTML = `<b>OpenFoodFacts föreslår:</b><br>${esc(label)}<br><button type="button" id="useOffSuggestion" class="btn" style="margin-top:8px">Använd förslag</button>`;
+    qs("#useOffSuggestion").onclick = () => {
+      prepareNewItemDialog(scannedTag);
+      // Fyll benämning efter prepareNewItemDialog (manualName finns då i DOM)
+      const nameInput = qs('#manualName');
+      if (nameInput) {
+        nameInput.value = suggestion.name;
+        nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    };
+  });
 }
 
 function openLinkSearchDialog(tagToLink) {

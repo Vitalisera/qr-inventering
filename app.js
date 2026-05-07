@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 76;
+const APP_VERSION = 77;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2321,7 +2321,8 @@ function cancelTagScan() {
 function showLinkTagDialog(scannedTag) {
   resetDialog();
   dlgTitle.textContent = "Okänd tag";
-  dlgInfo.innerHTML = `Tag <b>${esc(scannedTag)}</b> hittades inte.`;
+  const offUrl = `https://se.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(scannedTag)}&search_simple=1&action=process`;
+  dlgInfo.innerHTML = `Tag <b>${esc(scannedTag)}</b> hittades inte.<br><a href="${esc(offUrl)}" target="_blank" rel="noopener">🔍 Slå upp på OpenFoodFacts</a>`;
   dlgBtns.innerHTML = `
     <button id="createNewFromScan" class="btn">Skapa ny artikel</button>
     <button id="linkExistingBtn" class="btn">Koppla till befintlig</button>

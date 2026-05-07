@@ -1,6 +1,13 @@
 {
-  "latest": 76,
+  "latest": 77,
   "versions": [
+    {
+      "version": 77,
+      "date": "2026-05-07",
+      "notes": [
+        "Vid okänd tag: länk att slå upp streckkoden på OpenFoodFacts"
+      ]
+    },
     {
       "version": 76,
       "date": "2026-05-07",

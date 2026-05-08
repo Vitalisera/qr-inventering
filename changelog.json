@@ -1,6 +1,13 @@
 {
-  "latest": 80,
+  "latest": 81,
   "versions": [
+    {
+      "version": 81,
+      "date": "2026-05-08",
+      "notes": [
+        "Kameran tvingas växla fokus mellan nära och längre avstånd där browsern stöder det (mest Android Chrome — iOS Safari ignorerar tyvärr)"
+      ]
+    },
     {
       "version": 80,
       "date": "2026-05-08",

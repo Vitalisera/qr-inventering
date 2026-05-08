@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 80;
+const APP_VERSION = 81;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -420,7 +420,45 @@ function statusDefault(){
 function show(msg,cls,{autoreset=true,delay=2500}={}){s.className=cls||"";s.textContent=msg;clearTimeout(show._t);if(autoreset)show._t=setTimeout(()=>statusDefault(),delay);}
 
 /* ===== Kamera-visning ===== */
+// Fokus-cykler: tvinga kameran att periodiskt fokusera nära så vi inte är
+// beroende av att iOS auto-focus själv detekterar att streckkoden är 5cm bort.
+// Använder MediaStreamTrack.applyConstraints({advanced:[{focusMode/focusDistance}]}).
+// På enheter utan manual-focus-stöd är detta no-op (catchas tyst).
+let _focusCyclerInterval = null;
+async function startFocusCycler() {
+  stopFocusCycler();
+  // Vänta tills v.srcObject finns (BrowserMultiFormatReader sätter den async)
+  for (let i = 0; i < 25 && !v.srcObject; i++) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const stream = v.srcObject;
+  if (!stream) return;
+  const track = stream.getVideoTracks?.()[0];
+  if (!track || !track.getCapabilities) return;
+  let caps;
+  try { caps = track.getCapabilities(); } catch { return; }
+  const supportsManualFocus = Array.isArray(caps.focusMode) && caps.focusMode.includes('manual');
+  if (!supportsManualFocus) return;
+  const minD = caps.focusDistance?.min ?? 0;
+  const maxD = caps.focusDistance?.max ?? 1;
+  const states = [
+    { focusMode: 'continuous' },
+    { focusMode: 'manual', focusDistance: minD },                                  // nära
+    { focusMode: 'manual', focusDistance: minD + (maxD - minD) * 0.15 },           // nära-medium
+    { focusMode: 'manual', focusDistance: minD + (maxD - minD) * 0.4 },            // medium
+  ];
+  let i = 0;
+  _focusCyclerInterval = setInterval(() => {
+    track.applyConstraints({ advanced: [states[i % states.length]] }).catch(() => {});
+    i++;
+  }, 1200);
+}
+function stopFocusCycler() {
+  if (_focusCyclerInterval) { clearInterval(_focusCyclerInterval); _focusCyclerInterval = null; }
+}
+
 function hideCamera(){
+  stopFocusCycler();
   try{ reader && reader.reset(); }catch{}
   try{
     const so = v.srcObject;
@@ -2283,6 +2321,7 @@ async function startTagCamera() {
   if (!cam) { show("Ingen kamera", "warn"); cancelTagScan(); return; }
   cameraOn = true;
 
+  startFocusCycler();
   reader.decodeFromVideoDevice(cam.deviceId, v, async res => {
     if (!res || !res.resultPoints || !tagScanCallback) return;
     const scanned = normTag(res.text || "");
@@ -2882,13 +2921,14 @@ startBtn?.addEventListener('click', ()=>{
     else await showCamera();
   });
 });
-function stopReader(){try{reader&&reader.reset();}catch{}cameraOn=false;statusDefault();}
+function stopReader(){stopFocusCycler();try{reader&&reader.reset();}catch{}cameraOn=false;statusDefault();}
 async function startCamera(){
   stopReader(); reader=new ZXing.BrowserMultiFormatReader(_zxingHints());
   const cams=await reader.listVideoInputDevices();
   let cam=lastCamera||cams.find(d=>/back|rear|environment/i.test(d.label))||cams[0];
   lastCamera=cam; if(!cam){show("Ingen kamera","warn");return;}
   cameraOn=true; statusDefault();
+  startFocusCycler();
   reader.decodeFromVideoDevice(cam.deviceId,v,async res=>{
     if(!res||!res.resultPoints||busy||dialogOpen())return;
     if(!preloadDone){show("Laddar artiklar...",null,{autoreset:false});return;}

@@ -1,6 +1,15 @@
 {
-  "latest": 78,
+  "latest": 79,
   "versions": [
+    {
+      "version": 79,
+      "date": "2026-05-08",
+      "notes": [
+        "OpenFoodFacts-namn kortas automatiskt: 'Coca-Cola 33cl burk pant' → 'Coca-Cola'",
+        "Vid OFF-träff: appen visar liknande befintliga artiklar och föreslår koppla till dem",
+        "AI-förslaget startar redan vid OpenFoodFacts-träff — slipper vänta efter klick på 'Använd förslag'"
+      ]
+    },
     {
       "version": 78,
       "date": "2026-05-07",

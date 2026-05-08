@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 78;
+const APP_VERSION = 79;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2318,6 +2318,47 @@ function cancelTagScan() {
 }
 
 /* ===== "Koppla till befintlig" vid okänd tag ===== */
+// Sök tagCache efter befintliga artiklar som matchar ett OFF-förslag.
+// Använder Autocomplete-engine (substring + fuzzy) för att hitta liknande
+// — om OFF säger "Kaffe Lavazza" och vi har en "Kaffe Zoégas" är det
+// förmodligen samma kategori → erbjud koppla istället för skapa ny.
+function findSimilarItems(name, max = 3) {
+  if (!name || typeof Autocomplete === 'undefined') return [];
+  const wordMap = new Map();
+  for (const [tag, val] of tagCache.entries()) {
+    if (!val?.name) continue;
+    const k = val.name.toLocaleLowerCase('sv');
+    if (!wordMap.has(k)) {
+      wordMap.set(k, { tag, name: val.name, sheetName: val.sheetName, rowNum: val.rowNum });
+    }
+  }
+  if (!wordMap.size) return [];
+  const wordlist = [...wordMap.keys()];
+  const suggestions = Autocomplete.suggest(name.toLocaleLowerCase('sv'), wordlist, {
+    matchMode: 'substring',
+    maxSuggestions: max,
+    minPrefixHits: 0
+  });
+  return suggestions.map(s => wordMap.get(s.word)).filter(Boolean);
+}
+
+// OpenFoodFacts ger ofta långa namn som "Coca-Cola Original Taste 33cl burk pant".
+// Klipp bort enheter/förpackningstermer + begränsa till första orden.
+function simplifyOffName(name) {
+  if (!name) return '';
+  const original = String(name).trim();
+  let s = original
+    .replace(/\b\d+([.,]\d+)?\s?(cl|ml|dl|l|g|kg|st|x|pcs|tabletter|bites|pack)\b/gi, '')
+    .replace(/\b(plåtburk|burk|pant|påse|flaska|låda|paket|tub|spray|pack|kartong|tetra|återvinning|original|taste|flavour|flavor)\b/gi, '')
+    .replace(/[,;(].*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const words = s.split(' ').filter(Boolean);
+  const trimmed = words.slice(0, 4).join(' ').trim();
+  // Om regex åt upp allt (t.ex. "33cl burk") — fall tillbaka på originalet
+  return trimmed || original;
+}
+
 // OpenFoodFacts-lookup för EAN/UPC. Returnerar förslagsobjekt eller null.
 async function fetchOpenFoodFacts(barcode) {
   if (!/^\d{8,13}$/.test(barcode)) return null;
@@ -2332,11 +2373,11 @@ async function fetchOpenFoodFacts(barcode) {
     const data = await res.json();
     if (data.status !== 1 || !data.product) return null;
     const p = data.product;
-    const name = (p.product_name_sv || p.product_name || '').trim();
-    if (!name) return null;
+    const rawName = (p.product_name_sv || p.product_name || '').trim();
+    if (!rawName) return null;
     const brand = (p.brands || '').split(',')[0].trim();
     const quantity = (p.quantity || '').trim();
-    return { name, brand, quantity };
+    return { name: simplifyOffName(rawName), rawName, brand, quantity };
   } catch { return null; }
   finally { clearTimeout(timer); }
 }
@@ -2373,15 +2414,101 @@ function showLinkTagDialog(scannedTag) {
     if (suggestion.brand) labelParts.push(suggestion.brand);
     if (suggestion.quantity) labelParts.push(suggestion.quantity);
     const label = labelParts.join(' • ');
-    target.innerHTML = `<b>OpenFoodFacts föreslår:</b><br>${esc(label)}<br><button type="button" id="useOffSuggestion" class="btn" style="margin-top:8px">Använd förslag</button>`;
-    qs("#useOffSuggestion").onclick = () => {
-      prepareNewItemDialog(scannedTag);
-      // Fyll benämning efter prepareNewItemDialog (manualName finns då i DOM)
-      const nameInput = qs('#manualName');
-      if (nameInput) {
-        nameInput.value = suggestion.name;
-        nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    // Sök befintliga artiklar som kan matcha (kanske redan finns en "Kaffe"-tag)
+    const similar = findSimilarItems(suggestion.name);
+    let similarHtml = '';
+    if (similar.length) {
+      similarHtml = `<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(0,0,0,.1)"><i style="font-size:0.85em;display:block;margin-bottom:4px">Du har redan liknande:</i>`;
+      for (const m of similar) {
+        similarHtml += `<button type="button" class="btn cancel offMatchBtn" data-tag="${esc(m.tag)}" data-sheet="${esc(m.sheetName||'')}" data-row="${esc(m.rowNum||'')}" data-name="${esc(m.name)}" style="display:block;margin-top:4px;font-size:0.9em;width:100%">Koppla till "${esc(m.name)}"</button>`;
       }
+      similarHtml += `</div>`;
+    }
+    target.innerHTML = `<b>OpenFoodFacts föreslår:</b><br>${esc(label)}<br><button type="button" id="useOffSuggestion" class="btn" style="margin-top:8px">Använd förslag</button>${similarHtml}`;
+
+    // Wire upp matches-knapparna: klick → addTag mot vald artikel
+    target.querySelectorAll('.offMatchBtn').forEach(btn => {
+      btn.onclick = () => {
+        const sheetName = btn.dataset.sheet || null;
+        const rowNum = btn.dataset.row ? Number(btn.dataset.row) : null;
+        const matchTag = btn.dataset.tag;
+        const matchName = btn.dataset.name;
+        btn.disabled = true;
+        btn.textContent = 'Kopplar…';
+        gasCall('addTag', { sheetName, rowNum, newTag: scannedTag }).then(res => {
+          if (res?.ok) {
+            const oldData = tagCache.get(matchTag);
+            if (oldData) oldData.altTags = [...(oldData.altTags || []), scannedTag];
+            closeDialog();
+            cooldown(scannedTag);
+            show(`Tag kopplad till "${matchName}"`, 'ok');
+          } else {
+            btn.disabled = false;
+            btn.textContent = `Koppla till "${matchName}"`;
+            show(res?.collision ? `Redan kopplad till "${res.existingName}"` : 'Kunde inte koppla', 'warn');
+          }
+        }).catch(() => {
+          btn.disabled = false;
+          btn.textContent = `Koppla till "${matchName}"`;
+          show('Nätverksfel — försök igen', 'warn');
+        });
+      };
+    });
+
+    // Pre-warm AI-förslag i bakgrunden direkt — när användaren klickar
+    // "Använd förslag" är resultatet ofta redan klart, så vi slipper
+    // 600ms-debouncen och GAS cold-start-fördröjningen.
+    const aiPrewarm = aiSuggest(suggestion.name, '').catch(() => null);
+
+    qs("#useOffSuggestion").onclick = async () => {
+      prepareNewItemDialog(scannedTag);
+      const nameInput = qs('#manualName');
+      if (!nameInput) return;
+      nameInput.value = suggestion.name;
+      // Skip dispatchEvent('input') — den skulle trigga manualName.oninput
+      // som startar EN NY aiSuggest med 600ms debounce. Använd pre-warm istället.
+      const aiChip = dlg.querySelector('.aiChip');
+      if (aiChip) {
+        aiChip.innerHTML = '<span class="aiSpinner"></span><span class="aiChipHint">AI tänker…</span>';
+        aiChip.classList.remove('hidden');
+      }
+      const s = await aiPrewarm;
+      // Säkerställ att användaren inte hunnit skriva över namnet
+      if (nameInput.value.trim() !== suggestion.name.trim()) return;
+      if (!s || !s.ok || !aiChip) {
+        if (aiChip) aiChip.classList.add('hidden');
+        return;
+      }
+      const parts = [];
+      if (s.place) parts.push(s.place);
+      if (s.category) parts.push(s.category);
+      if (s.unit) parts.push(s.unit);
+      if (s.type) parts.push(s.type);
+      if (!parts.length) { aiChip.classList.add('hidden'); return; }
+      aiChip.innerHTML = `<button type="button" class="aiChipBtn">📎 ${esc(parts.join(' · '))}</button><span class="aiChipHint">Tryck för att fylla i</span>`;
+      aiChip.querySelector('.aiChipBtn').onclick = () => {
+        // Kör samma applyAiSuggest-logik. Eftersom den definieras inom
+        // prepareNewItemDialog och inte exporteras, tillämpa fält-för-fält här.
+        if (s.type) qs('#manualType').value = s.type === 'behållare' ? 'behållare' : 'singel';
+        if (s.place) {
+          const placeSel = qs('#manualPlace');
+          if (placeSel && [...placeSel.options].some(o => o.value === s.place)) {
+            placeSel.value = s.place;
+            populateNewCategoryDropdown(s.place);
+          }
+        }
+        const setSel = (selId, newId, val) => {
+          if (!val) return;
+          const sel = qs(selId); const newIn = qs(newId);
+          if (!sel) return;
+          const match = [...sel.options].some(o => o.value === val);
+          if (match) { sel.value = val; if (newIn) { newIn.style.display = 'none'; newIn.value = ''; } }
+          else { sel.value = '__new__'; if (newIn) { newIn.style.display = 'block'; newIn.value = val; } }
+        };
+        setSel('#manualUnit', '#manualUnitNew', s.unit);
+        setSel('#manualCategory', '#manualCategoryNew', s.category);
+        aiChip.classList.add('hidden');
+      };
     };
   });
 }

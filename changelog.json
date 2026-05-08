@@ -1,6 +1,14 @@
 {
-  "latest": 84,
+  "latest": 85,
   "versions": [
+    {
+      "version": 85,
+      "date": "2026-05-08",
+      "notes": [
+        "Streckkoder behöver inte hållas exakt vågrätt — appen försöker tolka i flera vinklar",
+        "Mindre visuell hop i kameran (tog bort fokus-cyklingen som hjälpte ändå inte)"
+      ]
+    },
     {
       "version": 84,
       "date": "2026-05-08",

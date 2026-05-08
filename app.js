@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 84;
+const APP_VERSION = 85;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -422,9 +422,6 @@ function show(msg,cls,{autoreset=true,delay=2500}={}){s.className=cls||"";s.text
 /* ===== Kamera-visning ===== */
 // Fokus-cykler: tvinga kameran att periodiskt fokusera nära så vi inte är
 // beroende av att iOS auto-focus själv detekterar att streckkoden är 5cm bort.
-// Använder MediaStreamTrack.applyConstraints({advanced:[{focusMode/focusDistance}]}).
-// På enheter utan manual-focus-stöd är detta no-op (catchas tyst).
-let _focusCyclerInterval = null;
 let _backCameras = [];     // Cachelista av back-kameror (för iPhone Pro lins-cykling)
 let _backCamIndex = 0;     // Index i _backCameras
 
@@ -448,37 +445,12 @@ function pickBackCameras(cams) {
     return score(a) - score(b);
   });
 }
-async function startFocusCycler() {
-  stopFocusCycler();
-  // Vänta tills v.srcObject finns (BrowserMultiFormatReader sätter den async)
-  for (let i = 0; i < 25 && !v.srcObject; i++) {
-    await new Promise(r => setTimeout(r, 100));
-  }
-  const stream = v.srcObject;
-  if (!stream) return;
-  const track = stream.getVideoTracks?.()[0];
-  if (!track || !track.getCapabilities) return;
-  let caps;
-  try { caps = track.getCapabilities(); } catch { return; }
-  const supportsManualFocus = Array.isArray(caps.focusMode) && caps.focusMode.includes('manual');
-  if (!supportsManualFocus) return;
-  const minD = caps.focusDistance?.min ?? 0;
-  const maxD = caps.focusDistance?.max ?? 1;
-  const states = [
-    { focusMode: 'continuous' },
-    { focusMode: 'manual', focusDistance: minD },                                  // nära
-    { focusMode: 'manual', focusDistance: minD + (maxD - minD) * 0.15 },           // nära-medium
-    { focusMode: 'manual', focusDistance: minD + (maxD - minD) * 0.4 },            // medium
-  ];
-  let i = 0;
-  _focusCyclerInterval = setInterval(() => {
-    track.applyConstraints({ advanced: [states[i % states.length]] }).catch(() => {});
-    i++;
-  }, 1200);
-}
-function stopFocusCycler() {
-  if (_focusCyclerInterval) { clearInterval(_focusCyclerInterval); _focusCyclerInterval = null; }
-}
+// Tidigare hade vi en focus-cykler som växlade mellan continuous/manual-near/manual-medium
+// var 1.2s. Den syntes som visuell hop när bilden re-fokuserade och hjälpte inte
+// ändå (iOS ignorerar manual focus). Center-focus-hint via pointsOfInterest=(0.5,0.5)
+// vid kamera-start räcker.
+function startFocusCycler() { /* no-op — behållen för API-kompatibilitet */ }
+function stopFocusCycler() { /* no-op */ }
 
 // Visa/dölj lens-knappen baserat på antal back-kameror
 function updateLensSwitchVisibility() {
@@ -526,6 +498,11 @@ function startCropDecode(onResult) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   let stopped = false;
 
+  // Rotations-cykling: ZXing's 1D-decoder vill ha streckkoder horisontellt.
+  // Vi roterar canvas-bilden i flera vinklar per tick så streckkoder som
+  // hålls snett (15°, 30° etc.) ändå kan tolkas. Diagonal canvas-storlek
+  // så streckkoden inte cliper vid 45°.
+  const rotations = [0, 30, 60, 90]; // grader
   async function tick() {
     if (stopped) return;
     const vw = v.videoWidth, vh = v.videoHeight;
@@ -535,27 +512,38 @@ function startCropDecode(onResult) {
       const cropH = Math.floor(vh * 0.5);
       const cropX = Math.floor((vw - cropW) / 2);
       const cropY = Math.floor((vh - cropH) / 2);
-      if (canvas.width !== cropW) canvas.width = cropW;
-      if (canvas.height !== cropH) canvas.height = cropH;
-      try {
-        ctx.drawImage(v, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-        const result = reader.decodeFromCanvas(canvas);
-        if (result && !stopped && onResult) {
-          // Wrappa Result så scan-handler-flow funkar: tom resultPoints → all
-          // positions-validation passerar (vacuous truth på .every) eftersom
-          // canvas redan är croppad till scanBox-regionen.
-          const fmt = result.getBarcodeFormat ? result.getBarcodeFormat() : result.barcodeFormat;
-          onResult({
-            text: result.getText ? result.getText() : (result.text || ''),
-            resultPoints: [],
-            barcodeFormat: fmt
-          });
+      const diag = Math.ceil(Math.sqrt(cropW * cropW + cropH * cropH));
+      if (canvas.width !== diag) canvas.width = diag;
+      if (canvas.height !== diag) canvas.height = diag;
+
+      let result = null;
+      for (const deg of rotations) {
+        if (stopped) return;
+        try {
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, diag, diag);
+          ctx.save();
+          ctx.translate(diag / 2, diag / 2);
+          if (deg) ctx.rotate(deg * Math.PI / 180);
+          ctx.drawImage(v, cropX, cropY, cropW, cropH, -cropW / 2, -cropH / 2, cropW, cropH);
+          ctx.restore();
+          const r = reader.decodeFromCanvas(canvas);
+          if (r) { result = r; break; } // första träff vinner
+        } catch {
+          // NotFoundException är normalt
         }
-      } catch {
-        // NotFoundException är normalt — ingen kod i denna frame
+      }
+
+      if (result && !stopped && onResult) {
+        const fmt = result.getBarcodeFormat ? result.getBarcodeFormat() : result.barcodeFormat;
+        onResult({
+          text: result.getText ? result.getText() : (result.text || ''),
+          resultPoints: [],
+          barcodeFormat: fmt
+        });
       }
     }
-    if (!stopped) setTimeout(tick, 120); // ~8fps är gott nog och billigare än rAF
+    if (!stopped) setTimeout(tick, 150); // 4 rotations × 150ms = ~6fps total
   }
   tick();
   _cropDecodeStop = () => { stopped = true; };

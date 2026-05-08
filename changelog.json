@@ -1,6 +1,13 @@
 {
-  "latest": 88,
+  "latest": 89,
   "versions": [
+    {
+      "version": 89,
+      "date": "2026-05-08",
+      "notes": [
+        "Streckkoder kan nu hållas mer snett (upp till 90°) — rotations-tolkningen var trasig och är nu riktigt aktiverad"
+      ]
+    },
     {
       "version": 88,
       "date": "2026-05-08",

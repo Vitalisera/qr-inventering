@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 88;
+const APP_VERSION = 89;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -493,7 +493,13 @@ function getActiveTrack() {
 let _cropDecodeStop = null;
 function startCropDecode(onResult) {
   stopCropDecode();
-  if (typeof ZXing === 'undefined' || !reader?.decodeFromCanvas) return;
+  // @zxing/library@0.20.0 har INTE decodeFromCanvas. Vi bygger BinaryBitmap
+  // manuellt via HTMLCanvasElementLuminanceSource → HybridBinarizer → decodeBitmap.
+  if (typeof ZXing === 'undefined' ||
+      !reader?.decodeBitmap ||
+      !ZXing.HTMLCanvasElementLuminanceSource ||
+      !ZXing.HybridBinarizer ||
+      !ZXing.BinaryBitmap) return;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   let stopped = false;
@@ -527,7 +533,9 @@ function startCropDecode(onResult) {
           if (deg) ctx.rotate(deg * Math.PI / 180);
           ctx.drawImage(v, cropX, cropY, cropW, cropH, -cropW / 2, -cropH / 2, cropW, cropH);
           ctx.restore();
-          const r = reader.decodeFromCanvas(canvas);
+          const lum = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+          const bin = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));
+          const r = reader.decodeBitmap(bin);
           if (r) { result = r; break; } // första träff vinner
         } catch {
           // NotFoundException är normalt

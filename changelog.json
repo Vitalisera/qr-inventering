@@ -1,6 +1,14 @@
 {
-  "latest": 82,
+  "latest": 83,
   "versions": [
+    {
+      "version": 83,
+      "date": "2026-05-08",
+      "notes": [
+        "Zoom-knappar (+/−) i kameran för att förstora bilden — fungerar på iOS och Android",
+        "Tappa på preview-bilden för att fokusera där (tap-to-focus)"
+      ]
+    },
     {
       "version": 82,
       "date": "2026-05-08",

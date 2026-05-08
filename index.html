@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=12">
+  <link rel="stylesheet" href="style.css?v=13">
 </head>
 
 <body>
@@ -35,6 +35,10 @@
     <video id="preview" autoplay muted playsinline></video>
     <div id="overlay"><div id="scanBox"><div id="scanLaser"></div></div></div>
     <button id="lensSwitchBtn" class="hidden" type="button" aria-label="Byt kameralins" title="Byt kameralins">📷</button>
+    <div id="zoomControls" class="hidden">
+      <button id="zoomOutBtn" type="button" aria-label="Zooma ut">−</button>
+      <button id="zoomInBtn" type="button" aria-label="Zooma in">+</button>
+    </div>
   </section>
 
   <!-- STATUS + LOGG -->
@@ -159,7 +163,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=80"></script>
+  <script src="app.js?v=81"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

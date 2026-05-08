@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 82;
+const APP_VERSION = 83;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -509,9 +509,75 @@ async function cycleBackCamera() {
 }
 qs('#lensSwitchBtn')?.addEventListener('click', cycleBackCamera);
 
+// Zoom-stöd via MediaTrackConstraints. iOS Safari 14.5+ stöder zoom på back-kamera.
+let _currentZoom = 1;
+function getActiveTrack() {
+  return v.srcObject?.getVideoTracks?.()[0] || null;
+}
+function getZoomCapability() {
+  const track = getActiveTrack();
+  if (!track || !track.getCapabilities) return null;
+  try {
+    const caps = track.getCapabilities();
+    return caps.zoom ? caps.zoom : null; // {min, max, step}
+  } catch { return null; }
+}
+async function setZoom(value) {
+  const track = getActiveTrack();
+  const cap = getZoomCapability();
+  if (!track || !cap) return false;
+  const clamped = Math.max(cap.min, Math.min(cap.max, value));
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: clamped }] });
+    _currentZoom = clamped;
+    return true;
+  } catch { return false; }
+}
+async function updateZoomControlsVisibility() {
+  const ctrl = qs('#zoomControls');
+  if (!ctrl) return;
+  // Vänta tills track finns (BrowserMultiFormatReader sätter v.srcObject async)
+  for (let i = 0; i < 25 && !v.srcObject; i++) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const cap = getZoomCapability();
+  if (cap && cap.max > cap.min) {
+    ctrl.classList.remove('hidden');
+    _currentZoom = getActiveTrack()?.getSettings?.().zoom ?? cap.min;
+  } else {
+    ctrl.classList.add('hidden');
+  }
+}
+qs('#zoomInBtn')?.addEventListener('click', () => {
+  const cap = getZoomCapability();
+  if (!cap) return;
+  const step = cap.step || (cap.max - cap.min) / 8;
+  setZoom(_currentZoom + step);
+});
+qs('#zoomOutBtn')?.addEventListener('click', () => {
+  const cap = getZoomCapability();
+  if (!cap) return;
+  const step = cap.step || (cap.max - cap.min) / 8;
+  setZoom(_currentZoom - step);
+});
+
+// Tap-to-focus: tappa i preview för att fokusera där. Fungerar där iOS exponerar
+// pointsOfInterest + focusMode='single-shot'.
+v?.addEventListener('click', e => {
+  const track = getActiveTrack();
+  if (!track || !track.applyConstraints) return;
+  const rect = v.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width;
+  const y = (e.clientY - rect.top) / rect.height;
+  track.applyConstraints({
+    advanced: [{ pointsOfInterest: [{ x, y }], focusMode: 'single-shot' }]
+  }).catch(() => {});
+});
+
 function hideCamera(){
   stopFocusCycler();
   qs('#lensSwitchBtn')?.classList.add('hidden');
+  qs('#zoomControls')?.classList.add('hidden');
   try{ reader && reader.reset(); }catch{}
   try{
     const so = v.srcObject;
@@ -2380,6 +2446,7 @@ async function startTagCamera() {
   updateLensSwitchVisibility();
 
   startFocusCycler();
+  updateZoomControlsVisibility();
   reader.decodeFromVideoDevice(cam.deviceId, v, async res => {
     if (!res || !res.resultPoints || !tagScanCallback) return;
     const scanned = normTag(res.text || "");
@@ -2991,6 +3058,7 @@ async function startCamera(){
   cameraOn=true; statusDefault();
   updateLensSwitchVisibility();
   startFocusCycler();
+  updateZoomControlsVisibility();
   reader.decodeFromVideoDevice(cam.deviceId,v,async res=>{
     if(!res||!res.resultPoints||busy||dialogOpen())return;
     if(!preloadDone){show("Laddar artiklar...",null,{autoreset:false});return;}

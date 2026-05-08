@@ -717,33 +717,6 @@ body.kb #cameraBox { display: none !important; }
 #lensSwitchBtn.hidden { display: none !important; }
 #lensSwitchBtn:active { transform: scale(0.92); }
 
-/* === ZOOM-KONTROLLER (fungerar på iOS Safari sedan 14.5) === */
-#zoomControls {
-  position: absolute;
-  bottom: max(12px, env(safe-area-inset-bottom));
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 8px;
-  z-index: 10;
-}
-#zoomControls.hidden { display: none !important; }
-#zoomControls button {
-  width: 48px;
-  height: 48px;
-  border-radius: 24px;
-  background: rgba(0,0,0,0.55);
-  color: #fff;
-  border: 1.5px solid rgba(255,255,255,0.6);
-  font-size: 24px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-#zoomControls button:active { transform: scale(0.92); }
-
 /* === ICON-BTN (för ⚙️ Egenskaper i container-dialog) === */
 .btn.icon-btn {
   background: transparent;

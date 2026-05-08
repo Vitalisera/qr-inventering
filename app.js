@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 83;
+const APP_VERSION = 84;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -509,57 +509,60 @@ async function cycleBackCamera() {
 }
 qs('#lensSwitchBtn')?.addEventListener('click', cycleBackCamera);
 
-// Zoom-stöd via MediaTrackConstraints. iOS Safari 14.5+ stöder zoom på back-kamera.
-let _currentZoom = 1;
 function getActiveTrack() {
   return v.srcObject?.getVideoTracks?.()[0] || null;
 }
-function getZoomCapability() {
-  const track = getActiveTrack();
-  if (!track || !track.getCapabilities) return null;
-  try {
-    const caps = track.getCapabilities();
-    return caps.zoom ? caps.zoom : null; // {min, max, step}
-  } catch { return null; }
-}
-async function setZoom(value) {
-  const track = getActiveTrack();
-  const cap = getZoomCapability();
-  if (!track || !cap) return false;
-  const clamped = Math.max(cap.min, Math.min(cap.max, value));
-  try {
-    await track.applyConstraints({ advanced: [{ zoom: clamped }] });
-    _currentZoom = clamped;
-    return true;
-  } catch { return false; }
-}
-async function updateZoomControlsVisibility() {
-  const ctrl = qs('#zoomControls');
-  if (!ctrl) return;
-  // Vänta tills track finns (BrowserMultiFormatReader sätter v.srcObject async)
-  for (let i = 0; i < 25 && !v.srcObject; i++) {
-    await new Promise(r => setTimeout(r, 100));
+
+// Canvas-crop-decoder: parallell decode-loop som drar scanBox-regionen från video
+// till en canvas i full sensor-upplösning. Ger ZXing en MINDRE bild med fler
+// pixlar per streckkod-bredd → bättre detection på små/små-skarpa koder än
+// att försöka tolka hela video-frame:n. Optisk zoom är inte möjlig i web-API,
+// men crop ger samma effekt som "digital crop på sensor"-data utan upscaling.
+let _cropDecodeStop = null;
+function startCropDecode(onResult) {
+  stopCropDecode();
+  if (typeof ZXing === 'undefined' || !reader?.decodeFromCanvas) return;
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let stopped = false;
+
+  async function tick() {
+    if (stopped) return;
+    const vw = v.videoWidth, vh = v.videoHeight;
+    if (vw && vh) {
+      // Crop till mitten 70% × 50% (matchar scanBox-rutan visuellt)
+      const cropW = Math.floor(vw * 0.7);
+      const cropH = Math.floor(vh * 0.5);
+      const cropX = Math.floor((vw - cropW) / 2);
+      const cropY = Math.floor((vh - cropH) / 2);
+      if (canvas.width !== cropW) canvas.width = cropW;
+      if (canvas.height !== cropH) canvas.height = cropH;
+      try {
+        ctx.drawImage(v, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        const result = reader.decodeFromCanvas(canvas);
+        if (result && !stopped && onResult) {
+          // Wrappa Result så scan-handler-flow funkar: tom resultPoints → all
+          // positions-validation passerar (vacuous truth på .every) eftersom
+          // canvas redan är croppad till scanBox-regionen.
+          const fmt = result.getBarcodeFormat ? result.getBarcodeFormat() : result.barcodeFormat;
+          onResult({
+            text: result.getText ? result.getText() : (result.text || ''),
+            resultPoints: [],
+            barcodeFormat: fmt
+          });
+        }
+      } catch {
+        // NotFoundException är normalt — ingen kod i denna frame
+      }
+    }
+    if (!stopped) setTimeout(tick, 120); // ~8fps är gott nog och billigare än rAF
   }
-  const cap = getZoomCapability();
-  if (cap && cap.max > cap.min) {
-    ctrl.classList.remove('hidden');
-    _currentZoom = getActiveTrack()?.getSettings?.().zoom ?? cap.min;
-  } else {
-    ctrl.classList.add('hidden');
-  }
+  tick();
+  _cropDecodeStop = () => { stopped = true; };
 }
-qs('#zoomInBtn')?.addEventListener('click', () => {
-  const cap = getZoomCapability();
-  if (!cap) return;
-  const step = cap.step || (cap.max - cap.min) / 8;
-  setZoom(_currentZoom + step);
-});
-qs('#zoomOutBtn')?.addEventListener('click', () => {
-  const cap = getZoomCapability();
-  if (!cap) return;
-  const step = cap.step || (cap.max - cap.min) / 8;
-  setZoom(_currentZoom - step);
-});
+function stopCropDecode() {
+  if (_cropDecodeStop) { _cropDecodeStop(); _cropDecodeStop = null; }
+}
 
 // Tap-to-focus: tappa i preview för att fokusera där. Fungerar där iOS exponerar
 // pointsOfInterest + focusMode='single-shot'.
@@ -576,8 +579,8 @@ v?.addEventListener('click', e => {
 
 function hideCamera(){
   stopFocusCycler();
+  stopCropDecode();
   qs('#lensSwitchBtn')?.classList.add('hidden');
-  qs('#zoomControls')?.classList.add('hidden');
   try{ reader && reader.reset(); }catch{}
   try{
     const so = v.srcObject;
@@ -2445,32 +2448,47 @@ async function startTagCamera() {
   cameraOn = true;
   updateLensSwitchVisibility();
 
-  startFocusCycler();
-  updateZoomControlsVisibility();
-  reader.decodeFromVideoDevice(cam.deviceId, v, async res => {
+  const onTagResult = async res => {
     if (!res || !res.resultPoints || !tagScanCallback) return;
     const scanned = normTag(res.text || "");
     if (!scanned || scanned === lastCode) return;
     const fmt = res.getBarcodeFormat ? res.getBarcodeFormat() : res.barcodeFormat;
     if (!acceptScan(scanned, fmt)) return;
 
+    // Tom resultPoints (från crop-decode) → vacuous truth → skip positions-validation
     const pts = res.resultPoints || [];
-    const vw = v.videoWidth || 1, vh = v.videoHeight || 1;
-    const c = v.getBoundingClientRect();
-    const k = Math.max(c.width / vw, c.height / vh);
-    const srect = scanBox.getBoundingClientRect();
-    const inset = 8;
-    const X = pts.map(p => c.left + (c.width - vw * k) / 2 + p.x * k);
-    const Y = pts.map(p => c.top + (c.height - vh * k) / 2 + p.y * k);
-    const inX = x => x >= srect.left + inset && x <= srect.right - inset;
-    const inY = y => y >= srect.top + inset && y <= srect.bottom - inset;
-    if (!X.every(inX) || !Y.every(inY)) return;
+    if (pts.length) {
+      const vw = v.videoWidth || 1, vh = v.videoHeight || 1;
+      const c = v.getBoundingClientRect();
+      const k = Math.max(c.width / vw, c.height / vh);
+      const srect = scanBox.getBoundingClientRect();
+      const inset = 8;
+      const X = pts.map(p => c.left + (c.width - vw * k) / 2 + p.x * k);
+      const Y = pts.map(p => c.top + (c.height - vh * k) / 2 + p.y * k);
+      const inX = x => x >= srect.left + inset && x <= srect.right - inset;
+      const inY = y => y >= srect.top + inset && y <= srect.bottom - inset;
+      if (!X.every(inX) || !Y.every(inY)) return;
+    }
 
     await flashFeedback("Tag avläst: " + scanned);
     const cb = tagScanCallback;
     cancelTagScan();
     cb(scanned);
-  });
+  };
+
+  startFocusCycler();
+  reader.decodeFromVideoDevice(cam.deviceId, v, onTagResult);
+  // Parallell crop-decode för bättre detection på små streckkoder
+  startCropDecode(onTagResult);
+  // Hint:a iOS att fokusera mitten av bilden (där scanBox visas)
+  setTimeout(() => {
+    const track = getActiveTrack();
+    if (track?.applyConstraints) {
+      track.applyConstraints({
+        advanced: [{ pointsOfInterest: [{ x: 0.5, y: 0.5 }], focusMode: 'continuous' }]
+      }).catch(() => {});
+    }
+  }, 800);
 }
 
 function cancelTagScan() {
@@ -3046,7 +3064,7 @@ startBtn?.addEventListener('click', ()=>{
     else await showCamera();
   });
 });
-function stopReader(){stopFocusCycler();try{reader&&reader.reset();}catch{}cameraOn=false;statusDefault();}
+function stopReader(){stopFocusCycler();stopCropDecode();try{reader&&reader.reset();}catch{}cameraOn=false;statusDefault();}
 async function startCamera(){
   stopReader(); reader=new ZXing.BrowserMultiFormatReader(_zxingHints());
   const cams=await reader.listVideoInputDevices();
@@ -3058,19 +3076,22 @@ async function startCamera(){
   cameraOn=true; statusDefault();
   updateLensSwitchVisibility();
   startFocusCycler();
-  updateZoomControlsVisibility();
-  reader.decodeFromVideoDevice(cam.deviceId,v,async res=>{
+  const onScanResult = async res => {
     if(!res||!res.resultPoints||busy||dialogOpen())return;
     if(!preloadDone){show("Laddar artiklar...",null,{autoreset:false});return;}
-    const pts=res.resultPoints||[]; const vw=v.videoWidth||1,vh=v.videoHeight||1;
-    const c=v.getBoundingClientRect(); const k=Math.max(c.width/vw,c.height/vh);
-    const dispW=vw*k,dispH=vh*k; const offX=c.left+(c.width-dispW)/2, offY=c.top+(c.height-dispH)/2;
-    const X=pts.map(p=>offX+p.x*k), Y=pts.map(p=>offY+p.y*k);
-    const srect=scanBox.getBoundingClientRect(); const inset=8;
-    const inX=x=>x>=srect.left+inset&&x<=srect.right-inset, inY=y=>y>=srect.top+inset&&y<=srect.bottom-inset;
-    if(!X.every(inX)||!Y.every(inY))return;
-    const bw=Math.max(...X)-Math.min(...X), bh=Math.max(...Y)-Math.min(...Y);
-    if(Math.max(bw,bh)<Math.max(srect.width*0.12,srect.height*0.12))return;
+    const pts=res.resultPoints||[];
+    // Tom resultPoints (från crop-decode) → skip positions/bbox-validation
+    if (pts.length) {
+      const vw=v.videoWidth||1,vh=v.videoHeight||1;
+      const c=v.getBoundingClientRect(); const k=Math.max(c.width/vw,c.height/vh);
+      const dispW=vw*k,dispH=vh*k; const offX=c.left+(c.width-dispW)/2, offY=c.top+(c.height-dispH)/2;
+      const X=pts.map(p=>offX+p.x*k), Y=pts.map(p=>offY+p.y*k);
+      const srect=scanBox.getBoundingClientRect(); const inset=8;
+      const inX=x=>x>=srect.left+inset&&x<=srect.right-inset, inY=y=>y>=srect.top+inset&&y<=srect.bottom-inset;
+      if(!X.every(inX)||!Y.every(inY))return;
+      const bw=Math.max(...X)-Math.min(...X), bh=Math.max(...Y)-Math.min(...Y);
+      if(Math.max(bw,bh)<Math.max(srect.width*0.12,srect.height*0.12))return;
+    }
     const scanned=normTag(res.text||""); if(!scanned||scanned===lastCode)return;
     const fmt = res.getBarcodeFormat ? res.getBarcodeFormat() : res.barcodeFormat;
     if (!acceptScan(scanned, fmt)) return;
@@ -3110,7 +3131,20 @@ async function startCamera(){
       setLocalMeta(scanned,{qty:item.qty,unit:item.unit,user:item.user,lastMs:item.last||Date.now()}); recomputeMaxLast(); renderLists(); prepareContainerDialog(item,scanned);
       tagCache.set(scanned, { name: item.name, type: "behållare", place: normPlace(item.place) });
     });
-  });
+  };
+  reader.decodeFromVideoDevice(cam.deviceId, v, onScanResult);
+  // Parallell crop-decode för bättre detection på små streckkoder
+  startCropDecode(onScanResult);
+  // Hint:a iOS att fokusera mitten av bilden (där scanBox visas) — annars fokuserar
+  // iOS auto-focus på mittpunkten av HELA video-frame:n, vilket inte är scanBox.
+  setTimeout(() => {
+    const track = getActiveTrack();
+    if (track?.applyConstraints) {
+      track.applyConstraints({
+        advanced: [{ pointsOfInterest: [{ x: 0.5, y: 0.5 }], focusMode: 'continuous' }]
+      }).catch(() => {});
+    }
+  }, 800);
 }
 
 /* ===== Preload ===== */

@@ -1,6 +1,15 @@
 {
-  "latest": 83,
+  "latest": 84,
   "versions": [
+    {
+      "version": 84,
+      "date": "2026-05-08",
+      "notes": [
+        "Bättre detection av små streckkoder via parallell crop-decoder som bara tittar på scan-rutan",
+        "Kameran får tydlig fokus-instruktion att fokusera mitt på bilden där scan-rutan är",
+        "Zoom-knapparna borttagna (digital zoom hjälpte inte — gav suddigare bild)"
+      ]
+    },
     {
       "version": 83,
       "date": "2026-05-08",

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 85;
+const APP_VERSION = 86;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -502,7 +502,7 @@ function startCropDecode(onResult) {
   // Vi roterar canvas-bilden i flera vinklar per tick så streckkoder som
   // hålls snett (15°, 30° etc.) ändå kan tolkas. Diagonal canvas-storlek
   // så streckkoden inte cliper vid 45°.
-  const rotations = [0, 30, 60, 90]; // grader
+  const rotations = [0, 15, 30, 45, 60, 75, 90]; // grader — finare täckning för sneda streckkoder
   async function tick() {
     if (stopped) return;
     const vw = v.videoWidth, vh = v.videoHeight;

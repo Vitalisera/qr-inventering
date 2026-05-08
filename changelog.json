@@ -1,6 +1,13 @@
 {
-  "latest": 85,
+  "latest": 86,
   "versions": [
+    {
+      "version": 86,
+      "date": "2026-05-08",
+      "notes": [
+        "Bättre tolerans för sneda streckkoder — appen testar 7 vinklar istället för 4"
+      ]
+    },
     {
       "version": 85,
       "date": "2026-05-08",

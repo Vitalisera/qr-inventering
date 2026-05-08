@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 79;
+const APP_VERSION = 80;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2334,12 +2334,32 @@ function findSimilarItems(name, max = 3) {
   }
   if (!wordMap.size) return [];
   const wordlist = [...wordMap.keys()];
-  const suggestions = Autocomplete.suggest(name.toLocaleLowerCase('sv'), wordlist, {
-    matchMode: 'substring',
-    maxSuggestions: max,
-    minPrefixHits: 0
-  });
-  return suggestions.map(s => wordMap.get(s.word)).filter(Boolean);
+
+  // Per-ord-sökning: "Lasagne Plattor" söker både "lasagne" och "plattor"
+  // separat så det matchar "Lasagneplattor" (ihopskrivet) i tagCache.
+  // Skippa korta stoppord (<3 tecken) för att slippa brus.
+  const norm = name.toLocaleLowerCase('sv').trim();
+  const queryWords = norm.split(/\s+/).filter(w => w.length >= 3);
+  const queries = queryWords.length ? [norm, ...queryWords] : [norm];
+
+  const seen = new Set();
+  const results = [];
+  for (const q of queries) {
+    const suggestions = Autocomplete.suggest(q, wordlist, {
+      matchMode: 'substring',
+      maxSuggestions: max,
+      minPrefixHits: 0
+    });
+    for (const s of suggestions) {
+      if (seen.has(s.word)) continue;
+      seen.add(s.word);
+      const info = wordMap.get(s.word);
+      if (info) results.push(info);
+      if (results.length >= max) break;
+    }
+    if (results.length >= max) break;
+  }
+  return results;
 }
 
 // OpenFoodFacts ger ofta långa namn som "Coca-Cola Original Taste 33cl burk pant".
@@ -2385,6 +2405,13 @@ async function fetchOpenFoodFacts(barcode) {
 function showLinkTagDialog(scannedTag) {
   resetDialog();
   dlgTitle.textContent = "Okänd tag";
+  // Sätt hjälptext för DENNA dialog — annars läcker texten från tidigare dialog
+  // (t.ex. prepareNewItemDialog som sätter "Fyll i benämning, typ...").
+  const ha = document.getElementById('help-article');
+  if (ha) {
+    ha.classList.remove('open');
+    ha.innerHTML = 'Den här streckkoden känner appen inte igen.<br><b>Använd förslag</b> = skapa ny artikel med namn från OpenFoodFacts.<br><b>Skapa ny artikel</b> = fyll i alla fält manuellt.<br><b>Koppla till befintlig</b> = sök upp en artikel du redan har och koppla denna kod till den.<br>Om appen visar "Du har redan liknande" — tryck en av dem för snabb koppling.';
+  }
   const offUrl = `https://se.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(scannedTag)}&search_simple=1&action=process`;
   dlgInfo.innerHTML = `Tag <b>${esc(scannedTag)}</b> hittades inte.<div id="offResult" data-tag="${esc(scannedTag)}" style="margin-top:10px;font-size:0.9em;opacity:0.85"><span class="aiSpinner"></span> Söker på OpenFoodFacts…</div>`;
   dlgBtns.innerHTML = `

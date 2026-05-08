@@ -1,6 +1,14 @@
 {
-  "latest": 79,
+  "latest": 80,
   "versions": [
+    {
+      "version": 80,
+      "date": "2026-05-08",
+      "notes": [
+        "Matchning mot befintliga artiklar söker nu per ord — 'Lasagne Plattor' hittar 'Lasagneplattor'",
+        "Korrekt hjälptext i 'Okänd tag'-dialogen (läckte tidigare från Skapa ny-vyn)"
+      ]
+    },
     {
       "version": 79,
       "date": "2026-05-08",

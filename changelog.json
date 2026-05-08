@@ -1,6 +1,13 @@
 {
-  "latest": 87,
+  "latest": 88,
   "versions": [
+    {
+      "version": 88,
+      "date": "2026-05-08",
+      "notes": [
+        "⚙️-dialogen är tydligare uppdelad: ny rubrik 'Listinställningar' och tydligare avskiljare mellan sektionerna"
+      ]
+    },
     {
       "version": 87,
       "date": "2026-05-08",

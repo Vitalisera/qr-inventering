@@ -441,6 +441,19 @@ body:has(.dialog:not(.hidden))::after {
   font-size: 1rem; color: var(--text);
   white-space: normal;
 }
+#filterDialog .filterSectionTitle {
+  margin: 18px 0 6px;
+  padding-top: 14px;
+  border-top: 2px solid var(--primary, #1f5e69);
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--primary, #1f5e69);
+}
+#filterDialog .filterSectionTitle--first {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
 
 /* Sokdialog */
 #searchDialog {

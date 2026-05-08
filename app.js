@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 86;
+const APP_VERSION = 87;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -944,7 +944,7 @@ function openFilterDialog() {
   const title1 = document.createElement('div');
   title1.style.marginTop = '12px';
   title1.style.fontWeight = '600';
-  title1.textContent = 'Visa från';
+  title1.textContent = 'Visa från följande flikar';
   placeList.appendChild(title1);
 
   const placeSource = placeSet.size

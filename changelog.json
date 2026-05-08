@@ -1,6 +1,13 @@
 {
-  "latest": 86,
+  "latest": 87,
   "versions": [
+    {
+      "version": 87,
+      "date": "2026-05-08",
+      "notes": [
+        "'Visa från' i ⚙️ heter nu 'Visa från följande flikar' för tydlighet"
+      ]
+    },
     {
       "version": 86,
       "date": "2026-05-08",

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 81;
+const APP_VERSION = 82;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -425,6 +425,29 @@ function show(msg,cls,{autoreset=true,delay=2500}={}){s.className=cls||"";s.text
 // Använder MediaStreamTrack.applyConstraints({advanced:[{focusMode/focusDistance}]}).
 // På enheter utan manual-focus-stöd är detta no-op (catchas tyst).
 let _focusCyclerInterval = null;
+let _backCameras = [];     // Cachelista av back-kameror (för iPhone Pro lins-cykling)
+let _backCamIndex = 0;     // Index i _backCameras
+
+// Filtrera fram back-kameror och sortera så ultrawide kommer först (makro-stöd
+// på iPhone 13 Pro+ gör att den fokuserar på 2-14cm — perfekt för streckkoder).
+function pickBackCameras(cams) {
+  const back = (cams || []).filter(d =>
+    !/front|user/i.test(d.label || '') &&
+    (/back|rear|environment|bak/i.test(d.label || '') || cams.length === 1)
+  );
+  // Om ingen explicit back finns: fall tillbaka på alla
+  const list = back.length ? back : (cams || []);
+  // Sortering: ultrawide först (makro), sedan wide, sedan telephoto
+  return list.slice().sort((a, b) => {
+    const score = d => {
+      const l = (d.label || '').toLowerCase();
+      if (/ultra\s*wide|ultrawide/i.test(l)) return 0;
+      if (/telephoto/i.test(l)) return 2;
+      return 1;
+    };
+    return score(a) - score(b);
+  });
+}
 async function startFocusCycler() {
   stopFocusCycler();
   // Vänta tills v.srcObject finns (BrowserMultiFormatReader sätter den async)
@@ -457,8 +480,38 @@ function stopFocusCycler() {
   if (_focusCyclerInterval) { clearInterval(_focusCyclerInterval); _focusCyclerInterval = null; }
 }
 
+// Visa/dölj lens-knappen baserat på antal back-kameror
+function updateLensSwitchVisibility() {
+  const btn = qs('#lensSwitchBtn');
+  if (!btn) return;
+  if (_backCameras.length > 1) btn.classList.remove('hidden');
+  else btn.classList.add('hidden');
+}
+
+// Cycle till nästa back-kamera. Restartar reader med ny deviceId.
+async function cycleBackCamera() {
+  if (_backCameras.length < 2) return;
+  _backCamIndex = (_backCamIndex + 1) % _backCameras.length;
+  const next = _backCameras[_backCamIndex];
+  lastCamera = next;
+  const lensName = (next.label || '').match(/ultra\s*wide|wide|telephoto/i)?.[0] || `lins ${_backCamIndex + 1}`;
+  show(`Bytte till ${lensName}`, 'ok');
+  // Restart aktuell scan-flow med nya kameran
+  if (tagScanCallback) {
+    try { reader?.reset(); } catch {}
+    stopFocusCycler();
+    await startTagCamera();
+  } else if (cameraOn) {
+    try { reader?.reset(); } catch {}
+    stopFocusCycler();
+    await startCamera();
+  }
+}
+qs('#lensSwitchBtn')?.addEventListener('click', cycleBackCamera);
+
 function hideCamera(){
   stopFocusCycler();
+  qs('#lensSwitchBtn')?.classList.add('hidden');
   try{ reader && reader.reset(); }catch{}
   try{
     const so = v.srcObject;
@@ -2316,10 +2369,15 @@ async function startTagCamera() {
   try { reader && reader.reset(); } catch {}
   reader = new ZXing.BrowserMultiFormatReader(_zxingHints());
   const cams = await reader.listVideoInputDevices();
-  let cam = lastCamera || cams.find(d => /back|rear|environment/i.test(d.label)) || cams[0];
+  _backCameras = pickBackCameras(cams);
+  let cam = lastCamera || _backCameras[0] || cams[0];
+  // Synka _backCamIndex med vald cam så lens-knappen vet var den är
+  const idx = _backCameras.findIndex(c => c.deviceId === cam?.deviceId);
+  _backCamIndex = idx >= 0 ? idx : 0;
   lastCamera = cam;
   if (!cam) { show("Ingen kamera", "warn"); cancelTagScan(); return; }
   cameraOn = true;
+  updateLensSwitchVisibility();
 
   startFocusCycler();
   reader.decodeFromVideoDevice(cam.deviceId, v, async res => {
@@ -2925,9 +2983,13 @@ function stopReader(){stopFocusCycler();try{reader&&reader.reset();}catch{}camer
 async function startCamera(){
   stopReader(); reader=new ZXing.BrowserMultiFormatReader(_zxingHints());
   const cams=await reader.listVideoInputDevices();
-  let cam=lastCamera||cams.find(d=>/back|rear|environment/i.test(d.label))||cams[0];
+  _backCameras = pickBackCameras(cams);
+  let cam=lastCamera||_backCameras[0]||cams[0];
+  const idx = _backCameras.findIndex(c => c.deviceId === cam?.deviceId);
+  _backCamIndex = idx >= 0 ? idx : 0;
   lastCamera=cam; if(!cam){show("Ingen kamera","warn");return;}
   cameraOn=true; statusDefault();
+  updateLensSwitchVisibility();
   startFocusCycler();
   reader.decodeFromVideoDevice(cam.deviceId,v,async res=>{
     if(!res||!res.resultPoints||busy||dialogOpen())return;

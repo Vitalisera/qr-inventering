@@ -1,6 +1,13 @@
 {
-  "latest": 81,
+  "latest": 82,
   "versions": [
+    {
+      "version": 82,
+      "date": "2026-05-08",
+      "notes": [
+        "📷-knapp i kameran för att byta lins (på iPhone Pro: ultrawide-kameran fokuserar på 2cm — perfekt för streckkoder)"
+      ]
+    },
     {
       "version": 81,
       "date": "2026-05-08",

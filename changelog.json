@@ -1,6 +1,14 @@
 {
-  "latest": 91,
+  "latest": 92,
   "versions": [
+    {
+      "version": 92,
+      "date": "2026-05-09",
+      "notes": [
+        "Senaste saldo visas nu i sökresultaten",
+        "Nytt steg-filter i ⚙️ — välj vilka steg (t.ex. Steg 2, Steg 3A) som ska visas. Artiklar som tillhör flera steg passerar om något av deras steg är valt"
+      ]
+    },
     {
       "version": 91,
       "date": "2026-05-09",

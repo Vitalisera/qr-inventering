@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 91;
+const APP_VERSION = 92;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -397,6 +397,7 @@ let reader,lastCode="",userName=null,lastCamera=null;
 let busy=false,preloadDone=false,cameraOn=false;
 const tagCache=new Map(),metaCache=new Map();const placeSet=new Set();
 let maxLastMs=null;const COOLDOWN_MS=1200;let activePlaces=null;
+let activeSteps=null;  // null = alla steg synliga, Set<string> = bara dessa
 let onlyLow=false;
 let showUnit=false;
 let hideZero=false;
@@ -842,6 +843,14 @@ function loadPlaceFilter(){
   try{ showUnit = localStorage.getItem('vitaliseraShowUnit') === '1'; }catch{ showUnit = false; }
   try{ hideZero = localStorage.getItem('vitaliseraHideZero') === '1'; }catch{ hideZero = false; }
   try{ hideMin = localStorage.getItem('vitaliseraHideMin') === '1'; }catch{ hideMin = false; }
+  try{
+    const raw = localStorage.getItem('vitaliseraActiveSteps');
+    if (!raw) { activeSteps = null; }
+    else {
+      const arr = JSON.parse(raw);
+      activeSteps = Array.isArray(arr) && arr.length ? new Set(arr) : null;
+    }
+  } catch { activeSteps = null; }
 }
 function savePlaceFilter(){
   if(!activePlaces || activePlaces.size === 0) localStorage.removeItem('vitaliseraPlaceFilter');
@@ -850,6 +859,36 @@ function savePlaceFilter(){
   localStorage.setItem('vitaliseraShowUnit', showUnit ? '1' : '0');
   localStorage.setItem('vitaliseraHideZero', hideZero ? '1' : '0');
   localStorage.setItem('vitaliseraHideMin', hideMin ? '1' : '0');
+  if (!activeSteps || activeSteps.size === 0) localStorage.removeItem('vitaliseraActiveSteps');
+  else localStorage.setItem('vitaliseraActiveSteps', JSON.stringify([...activeSteps]));
+}
+
+// Samla unika steg från tagCache. Step-värden kan vara kommaseparerade
+// (t.ex. "Steg 2, Steg 3B") för artiklar som tillhör flera steg.
+function collectSteps() {
+  const set = new Set();
+  for (const v of tagCache.values()) {
+    const raw = String(v?.step || '').trim();
+    if (!raw) continue;
+    for (const part of raw.split(',')) {
+      const t = part.trim();
+      if (t) set.add(t);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'sv'));
+}
+
+// True om artikelns step matchar minst ETT av activeSteps.
+// Returnerar true för artiklar UTAN step om activeSteps är aktiv (visar inte exklusiva).
+// Hmm — det är osäkert beteende. Säkrare: artiklar utan step visas alltid.
+function itemPassesStepFilter(item) {
+  if (!activeSteps || activeSteps.size === 0) return true;
+  const raw = String(item?.step || '').trim();
+  if (!raw) return true; // artiklar utan step-info visas alltid
+  for (const part of raw.split(',')) {
+    if (activeSteps.has(part.trim())) return true;
+  }
+  return false;
 }
 /* Rensa activePlaces från platser som inte längre finns i tagCache. Annars kan en
    sparad plats som försvunnit (t.ex. inkompatibel flik borttagen från preload)
@@ -998,6 +1037,29 @@ function openFilterDialog() {
     placeList.appendChild(row);
   }
 
+  // Step-filter — bara om det finns artiklar med step-värden i datan
+  const allSteps = collectSteps();
+  if (allSteps.length) {
+    const titleSteps = document.createElement('div');
+    titleSteps.className = 'filterSectionTitle';
+    titleSteps.textContent = 'Visa från följande steg';
+    placeList.appendChild(titleSteps);
+    for (const s of allSteps) {
+      const row = document.createElement('div');
+      row.className = 'placeRow';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.dataset.step = s;
+      chk.checked = !activeSteps || activeSteps.has(s);
+      const txt = document.createElement('div');
+      txt.className = 'placeTxt';
+      txt.textContent = s;
+      row.append(chk, txt);
+      row.addEventListener('click', e => { if (e.target !== chk) chk.checked = !chk.checked; });
+      placeList.appendChild(row);
+    }
+  }
+
   const titleIcons = document.createElement('div');
   titleIcons.className = 'filterSectionTitle';
   titleIcons.textContent = 'Visa ikoner';
@@ -1073,6 +1135,13 @@ applyFilterBtn?.addEventListener('click', () => {
   const selPlaces = new Set();
   boxes.forEach(b => { if (b.checked) selPlaces.add(b.dataset.place); });
   activePlaces = (selPlaces.size === boxes.length) ? null : selPlaces;
+
+  const stepBoxes = placeList.querySelectorAll('input[type="checkbox"][data-step]');
+  if (stepBoxes.length) {
+    const selSteps = new Set();
+    stepBoxes.forEach(b => { if (b.checked) selSteps.add(b.dataset.step); });
+    activeSteps = (selSteps.size === stepBoxes.length) ? null : selSteps;
+  }
 
   placeList.querySelectorAll('input[type="checkbox"][data-icon]').forEach(b => {
     const key = b.dataset.icon;
@@ -1262,7 +1331,9 @@ function renderSearchResults(q){
     btn.type = "button"; btn.className = "statusRow";
     const synHint = info.syn ? ` <span class="sr-syn">(${esc(info.syn)})</span>` : '';
     const fuzzyHint = sug.source === 'fuzzy' ? ` <span class="sr-syn">(liknande)</span>` : '';
-    btn.innerHTML = `<span class="sr-name">${esc(info.label)}${synHint}${fuzzyHint}</span><span class="sr-date">${esc(metaCache.get(info.tag)?.lastStr||"")}</span>`;
+    const m = metaCache.get(info.tag) || {};
+    const saldo = m.qty != null && m.qty !== "" ? `${esc(m.qty)} ${esc(m.unit || "")}`.trim() : "";
+    btn.innerHTML = `<span class="sr-name">${esc(info.label)}${synHint}${fuzzyHint}</span><span class="sr-saldo">${saldo}</span><span class="sr-date">${esc(m.lastStr||"")}</span>`;
     const _tag = info.tag;
     addSafeTap(btn,
       () => { closeSearchDialog(); openContainerForTag(_tag); },
@@ -1497,6 +1568,8 @@ function renderLists() {
 
     const isLow = item.minQty && meta.qty < item.minQty;
     if (onlyLow && !isLow) continue;
+
+    if (!itemPassesStepFilter(item)) continue;
 
     if (hideZero && (Number(meta.qty) || 0) === 0) continue;
 

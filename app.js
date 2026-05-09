@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 95;
+const APP_VERSION = 96;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -45,16 +45,47 @@ if ('serviceWorker' in navigator) {
     });
 
     // Kolla efter ny version regelbundet OCH när PWA:n blir synlig.
+    // Två parallella mekanismer: (1) SW-baserad reg.update() — men den lider
+    // av iOS Safari HTTP-cache som ibland fastnar i flera dagar, (2) en
+    // ren fetch av changelog.json som kringgår SW-cachen helt och visar
+    // banner direkt om latest > APP_VERSION. Backup till SW-flödet.
     const checkForUpdate = () => {
       navigator.serviceWorker.getRegistration().then(reg => {
         reg?.update().catch(() => {});
       }).catch(() => {});
+      pollVersionViaChangelog();
     };
     setInterval(checkForUpdate, 60000);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') checkForUpdate();
     });
   }
+}
+
+async function pollVersionViaChangelog() {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 3000);
+  try {
+    const res = await fetch('changelog.json?ts=' + Date.now(), { cache: 'no-store', signal: ac.signal });
+    if (!res.ok) return;
+    const log = await res.json();
+    const latest = Number(log.latest) || 0;
+    if (latest > APP_VERSION) showUpdateBanner(null);
+  } catch {} finally { clearTimeout(timer); }
+}
+
+async function forceUpdate() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch {}
+  location.reload();
 }
 
 async function fetchChangelogSince(currentVersion) {
@@ -103,7 +134,13 @@ async function showUpdateBanner(reg) {
   btn.type = 'button';
   btn.id = 'updateBtn';
   btn.textContent = 'Uppgradera version';
-  btn.addEventListener('click', () => reg.waiting?.postMessage('SKIP_WAITING'));
+  // Mjuk uppdatering om SW-flödet kunde detektera ny SW (reg.waiting finns).
+  // Annars (bannern triggades via changelog-poll) — hård reset: avregistrera
+  // SW, rensa caches, reload. Det kringgår iOS HTTP-cache-fastlåsning.
+  btn.addEventListener('click', () => {
+    if (reg?.waiting) reg.waiting.postMessage('SKIP_WAITING');
+    else forceUpdate();
+  });
   banner.append(title, btn);
   document.body.appendChild(banner);
 }

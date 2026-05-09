@@ -443,7 +443,34 @@ body:has(.dialog:not(.hidden))::after {
 
 /* Inställningsdialog */
 #settingsDialog { text-align: left; }
-#settingsDialog h2 { text-align: center; margin: 0 0 0.6rem; }
+/* Sticky rubrik så användaren ser var scrollytan börjar och var titeln är. */
+#settingsDialog h2 {
+  text-align: center;
+  position: sticky;
+  top: -20px;
+  margin: -20px -18px 8px;
+  padding: 14px 18px 8px;
+  background: #cce2e3;
+  z-index: 3;
+  box-shadow: 0 2px 6px rgba(0,0,0,.1);
+}
+@media (prefers-color-scheme: dark) {
+  #settingsDialog h2 { background: var(--bg); }
+}
+/* Sticky knapp-rad i botten (Avbryt/Avmarkera/Använd) — :has() gör att vi
+   bara träffar den primära actions-raden, inte print-raden under. */
+#settingsDialog .actions:has(#applySettingsBtn) {
+  position: sticky;
+  bottom: -20px;
+  margin: 22px -18px 0;
+  padding: 12px 18px 16px;
+  background: #cce2e3;
+  z-index: 3;
+  box-shadow: 0 -2px 6px rgba(0,0,0,.1);
+}
+@media (prefers-color-scheme: dark) {
+  #settingsDialog .actions:has(#applySettingsBtn) { background: var(--bg); }
+}
 #settingsDialog .checklist {
   padding: 8px 10px; margin: 0;
   max-height: 60vh; overflow-y: auto;

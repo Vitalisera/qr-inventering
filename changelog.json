@@ -1,6 +1,14 @@
 {
-  "latest": 95,
+  "latest": 96,
   "versions": [
+    {
+      "version": 96,
+      "date": "2026-05-09",
+      "notes": [
+        "Inställningsdialogen: rubriken 'Inställningar' och knapparna i botten stannar nu kvar synliga när du scrollar — du ser tydligt var listan börjar och slutar",
+        "Fix: nya versioner kommer fram även när din telefon ibland fastnar på en gammal — appen kollar regelbundet och visar 'Uppgradera version'-knappen oberoende av telefonens cache"
+      ]
+    },
     {
       "version": 95,
       "date": "2026-05-09",

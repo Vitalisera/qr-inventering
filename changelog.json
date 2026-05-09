@@ -1,6 +1,15 @@
 {
-  "latest": 89,
+  "latest": 90,
   "versions": [
+    {
+      "version": 90,
+      "date": "2026-05-09",
+      "notes": [
+        "Avbryt/Stäng-knappar ligger nu längst till vänster i alla dialoger (svårare att råka tappa med högertumme)",
+        "Frågetecknet i 'Inventerat'-rubriken togglar inte längre grupp-ordningen vid klick",
+        "Bättre matchning mot befintliga artiklar — storleksord (Mini, Premium, Large m.fl.) ignoreras"
+      ]
+    },
     {
       "version": 89,
       "date": "2026-05-08",

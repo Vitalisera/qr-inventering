@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 89;
+const APP_VERSION = 90;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -1633,7 +1633,9 @@ function applyGroupOrder(){
 (function(){
   const gInvHeader = listInv.closest('.group')?.querySelector('.groupHeader');
   const gEjHeader  = listEj.closest('.group')?.querySelector('.groupHeader');
-  const onToggle = () => {
+  const onToggle = (e) => {
+    // Klick på ?-knappen ska bara expandera hjälp, inte toggla grupp-ordning
+    if (e.target.closest('.help-toggle')) return;
     invertGroups = !invertGroups;
     localStorage.setItem('vitaliseraInvertGroups', invertGroups ? '1' : '0');
     applyGroupOrder();
@@ -1767,8 +1769,8 @@ function prepareSingleDialog(item, tag) {
   `;
 
   dlgBtns.innerHTML = `
-    <button id="editSingle" class="btn cancel">Fler fält</button>
     <button id="cancelSingle" class="btn cancel">Stäng</button>
+    <button id="editSingle" class="btn cancel">Fler fält</button>
     <button id="confirmSingle" class="btn">Registrera inventering</button>
     <div id="msgLine" class="msgLine"></div>
   `;
@@ -1894,10 +1896,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
   dlgInput.placeholder = unitSuffix ? `Mängd (${unitSuffix})` : "Mängd";
 
   dlgBtns.innerHTML = `
+    <button id="cancelUpdate" class="btn cancel">Stäng</button>
+    <button id="toggleMore" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     <button id="incBtn" class="btn">Öka mängd</button>
     <button id="newBtn" class="btn">Ny total</button>
-    <button id="toggleMore" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-    <button id="cancelUpdate" class="btn cancel">Stäng</button>
     <div id="msgLine" class="msgLine"></div>
   `;
   const _commentInitial = (dialogItem.comment || "").trim();
@@ -2549,8 +2551,8 @@ function simplifyOffName(name) {
   if (!name) return '';
   const original = String(name).trim();
   let s = original
-    .replace(/\b\d+([.,]\d+)?\s?(cl|ml|dl|l|g|kg|st|x|pcs|tabletter|bites|pack)\b/gi, '')
-    .replace(/\b(plåtburk|burk|pant|påse|flaska|låda|paket|tub|spray|pack|kartong|tetra|återvinning|original|taste|flavour|flavor)\b/gi, '')
+    .replace(/\b\d+([.,]\d+)?\s?(cl|ml|dl|l|g|gr|kg|st|x|pcs|tabletter|bites|pack)\b/gi, '')
+    .replace(/\b(plåtburk|burk|pant|påse|flaska|låda|paket|tub|spray|pack|kartong|tetra|återvinning|original|taste|flavour|flavor|mini|midi|maxi|small|medium|large|liten|stor|extra|premium|classic)\b/gi, '')
     .replace(/[,;(].*/, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -2596,9 +2598,9 @@ function showLinkTagDialog(scannedTag) {
   const offUrl = `https://se.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(scannedTag)}&search_simple=1&action=process`;
   dlgInfo.innerHTML = `Tag <b>${esc(scannedTag)}</b> hittades inte.<div id="offResult" data-tag="${esc(scannedTag)}" style="margin-top:10px;font-size:0.9em;opacity:0.85"><span class="aiSpinner"></span> Söker på OpenFoodFacts…</div>`;
   dlgBtns.innerHTML = `
+    <button id="cancelLinkBtn" class="btn cancel">Avbryt</button>
     <button id="createNewFromScan" class="btn">Skapa ny artikel</button>
     <button id="linkExistingBtn" class="btn">Koppla till befintlig</button>
-    <button id="cancelLinkBtn" class="btn cancel">Avbryt</button>
   `;
   qs("#createNewFromScan").onclick = () => { prepareNewItemDialog(scannedTag); };
   qs("#cancelLinkBtn").onclick = () => { closeDialog(); cooldown(scannedTag); };
@@ -2984,7 +2986,7 @@ function prepareNewItemDialog(scanned){
   tagRow.appendChild(scanTagBtn);
   newItemFields.parentNode.insertBefore(tagRow, dlgBtns);
 
-  dlgBtns.innerHTML=`<button id="saveNewBtn" class="btn">Spara</button><button id="cancelNewBtn" class="btn cancel">Stäng</button>`;
+  dlgBtns.innerHTML=`<button id="cancelNewBtn" class="btn cancel">Stäng</button><button id="saveNewBtn" class="btn">Spara</button>`;
   qs("#saveNewBtn").onclick=()=>{
     const name=manualName.value.trim();
     if(!name){show("Ange benämning","warn");return;}

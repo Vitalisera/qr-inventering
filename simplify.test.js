@@ -4,8 +4,8 @@ function simplifyOffName(name) {
   if (!name) return '';
   const original = String(name).trim();
   let s = original
-    .replace(/\b\d+([.,]\d+)?\s?(cl|ml|dl|l|g|kg|st|x|pcs|tabletter|bites|pack)\b/gi, '')
-    .replace(/\b(plåtburk|burk|pant|påse|flaska|låda|paket|tub|spray|pack|kartong|tetra|återvinning|original|taste|flavour|flavor)\b/gi, '')
+    .replace(/\b\d+([.,]\d+)?\s?(cl|ml|dl|l|g|gr|kg|st|x|pcs|tabletter|bites|pack)\b/gi, '')
+    .replace(/\b(plåtburk|burk|pant|påse|flaska|låda|paket|tub|spray|pack|kartong|tetra|återvinning|original|taste|flavour|flavor|mini|midi|maxi|small|medium|large|liten|stor|extra|premium|classic)\b/gi, '')
     .replace(/[,;(].*/, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -52,6 +52,15 @@ t('tom sträng → tom sträng', () => eq(simplifyOffName(''), ''));
 
 t('Med förpackningstyp och mängd: Rödbetor 250g burk → Rödbetor', () =>
   eq(simplifyOffName('Rödbetor 250g burk'), 'Rödbetor'));
+
+t('Roberts case: Schweizernöt Mini 24 GR → Schweizernöt', () =>
+  eq(simplifyOffName('Schweizernöt Mini 24 GR'), 'Schweizernöt'));
+
+t('Storleksord rensas: Marabou Premium Mjölkchoklad → Marabou Mjölkchoklad', () =>
+  eq(simplifyOffName('Marabou Premium Mjölkchoklad'), 'Marabou Mjölkchoklad'));
+
+t('Mini behandlas inte som produktnamn', () =>
+  eq(simplifyOffName('KitKat Mini 100g'), 'KitKat'));
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

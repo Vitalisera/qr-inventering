@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 99;
+const APP_VERSION = 100;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -1930,7 +1930,7 @@ function prepareSingleDialog(item, tag) {
 
   dlgTitle.textContent = item.name || "Okänd artikel";
   dlgTitle.contentEditable = "false";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Registrera inventering</b> bekräftar dagens inventering med ditt namn och datum.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera artikeln.<br>"Fler fält" öppnar kommentar, kategori, enhet, typ, min-mängd och tag.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Registrera inventering</b> bekräftar dagens inventering med ditt namn och datum.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera artikeln.<br>"⚙️ Egenskaper" öppnar kommentar, kategori, enhet, typ, min-mängd och tag.';}
 
   const todayYMD = toYMD(Date.now());
   const oldDate = toYMD(meta.lastMs);
@@ -1945,7 +1945,7 @@ function prepareSingleDialog(item, tag) {
 
   dlgBtns.innerHTML = `
     <button id="cancelSingle" class="btn cancel">Stäng</button>
-    <button id="editSingle" class="btn cancel">Fler fält</button>
+    <button id="editSingle" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     <button id="confirmSingle" class="btn">Registrera inventering</button>
     <div id="msgLine" class="msgLine"></div>
   `;
@@ -2346,6 +2346,14 @@ function prepareContainerDialog(item, tag, opts = {}) {
   };
   if (qtyDecBtn) qtyDecBtn.onclick = () => adjustQty(-1);
   if (qtyIncBtn) qtyIncBtn.onclick = () => adjustQty(1);
+
+  // Markera siffran på focus så användaren kan skriva en ny total direkt
+  // utan att först radera. Och Enter på tangentbordet sparar — slipper
+  // tappa bort sig till knappen.
+  dlgInput.onfocus = () => { try { dlgInput.select(); } catch {} };
+  dlgInput.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveBtn.click(); }
+  };
 
   saveBtn.onclick = () => {
     commitName();

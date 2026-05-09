@@ -352,12 +352,21 @@ body:has(.dialog:not(.hidden))::after {
   #dialogBox .actions { background: var(--bg); }
 }
 
-/* ?-knappen flyter i top-höger så rubriken får hela bredden — frigör en rad. */
+/* ?-knappen flyter i top-höger så rubriken får hela bredden — frigör en rad.
+   Större touch-target (36px) så fingret inte råkar landa i contenteditable-h2:n
+   som ligger bredvid. h2 har padding-right för att lämna plats utan visuell krock. */
 #dialogBox > .help-toggle.dark {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 12px;
+  right: 12px;
   z-index: 4;
+  width: 36px;
+  height: 36px;
+  font-size: 0.95rem;
+}
+#dialogBox h2 {
+  padding-right: 44px;
+  padding-left: 44px;
 }
 
 /* Mängd-stepper: [−] [siffra] [enhet] [+]

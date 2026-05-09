@@ -1,6 +1,16 @@
 {
-  "latest": 99,
+  "latest": 100,
   "versions": [
+    {
+      "version": 100,
+      "date": "2026-05-09",
+      "notes": [
+        "Singel-artiklar har nu samma kugghjul-knapp som behållare istället för 'Fler fält'-text — konsekventare UI",
+        "?-knappen och artikelnamnet konkurrerar inte längre om samma yta — frågetecknet har eget utrymme i hörnet",
+        "Tappa siffran i mängd-stepper så markeras hela värdet automatiskt — skriv ny total direkt utan att radera",
+        "Tryck Enter på tangentbordet för att Spara — slipper sikta på knappen"
+      ]
+    },
     {
       "version": 99,
       "date": "2026-05-09",

@@ -1,6 +1,15 @@
 {
-  "latest": 93,
+  "latest": 95,
   "versions": [
+    {
+      "version": 95,
+      "date": "2026-05-09",
+      "notes": [
+        "Fix: när du tryckte på en artikel i listan medan kameran var igång hände ibland att dialogen flickrade och stängdes — nu hindras kameran från att skriva över din dialog",
+        "Fix: dialogen hoppade ibland upp för långt när tangentbordet öppnades (bara delar av dialogen syntes) — dialogen stannar nu på sin plats",
+        "Fix: ibland hamnade fokus i kommentarsfältet av sig själv när du öppnade en dialog — gammal fokus rensas nu först"
+      ]
+    },
     {
       "version": 93,
       "date": "2026-05-09",

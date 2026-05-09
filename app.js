@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 94;
+const APP_VERSION = 95;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -1870,7 +1870,13 @@ function closeDialog(){
   });
 }
 let _aiSuggestTimer = null;
-function resetDialog(){dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;manualName.value="";manualName.oninput=null;manualQty.value="";if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip').forEach(el=>el.remove());}
+function resetDialog(){
+  // Bort med stale fokus innan vi bygger nytt innehåll. På iOS PWA kan en
+  // kvardröjande focus från föregående dialog/input få nästa textarea
+  // (t.ex. commentEdit) att felaktigt få fokus och dra upp tangentbordet.
+  try { document.activeElement?.blur?.(); } catch {}
+  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;manualName.value="";manualName.oninput=null;manualQty.value="";if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip').forEach(el=>el.remove());
+}
 
 /* ===== Behållare-dialog ===== */
 /* ===== Singel-bekräftelsedialog ===== */
@@ -3245,6 +3251,9 @@ async function startCamera(){
     if(hit){
       const primaryTag=hit.tag, cached=hit.item;
       const {name,type}=cached; await flashFeedback(name);
+      // Användaren kan ha öppnat en dialog via tap under flashFeedbacks 900ms paus.
+      // Att då skriva över med scan-resultat ger "flicker" — dialog visas, byts/stängs.
+      if (dialogOpen()) { busy=false; cooldown(primaryTag); return; }
       if(type==="singel"){
         const le=appendLog(`${name} – uppdateras`,primaryTag); show("Uppdaterar…");
         gasCall('logTag', {tag: primaryTag, name, type: "singel", qty: 1, user: userName})
@@ -3258,6 +3267,7 @@ async function startCamera(){
       prepareContainerDialog(localItem,primaryTag); busy=false; return;
     }
     await flashFeedback("Läser av…");
+    if (dialogOpen()) { busy=false; cooldown(scanned); return; }
     if(preloadDone){busy=false;showLinkTagDialog(scanned);return;}
     show("Hämtar uppgifter…",null,{autoreset:false});
     gasCall('lookup', {tag: scanned}).then(item => {
@@ -3368,9 +3378,13 @@ _bootstrapPreload.finally(() => {
   function adjustDialogs() {
     if (!vv) return;
     const kbHeight = window.innerHeight - vv.height;
-    const shift = kbHeight > 80 ? kbHeight : 0;
-    document.documentElement.style.setProperty('--kb-offset', shift + 'px');
-    if (shift > 0) {
+    const kbOpen = kbHeight > 80;
+    // Moderna iOS PWAs hanterar tangentbord via visualViewport-resize automatiskt.
+    // Att även lägga till --kb-offset i .dialog{bottom} ger dubbel-shift → dialogen
+    // hoppar långt över skärmens topp. Vi behåller variabeln men sätter den till 0
+    // så CSS-uttryck som calc(8vh + var(--kb-offset)) inte påverkar layouten.
+    document.documentElement.style.setProperty('--kb-offset', '0px');
+    if (kbOpen) {
       document.body.classList.add('kb');
       const el = document.activeElement;
       if (el && el.matches('input, textarea, select')) {

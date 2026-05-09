@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=19">
+  <link rel="stylesheet" href="style.css?v=20">
 </head>
 
 <body>
@@ -84,7 +84,7 @@
     <h2 id="dialogTitle" contenteditable="true"></h2>
     <span class="help-toggle dark" data-help="article">?</span>
     <div class="help-box" id="help-article">
-      <b>Behållare:</b> "Öka mängd" lägger till det du skriver, "Ny total" ersätter totalen.<br>
+      <b>Behållare:</b> tryck − eller + för att räkna upp/ner, eller skriv en ny total direkt. Spara bekräftar.<br>
       <b>Singel:</b> "Registrera inventering" bekräftar dagens inventering.<br>
       <b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>
       Tryck på artikelnamnet för att byta namn.<br>
@@ -106,9 +106,13 @@
       <input id="manualCategoryNew" type="text" placeholder="Ange ny kategori" autocomplete="off" style="display:none" />
       <input id="manualQty" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd just nu (1 som standard)" autocomplete="off" />
     </div>
-    <div id="dialogInputWrap" class="input-with-suffix hidden">
-      <input id="dialogInput" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd" autocomplete="off" />
-      <span id="dialogInputSuffix" class="input-suffix-text"></span>
+    <div id="dialogInputWrap" class="qty-stepper hidden">
+      <button type="button" id="qtyDec" class="stepper-btn" aria-label="Minska">−</button>
+      <div class="stepper-mid">
+        <input id="dialogInput" type="text" inputmode="decimal" pattern="[0-9,.]*" autocomplete="off" />
+        <span id="dialogInputSuffix" class="stepper-unit"></span>
+      </div>
+      <button type="button" id="qtyInc" class="stepper-btn" aria-label="Öka">+</button>
     </div>
     <div id="dialogBtns" class="actions"></div>
   </div>
@@ -163,7 +167,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=98"></script>
+  <script src="app.js?v=99"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

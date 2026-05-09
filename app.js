@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 98;
+const APP_VERSION = 99;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -1996,7 +1996,7 @@ function prepareSingleDialog(item, tag) {
 
 function prepareContainerDialog(item, tag, opts = {}) {
   resetDialog();
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Öka mängd</b> = lägg till det du skriver i fältet.<br><b>Ny total</b> = ersätt totalen med det du skriver.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"Fler fält" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner med 1 åt gången, eller tappa siffran och skriv in en helt ny total.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
 
   const editMode = opts.editMode === true;
   // Reset per dialog: editMode (Fler fält från singel) öppnar expanderat,
@@ -2062,7 +2062,6 @@ function prepareContainerDialog(item, tag, opts = {}) {
       ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
     </div>
     <div class="metaDate" style="margin-top:8px">Nytt datum:<input type="date" id="containerDateEdit" value="${esc(isoDate)}"></div>
-    <p class="metaText">Lägg till eller ange ny total:</p>
   `;
 
   dlgInputWrap.classList.remove("hidden");
@@ -2076,8 +2075,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   dlgBtns.innerHTML = `
     <button id="cancelUpdate" class="btn cancel">Stäng</button>
     <button id="toggleMore" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-    <button id="incBtn" class="btn">Öka mängd</button>
-    <button id="newBtn" class="btn">Ny total</button>
+    <button id="saveBtn" class="btn">Spara</button>
     <div id="msgLine" class="msgLine"></div>
   `;
   const _commentInitial = (dialogItem.comment || "").trim();
@@ -2091,7 +2089,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // Comment FÖRE dlgBtns så knappraden alltid sitter sist (sticky bottom).
   dlgBtns.parentNode.insertBefore(commentBlock, dlgBtns);
 
-  const incBtn = qs("#incBtn"), newBtn = qs("#newBtn"), toggleMore = qs("#toggleMore"),
+  const saveBtn = qs("#saveBtn"), toggleMore = qs("#toggleMore"),
         cancelBtn = qs("#cancelUpdate"), msgLine = qs("#msgLine");
 
   const containerDateInput = qs("#containerDateEdit");
@@ -2334,37 +2332,43 @@ function prepareContainerDialog(item, tag, opts = {}) {
     return `${y}-${m}-${da}`;
   };
 
-  incBtn.onclick = () => {
-    commitName();
-    setMsg("", ""); markError(dlgInput, false);
-    const add = parseFloat((dlgInput.value || "").replace(",", "."));
-    if (!validNumber(add)) { markError(dlgInput, true); setMsg("Ogiltigt tal i fältet.", "warn"); return; }
-    const newCount = (Number(dialogItem.qty) || 0) + add;
-    const le = appendLog(`${dialogItem.name} – ny mängd ${newCount}`);
-
-    // Optimistic: uppdatera lokalt + stäng dialog direkt. Synk i bakgrunden.
-    setLocalMeta(tag, { qty: newCount, lastMs: Date.now(), user: userName });
-    recomputeMaxLast(); renderLists();
-    show(`${dialogItem.name}: ny mängd ${newCount}.`, "ok");
-    closeDialog();
-
-    gasCall('updateCount', {tag, newCount, user: userName, sheetName: _sn, rowNum: _rn})
-      .then(assertOk)
-      .then(() => markAsDone(le))
-      .catch(err => markLogFail(le, err));
+  // Stepper [−]/[+] justerar siffran med 1 åt gången. Användaren kan också
+  // tappa siffran och skriva en ny total direkt. Spara skickar den slutliga
+  // siffran till samma updateCount-API som de gamla Öka/Ny total-knapparna.
+  const qtyDecBtn = qs("#qtyDec");
+  const qtyIncBtn = qs("#qtyInc");
+  const adjustQty = (delta) => {
+    const v = parseFloat((dlgInput.value || "0").replace(",", ".")) || 0;
+    const next = Math.max(0, v + delta);
+    dlgInput.value = String(next);
+    markError(dlgInput, false);
+    setMsg("", "");
   };
+  if (qtyDecBtn) qtyDecBtn.onclick = () => adjustQty(-1);
+  if (qtyIncBtn) qtyIncBtn.onclick = () => adjustQty(1);
 
-  newBtn.onclick = () => {
+  saveBtn.onclick = () => {
     commitName();
     setMsg("", ""); markError(dlgInput, false);
     const val = parseFloat((dlgInput.value || "").replace(",", "."));
     if (!validNumber(val)) { markError(dlgInput, true); setMsg("Ogiltigt tal i fältet.", "warn"); return; }
     const newCount = val;
-    const le = appendLog(`${dialogItem.name} – total ändrad till ${newCount}`);
+    const oldCount = Number(dialogItem.qty) || 0;
+    if (newCount === oldCount) { closeDialog(); return; }
 
+    // Logg-text speglar vad användaren gjorde — delta för stepper-justering,
+    // total för manuell omskrivning. Heuristik: hopp > 5 i ett enda ändringssteg
+    // är troligen direkt-edit, inte +/−-trampning.
+    const delta = newCount - oldCount;
+    const logText = Math.abs(delta) <= 5
+      ? `${dialogItem.name} – ny mängd ${newCount}`
+      : `${dialogItem.name} – total ändrad till ${newCount}`;
+    const le = appendLog(logText);
+
+    // Optimistic: uppdatera lokalt + stäng dialog direkt. Synk i bakgrunden.
     setLocalMeta(tag, { qty: newCount, lastMs: Date.now(), user: userName });
     recomputeMaxLast(); renderLists();
-    show(`${dialogItem.name}: total ändrad till ${newCount}.`, "ok");
+    show(`${dialogItem.name}: ny mängd ${newCount}.`, "ok");
     closeDialog();
 
     gasCall('updateCount', {tag, newCount, user: userName, sheetName: _sn, rowNum: _rn})

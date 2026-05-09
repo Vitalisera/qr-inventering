@@ -1,6 +1,13 @@
 {
-  "latest": 98,
+  "latest": 99,
   "versions": [
+    {
+      "version": 99,
+      "date": "2026-05-09",
+      "notes": [
+        "Behållardialogen omdesignad: en stepper med − / + ersätter de två knapparna 'Öka mängd' och 'Ny total'. Tryck − eller + för att räkna upp/ner med 1 åt gången, eller tappa siffran för att skriva en ny total direkt. En enda 'Spara'-knapp bekräftar."
+      ]
+    },
     {
       "version": 98,
       "date": "2026-05-09",

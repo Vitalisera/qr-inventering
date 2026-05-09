@@ -1,6 +1,13 @@
 {
-  "latest": 100,
+  "latest": 101,
   "versions": [
+    {
+      "version": 101,
+      "date": "2026-05-09",
+      "notes": [
+        "När du trycker på kugghjulet (Egenskaper) visas fälten ovanför Spara-knappen istället för att gömma sig bakom den"
+      ]
+    },
     {
       "version": 100,
       "date": "2026-05-09",

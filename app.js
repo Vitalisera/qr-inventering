@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 100;
+const APP_VERSION = 101;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2201,7 +2201,9 @@ function prepareContainerDialog(item, tag, opts = {}) {
     </div>
   `;
   dlg.querySelectorAll(".extraFields").forEach(e => e.remove());
-  dlg.appendChild(extra);
+  // FÖRE dlgBtns så extraFields scrollar bakom sticky-knapparna istället för
+  // att täckas av dem i toppen när de expanderas.
+  dlgBtns.parentNode.insertBefore(extra, dlgBtns);
   extra.style.display = extraFieldsExpanded ? "block" : "none";
   toggleMore.classList.toggle('expanded', extraFieldsExpanded);
 

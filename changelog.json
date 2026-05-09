@@ -1,6 +1,17 @@
 {
-  "latest": 96,
+  "latest": 97,
   "versions": [
+    {
+      "version": 97,
+      "date": "2026-05-09",
+      "notes": [
+        "Artikel-dialogen är kompaktare: enheten (t.ex. 'ml') visas direkt inuti mängd-fältet",
+        "Knapparna Stäng / Öka mängd / Ny total ligger nu längst ned och stannar synliga när du scrollar",
+        "'?'-knappen är flyttad till hörnet så rubriken får hela bredden",
+        "'Nytt datum:' och datumfältet ligger på samma rad — datumet har dessutom kompaktare bredd",
+        "Mängd-fältet är smalare så det inte ser oändligt brett ut för tre-fyra siffriga värden"
+      ]
+    },
     {
       "version": 96,
       "date": "2026-05-09",

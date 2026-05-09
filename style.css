@@ -336,6 +336,57 @@ body:has(.dialog:not(.hidden))::after {
   -webkit-touch-callout: none;
   touch-action: manipulation;
 }
+
+/* Sticky knapp-rad i artikel-dialog så Stäng/Öka/Ny total alltid är inom
+   räckhåll i botten — kommentar och övriga fält scrollar bakom. */
+#dialogBox .actions {
+  position: sticky;
+  bottom: -20px;
+  margin: 22px -18px 0;
+  padding: 12px 18px 16px;
+  background: #cce2e3;
+  z-index: 3;
+  box-shadow: 0 -2px 6px rgba(0,0,0,.1);
+}
+@media (prefers-color-scheme: dark) {
+  #dialogBox .actions { background: var(--bg); }
+}
+
+/* ?-knappen flyter i top-höger så rubriken får hela bredden — frigör en rad. */
+#dialogBox > .help-toggle.dark {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 4;
+}
+
+/* Mängd-input med enhetssuffix till höger ("400 ml" där ml är dekorativt). */
+.input-with-suffix {
+  position: relative;
+  width: 90%;
+  max-width: 220px;
+  margin: 6px auto;
+}
+.input-with-suffix.hidden { display: none; }
+.input-with-suffix input {
+  width: 100%;
+  margin: 0;
+  padding-right: 56px;
+}
+.input-suffix-text {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #5a7a7e;
+  font-size: 1rem;
+  pointer-events: none;
+  font-weight: 600;
+}
+@media (prefers-color-scheme: dark) {
+  .input-suffix-text { color: #8aacae; }
+}
+
 .version-label {
   margin-top: 14px;
   font-size: 0.78rem;
@@ -363,7 +414,14 @@ body:has(.dialog:not(.hidden))::after {
 .metaTop { color: var(--text); margin-bottom: 6px; }
 .metaQty { font-weight: 700; font-size: 1em; }
 .metaBy { opacity: 0.9; }
-.metaDate { opacity: 0.75; margin-top: 2px; }
+.metaDate {
+  opacity: 0.75;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
 .metaText { margin-top: 4px; font-weight: 600; font-size: 0.95em; }
 
 /* Statusmeddelanden i dialog */
@@ -395,19 +453,20 @@ body:has(.dialog:not(.hidden))::after {
   50% { box-shadow: 0 0 0 6px rgba(192, 57, 43, 0); }
 }
 /* iOS Safari ignorerar .dialog input-styling för input[type=date] och renderar
-   fältet bredare och högre än mängd-inputen. Tvinga explicit sizing här. */
+   fältet bredare och högre än mängd-inputen. Tvinga explicit sizing här.
+   Datum har fix längd → smal bredd så det inte sträcks över hela dialogen. */
 .metaDate input[type="date"] {
   -webkit-appearance: none;
   appearance: none;
-  display: block;
-  width: 90%;
-  max-width: 360px;
+  display: inline-block;
+  width: auto;
+  max-width: 200px;
   box-sizing: border-box;
-  margin: 6px auto;
+  margin: 0;
   padding: 0 12px;
-  height: 44px;
-  line-height: 44px;
-  font-size: 1.1rem;
+  height: 40px;
+  line-height: 40px;
+  font-size: 1rem;
   font-family: inherit;
   text-align: center;
 }

@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=18">
+  <link rel="stylesheet" href="style.css?v=19">
 </head>
 
 <body>
@@ -106,7 +106,10 @@
       <input id="manualCategoryNew" type="text" placeholder="Ange ny kategori" autocomplete="off" style="display:none" />
       <input id="manualQty" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd just nu (1 som standard)" autocomplete="off" />
     </div>
-    <input id="dialogInput" class="hidden" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd" autocomplete="off" />
+    <div id="dialogInputWrap" class="input-with-suffix hidden">
+      <input id="dialogInput" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd" autocomplete="off" />
+      <span id="dialogInputSuffix" class="input-suffix-text"></span>
+    </div>
     <div id="dialogBtns" class="actions"></div>
   </div>
 
@@ -160,7 +163,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=96"></script>
+  <script src="app.js?v=97"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

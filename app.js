@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 96;
+const APP_VERSION = 97;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -429,7 +429,7 @@ listInv=qs('#listInventerat'), listEj=qs('#listEj'), overlay=qs('#overlay'),
 scanBox=qs('#scanBox'), startBtn=qs('#startBtn'), settingsBtn=qs('#settingsBtn'),
 sound=qs('#successSound'), blip=qs('#blipSound'),
 dlg=qs('#dialogBox'), dlgTitle=qs('#dialogTitle'), dlgInfo=qs('#dialogInfo'),
-dlgInput=qs('#dialogInput'), dlgBtns=qs('#dialogBtns'),
+dlgInput=qs('#dialogInput'), dlgInputWrap=qs('#dialogInputWrap'), dlgInputSuffix=qs('#dialogInputSuffix'), dlgBtns=qs('#dialogBtns'),
 newItemFields=qs('#newItemFields'), manualName=qs('#manualName'),
 manualType=qs('#manualType'), manualQty=qs('#manualQty'),
 nameDialog=qs('#nameDialog'), userNameInput=qs('#userNameInput'), saveNameBtn=qs('#saveNameBtn'),
@@ -1912,7 +1912,7 @@ function resetDialog(){
   // kvardröjande focus från föregående dialog/input få nästa textarea
   // (t.ex. commentEdit) att felaktigt få fokus och dra upp tangentbordet.
   try { document.activeElement?.blur?.(); } catch {}
-  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInput.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;manualName.value="";manualName.oninput=null;manualQty.value="";if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip').forEach(el=>el.remove());
+  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip').forEach(el=>el.remove());
 }
 
 /* ===== Behållare-dialog ===== */
@@ -2057,13 +2057,16 @@ function prepareContainerDialog(item, tag, opts = {}) {
       ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
     </div>
     <div class="metaDate" style="margin-top:8px">Nytt datum:<input type="date" id="containerDateEdit" value="${esc(isoDate)}"></div>
-    <p class="metaText">Lägg till eller ange ny total${unitSuffix ? ` (${esc(unitSuffix)})` : ""}:</p>
+    <p class="metaText">Lägg till eller ange ny total:</p>
   `;
 
-  dlgInput.classList.remove("hidden");
+  dlgInputWrap.classList.remove("hidden");
   dlgInput.style.display = "block";
   dlgInput.value = dialogItem.qty;
-  dlgInput.placeholder = unitSuffix ? `Mängd (${unitSuffix})` : "Mängd";
+  dlgInput.placeholder = "Mängd";
+  // Enheten visas som dekorativt suffix inuti fältet (t.ex. "ml" till höger).
+  // CSS lämnar plats via padding-right så texten inte överlappar.
+  dlgInputSuffix.textContent = unitSuffix || "";
 
   dlgBtns.innerHTML = `
     <button id="cancelUpdate" class="btn cancel">Stäng</button>
@@ -2080,7 +2083,8 @@ function prepareContainerDialog(item, tag, opts = {}) {
     <textarea id="commentEdit" rows="2">${esc(_commentInitial)}</textarea>
   `;
   dlg.querySelectorAll('.commentBlock').forEach(e => e.remove());
-  dlgBtns.parentNode.insertBefore(commentBlock, dlgBtns.nextSibling);
+  // Comment FÖRE dlgBtns så knappraden alltid sitter sist (sticky bottom).
+  dlgBtns.parentNode.insertBefore(commentBlock, dlgBtns);
 
   const incBtn = qs("#incBtn"), newBtn = qs("#newBtn"), toggleMore = qs("#toggleMore"),
         cancelBtn = qs("#cancelUpdate"), msgLine = qs("#msgLine");

@@ -1,6 +1,13 @@
 {
-  "latest": 97,
+  "latest": 98,
   "versions": [
+    {
+      "version": 98,
+      "date": "2026-05-09",
+      "notes": [
+        "Fix: 'Uppgradera version'-knappen i bannern fungerar nu — telefonen byter automatiskt till den nya versionen utan att du behöver stänga och öppna appen"
+      ]
+    },
     {
       "version": 97,
       "date": "2026-05-09",

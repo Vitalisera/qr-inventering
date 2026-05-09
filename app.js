@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 97;
+const APP_VERSION = 98;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -137,7 +137,12 @@ async function showUpdateBanner(reg) {
   // Mjuk uppdatering om SW-flödet kunde detektera ny SW (reg.waiting finns).
   // Annars (bannern triggades via changelog-poll) — hård reset: avregistrera
   // SW, rensa caches, reload. Det kringgår iOS HTTP-cache-fastlåsning.
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    // Vänta in pending Sheet-skrivningar innan reload — annars kan en ändring
+    // som väntar på flush förloras vid SW-byte. Timeout 4s så banner inte hänger
+    // om sync är trasigt.
+    try { await Promise.race([waitForPendingSync(), new Promise(r => setTimeout(r, 4000))]); } catch {}
     if (reg?.waiting) reg.waiting.postMessage('SKIP_WAITING');
     else forceUpdate();
   });

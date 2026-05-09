@@ -1,4 +1,4 @@
-const CACHE = 'vitalisera-inv-v97';
+const CACHE = 'vitalisera-inv-v98';
 // Egna assets — om någon av dessa failar är appen trasig, all-or-nothing är OK.
 const PRECACHE_OWN = [
   './',
@@ -41,12 +41,18 @@ self.addEventListener('message', e => {
 });
 
 self.addEventListener('activate', e => {
-  // Rensa gamla versioner men claimar INTE öppna tabs — gamla tabs får behålla sin gamla
-  // app.js-instans i minnet tills användaren reloadar, så att HTML/JS/CSS alltid matchar.
+  // Rensa gamla versioner och CLAIM:a öppna klienter direkt. Utan claim()
+  // skickar SKIP_WAITING-meddelandet från banner-knappen aldrig en
+  // controllerchange-event till klienten → location.reload() triggas inte
+  // → user trycker på en "död" knapp. Med claim() tar nya SW kontroll
+  // över existing tab → controllerchange → reload → ny version laddas.
   e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.map(k => k !== CACHE ? caches.delete(k) : null))
-    )
+    Promise.all([
+      caches.keys().then(keys =>
+        Promise.all(keys.map(k => k !== CACHE ? caches.delete(k) : null))
+      ),
+      self.clients.claim()
+    ])
   );
 });
 

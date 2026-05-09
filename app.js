@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 90;
+const APP_VERSION = 91;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2986,7 +2986,7 @@ function prepareNewItemDialog(scanned){
   tagRow.appendChild(scanTagBtn);
   newItemFields.parentNode.insertBefore(tagRow, dlgBtns);
 
-  dlgBtns.innerHTML=`<button id="cancelNewBtn" class="btn cancel">Stäng</button><button id="saveNewBtn" class="btn">Spara</button>`;
+  dlgBtns.innerHTML=`<button id="cancelNewBtn" class="btn cancel">Avbryt</button><button id="saveNewBtn" class="btn">Spara</button>`;
   qs("#saveNewBtn").onclick=()=>{
     const name=manualName.value.trim();
     if(!name){show("Ange benämning","warn");return;}

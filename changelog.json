@@ -1,6 +1,13 @@
 {
-  "latest": 90,
+  "latest": 91,
   "versions": [
+    {
+      "version": 91,
+      "date": "2026-05-09",
+      "notes": [
+        "Konsekvent terminologi: 'Avbryt' i dialoger där form-data slängs, 'Stäng' när ingenting förloras"
+      ]
+    },
     {
       "version": 90,
       "date": "2026-05-09",

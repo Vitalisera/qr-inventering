@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 101;
+const APP_VERSION = 102;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2064,20 +2064,27 @@ function prepareContainerDialog(item, tag, opts = {}) {
     <div class="metaDate" style="margin-top:8px">Nytt datum:<input type="date" id="containerDateEdit" value="${esc(isoDate)}"></div>
   `;
 
-  dlgInputWrap.classList.remove("hidden");
-  dlgInput.style.display = "block";
-  dlgInput.value = dialogItem.qty;
-  dlgInput.placeholder = "Mängd";
-  // Enheten visas som dekorativt suffix inuti fältet (t.ex. "ml" till höger).
-  // CSS lämnar plats via padding-right så texten inte överlappar.
-  dlgInputSuffix.textContent = unitSuffix || "";
+  // Singel-artiklar har ingen mängd att stega — visa Egenskaper-panelen
+  // utan stepper, och behåll "Registrera inventering" som primary-knapp.
+  // Behållare visar stepper + Spara som tidigare.
+  const isSingle = (item.type || "singel") === "singel";
 
-  dlgBtns.innerHTML = `
-    <button id="cancelUpdate" class="btn cancel">Stäng</button>
-    <button id="toggleMore" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-    <button id="saveBtn" class="btn">Spara</button>
-    <div id="msgLine" class="msgLine"></div>
-  `;
+  if (isSingle) {
+    dlgInputWrap.classList.add("hidden");
+  } else {
+    dlgInputWrap.classList.remove("hidden");
+    dlgInput.style.display = "block";
+    dlgInput.value = dialogItem.qty;
+    dlgInput.placeholder = "Mängd";
+    // Enheten visas som dekorativt suffix inuti fältet (t.ex. "ml" till höger).
+    // CSS lämnar plats via padding-right så texten inte överlappar.
+    dlgInputSuffix.textContent = unitSuffix || "";
+  }
+
+  const _gearBtnHTML = `<button id="toggleMore" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>`;
+  dlgBtns.innerHTML = isSingle
+    ? `<button id="cancelUpdate" class="btn cancel">Stäng</button>${_gearBtnHTML}<button id="registerSingleBtn" class="btn">Registrera inventering</button><div id="msgLine" class="msgLine"></div>`
+    : `<button id="cancelUpdate" class="btn cancel">Stäng</button>${_gearBtnHTML}<button id="saveBtn" class="btn">Spara</button><div id="msgLine" class="msgLine"></div>`;
   const _commentInitial = (dialogItem.comment || "").trim();
   const commentBlock = document.createElement('div');
   commentBlock.className = 'commentBlock';
@@ -2089,8 +2096,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // Comment FÖRE dlgBtns så knappraden alltid sitter sist (sticky bottom).
   dlgBtns.parentNode.insertBefore(commentBlock, dlgBtns);
 
-  const saveBtn = qs("#saveBtn"), toggleMore = qs("#toggleMore"),
+  const saveBtn = qs("#saveBtn"), registerSingleBtn = qs("#registerSingleBtn"),
+        toggleMore = qs("#toggleMore"),
         cancelBtn = qs("#cancelUpdate"), msgLine = qs("#msgLine");
+  const primaryBtn = saveBtn || registerSingleBtn;
 
   const containerDateInput = qs("#containerDateEdit");
   if (containerDateInput) {
@@ -2354,10 +2363,28 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // tappa bort sig till knappen.
   dlgInput.onfocus = () => { try { dlgInput.select(); } catch {} };
   dlgInput.onkeydown = (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); saveBtn.click(); }
+    if (e.key === 'Enter') { e.preventDefault(); primaryBtn?.click(); }
   };
 
-  saveBtn.onclick = () => {
+  // Singel-läge: registerSingleBtn ersätter saveBtn med qty=1 logTag-flow
+  // (samma som confirmSingle i prepareSingleDialog).
+  if (registerSingleBtn) {
+    registerSingleBtn.onclick = () => {
+      commitName();
+      const le = appendLog(`${dialogItem.name} – uppdateras`, tag);
+      show("Uppdaterar…");
+      gasCall('logTag', {tag, name: dialogItem.name, type: "singel", qty: 1, user: userName, sheetName: _sn, rowNum: _rn})
+        .then(assertOk)
+        .then(() => { markAsDone(le); addUndoButton(le, tag); })
+        .catch(err => markLogFail(le, err));
+      setLocalMeta(tag, { lastMs: Date.now(), user: userName });
+      recomputeMaxLast();
+      renderLists();
+      closeDialog();
+    };
+  }
+
+  if (saveBtn) saveBtn.onclick = () => {
     commitName();
     setMsg("", ""); markError(dlgInput, false);
     const val = parseFloat((dlgInput.value || "").replace(",", "."));

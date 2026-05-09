@@ -1,6 +1,13 @@
 {
-  "latest": 101,
+  "latest": 102,
   "versions": [
+    {
+      "version": 102,
+      "date": "2026-05-09",
+      "notes": [
+        "Fix: när du trycker på kugghjulet i en singel-artikel öppnas Egenskaper-fälten, men 'Registrera inventering'-knappen finns kvar. Tidigare förvandlades dialogen till behållardialog med stepper, vilket var en bugg."
+      ]
+    },
     {
       "version": 101,
       "date": "2026-05-09",

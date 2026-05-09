@@ -111,9 +111,9 @@
   </div>
 
   <!-- FILTER -->
-<div id="filterDialog" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
-  <h2>Inställningar <span class="help-toggle dark" data-help="filter">?</span></h2>
-  <div class="help-box" id="help-filter">
+<div id="settingsDialog" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
+  <h2>Inställningar <span class="help-toggle dark" data-help="settings">?</span></h2>
+  <div class="help-box" id="help-settings">
     <b>Visa endast ... lågt saldo</b> döljer artiklar där mängden räcker.<br>
     <b>Gruppera efter kategori</b> delar upp listan i kategori-block.<br>
     <b>Visa enhet istället för datum</b> byter höger-kolumnen mot enheten (st, kg, l) — användbart vid t.ex. matbeställning.<br>
@@ -126,9 +126,9 @@
   </div>
   <div id="placeList" class="checklist"></div>
   <div class="actions">
-    <button id="cancelFilterBtn" class="btn cancel">Avbryt</button>
-    <button id="clearFilterBtn" class="btn cancel">Välj alla</button>
-    <button id="applyFilterBtn" class="btn">Använd</button>
+    <button id="cancelSettingsBtn" class="btn cancel">Avbryt</button>
+    <button id="toggleAllPlacesBtn" class="btn cancel">Välj alla</button>
+    <button id="applySettingsBtn" class="btn">Använd</button>
   </div>
   <div class="actions">
     <button id="printListBtn" class="btn cancel">🖨️ Skriv ut / spara som PDF</button>
@@ -160,7 +160,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=91"></script>
+  <script src="app.js?v=94"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

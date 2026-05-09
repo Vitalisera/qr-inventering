@@ -1,0 +1,68 @@
+{
+  "approved": true,
+  "status": "approved",
+  "reviewer": "code-reviewer (Opus 4.7) — v94 pure-rename filter→settings",
+  "reviewed_at": "2026-05-09T12:00:00+02:00",
+  "reviewed_sha": "4b1fec78798fffd25ebdfe8c32fa7124f52cb081",
+  "target": "qr-pwa: app.js + index.html + style.css + sw.js — Round 4 rename från v93 system review",
+  "scope": "Granskar pure-rename: filterDialog→settingsDialog, applyFilterBtn→applySettingsBtn, cancelFilterBtn→cancelSettingsBtn, clearFilterBtn→toggleAllPlacesBtn, loadPlaceFilter→loadSettings, savePlaceFilter→saveSettings, openFilterDialog→openSettingsDialog, closeFilterDialog→closeSettingsDialog, help-filter→help-settings, data-help filter→settings. Plus APP_VERSION 93→94, sw.js CACHE v93→v94, app.js?v=91→v=94.",
+  "summary": "Renamen är komplett och konsekvent. Alla 8 JS-symboler bytta överallt där de förekommer (deklaration + alla referenser, inklusive printListBtn-handler rad 1212, Escape-handler rad 1855, dialogOpen-helper rad 689, init-anrop rad 3296). Alla 6 HTML-id/data-help-attribut bytta. Alla 9 CSS-selektorer bytta. Inga kvarvarande gamla namn någonstans. DOM-id matchar JS qs()-anrop 1:1. Help-toggle-handlern (rad 3404-3412) bygger helpId dynamiskt från data-help, så data-help='settings' → #help-settings funkar utan kodändring. Versionsstack (APP_VERSION=94, CACHE=v94, app.js?v=94) är synkad.",
+  "checks": {
+    "rename_completeness": "pass — grep efter alla 10 gamla namn (filterDialog, applyFilterBtn, cancelFilterBtn, clearFilterBtn, loadPlaceFilter, savePlaceFilter, openFilterDialog, closeFilterDialog, help-filter, data-help=\"filter\") returnerar 0 träffar i app.js/index.html/style.css/sw.js/manifest.json",
+    "dom_js_alignment": "pass — qs('#settingsDialog'), qs('#applySettingsBtn'), qs('#cancelSettingsBtn'), qs('#toggleAllPlacesBtn') matchar nya HTML-id:n exakt",
+    "event_handlers": "pass — settingsBtn click→openSettingsDialog, applySettingsBtn click, cancelSettingsBtn click, toggleAllPlacesBtn click, Escape→closeSettingsDialog, printListBtn→applySettingsBtn.click() — alla 6 bindings använder de nya variablerna",
+    "behavior_preservation": "pass — ingen logik ändrad. saveSettings() har samma localStorage-nycklar (vitaliseraPlaceFilter etc), öppna/stäng-flow identiskt, toggleAllPlaces har samma logik som tidigare clearFilter (togglar alla place-checkboxar)",
+    "version_sync": "pass — APP_VERSION=94 (app.js:9), CACHE='vitalisera-inv-v94' (sw.js:1), <script src=\"app.js?v=94\"> (index.html:163) — alla tre synkade per release-checklista",
+    "regression_risk": "minimal — pure rename, ingen kontrollflödesändring. Gamla service workers (v93) som cache:ar gamla filer hanteras av befintlig SW skipWaiting+claim",
+    "xss": "n/a — ingen ny innerHTML eller user-data-rendering",
+    "anonymous_access": "n/a — bara frontend-rename, ingen API-yta ändrad"
+  },
+  "issues": [
+    {
+      "severity": "suggestion",
+      "id": "S1",
+      "where": "style.css:469 + 477, app.js:941, 1024, 1071, 1091",
+      "msg": "CSS-klassen 'filterSectionTitle' (med 'filterSectionTitle--first' BEM-modifier) finns kvar och används i 4 JS-tilldelningar. Inkonsekvent med rename-temat — om 'filter' ska bort helt så bör denna också till 'settingsSectionTitle'. Inte ett buggfix, bara konsistens.",
+      "blocking": false
+    },
+    {
+      "severity": "suggestion",
+      "id": "S2",
+      "where": "app.js:1718-1722",
+      "msg": "Lokala variabeln 'filterText' i renderListsHeader (sätts till ' (Alla)' eller ' (Steg 2, ...)') beskriver vilka filter som är aktiva och rör listrubrikerna. Det är semantiskt 'filter' i klassisk mening (subset av items), inte 'settings'. OK att behålla — eller döp till 'placesText'/'activeFilterText'. Ingen åtgärd nödvändig.",
+      "blocking": false
+    },
+    {
+      "severity": "suggestion",
+      "id": "S3",
+      "where": "changelog.json",
+      "msg": "Ingen v94-entry i changelog.json (latest=93). Pure-rename utan beteendeändring → ingen användar-synlig effekt → ingen changelog-rad behövs i strikt mening. Men om APP_VERSION bumpas så kommer 'Vad är nytt?'-banner trigga utan content att visa. Verifiera att banner-logiken hanterar APP_VERSION > latest gracefully (ingen ny rad), eller lägg till en intern 'inga användarändringar'-entry.",
+      "blocking": false
+    },
+    {
+      "severity": "suggestion",
+      "id": "S4",
+      "where": "html/css — 'Filterdialog'-kommentar style.css:444",
+      "msg": "Kommentaren '/* Filterdialog */' på style.css:444 över de renamade selektorerna är nu missvisande. Borde uppdateras till '/* Inställningsdialog */' i samma commit.",
+      "blocking": false
+    }
+  ],
+  "verified": [
+    "grep -nE 'filterDialog|applyFilterBtn|cancelFilterBtn|clearFilterBtn|loadPlaceFilter|savePlaceFilter|openFilterDialog|closeFilterDialog|help-filter|data-help=\"filter\"' returnerar 0 träffar i alla source-filer",
+    "Alla 4 qs()-uppslag på de renamade id:n matchar HTML-elementen 1:1",
+    "help-toggle-handlern (rad 3404-3412) bygger helpId från data-help-attributet utan hårdkodade strängar — fungerar transparent med rename:n",
+    "applySettingsBtn?.click() i printListBtn-handler (rad 1212) refererar till samma button som tidigare applyFilterBtn",
+    "Escape-tangenten stänger nu settingsDialog (rad 1855)",
+    "loadSettings() anropas vid init (rad 3296), saveSettings() anropas i applySettingsBtn-handlern (rad 1185) — laddnings/spar-flow intakt",
+    "toggleAllPlacesBtn-handlern (rad 1138-1146) implementerar samma toggle-logik som tidigare clearFilterBtn — beteende identiskt",
+    "Versionsstack synkad: APP_VERSION=94 + CACHE='vitalisera-inv-v94' + app.js?v=94"
+  ],
+  "checklist_release": {
+    "app_version_bumped": true,
+    "sw_cache_bumped": true,
+    "script_src_v_bumped": true,
+    "changelog_entry": false
+  },
+  "decision": "approved",
+  "notes": "Robert frågade specifikt om filterText/filterSectionTitle bör renames också. Min rekommendation: 'filterSectionTitle' (CSS-klass + 4 JS-användningar) bör renames för konsistens (S1) — det är inte en bugg utan en städ-uppföljning som kan göras i v95. 'filterText' (S2) är OK att behålla eftersom det semantiskt beskriver aktivt filter (subset av items), inte UI-dialogen. Inga blocking issues. Säker att committa och deploya."
+}

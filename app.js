@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 93;
+const APP_VERSION = 94;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -396,8 +396,8 @@ dlgInput=qs('#dialogInput'), dlgBtns=qs('#dialogBtns'),
 newItemFields=qs('#newItemFields'), manualName=qs('#manualName'),
 manualType=qs('#manualType'), manualQty=qs('#manualQty'),
 nameDialog=qs('#nameDialog'), userNameInput=qs('#userNameInput'), saveNameBtn=qs('#saveNameBtn'),
-filterDialog=qs('#filterDialog'), placeList=qs('#placeList'),
-applyFilterBtn=qs('#applyFilterBtn'), clearFilterBtn=qs('#clearFilterBtn'), cancelFilterBtn=qs('#cancelFilterBtn'),
+settingsDialog=qs('#settingsDialog'), placeList=qs('#placeList'),
+applySettingsBtn=qs('#applySettingsBtn'), toggleAllPlacesBtn=qs('#toggleAllPlacesBtn'), cancelSettingsBtn=qs('#cancelSettingsBtn'),
 searchFab=qs('#searchFab'), searchDialog=qs('#searchDialog'),
 searchInput=qs('#searchInput'), searchResults=qs('#searchResults'), closesearchFab=qs('#closesearchFab');
 
@@ -686,7 +686,7 @@ function beep() {
 }
 async function flashFeedback(txt){try{ensureAudioCtx();if(!beep()){blip.currentTime=0;await blip.play();}}catch{}show(txt);const laser=qs('#scanLaser');if(laser)laser.style.animationPlayState="paused";try{v.pause();}catch{}overlay.classList.add('flashOverlay');await new Promise(r=>setTimeout(r,900));overlay.classList.remove('flashOverlay');try{v.play();}catch{}if(laser)laser.style.animationPlayState="running";}
 const cooldown=t=>{lastCode=t;setTimeout(()=>lastCode="",COOLDOWN_MS);};
-const dialogOpen=()=>!dlg.classList.contains('hidden')||!nameDialog.classList.contains('hidden')||!filterDialog.classList.contains('hidden')||!searchDialog.classList.contains('hidden');
+const dialogOpen=()=>!dlg.classList.contains('hidden')||!nameDialog.classList.contains('hidden')||!settingsDialog.classList.contains('hidden')||!searchDialog.classList.contains('hidden');
 
 /* ===== Logg ===== */
 const MAX_LOG = 5;
@@ -857,7 +857,7 @@ function setLocalMeta(tag,patch){const prev=metaCache.get(tag)||{};let next={...
 function recomputeMaxLast(){let max=null;for(const v of metaCache.values())if(v.lastMs!=null)max=(max==null||v.lastMs>max)?v.lastMs:max;maxLastMs=max;}
 
 /* ===== Filter (flik-selector + gruppering) ===== */
-function loadPlaceFilter(){
+function loadSettings(){
   try{
     const raw = localStorage.getItem('vitaliseraPlaceFilter');
     if(!raw){ activePlaces = null; }
@@ -879,7 +879,7 @@ function loadPlaceFilter(){
     }
   } catch { activeSteps = null; }
 }
-function savePlaceFilter(){
+function saveSettings(){
   if(!activePlaces || activePlaces.size === 0) localStorage.removeItem('vitaliseraPlaceFilter');
   else localStorage.setItem('vitaliseraPlaceFilter', JSON.stringify([...activePlaces]));
   localStorage.setItem('vitaliseraOnlyLow', onlyLow ? '1' : '0');
@@ -934,7 +934,7 @@ function sanitizePlaceFilter(){
   else localStorage.setItem('vitaliseraPlaceFilter', JSON.stringify([...activePlaces]));
 }
 
-function openFilterDialog() {
+function openSettingsDialog() {
   placeList.innerHTML = "";
 
   const title0 = document.createElement('div');
@@ -1124,26 +1124,26 @@ function openFilterDialog() {
    // när alla redan är valda — vilseledande)
   const placeBoxes = placeList.querySelectorAll('input[type="checkbox"][data-place]');
   const allPlacesChecked = placeBoxes.length > 0 && [...placeBoxes].every(b => b.checked);
-  if (clearFilterBtn) clearFilterBtn.textContent = allPlacesChecked ? 'Avmarkera alla' : 'Välj alla';
+  if (toggleAllPlacesBtn) toggleAllPlacesBtn.textContent = allPlacesChecked ? 'Avmarkera alla' : 'Välj alla';
 
   overlay.classList.add("blurred");
-  filterDialog.classList.remove("hidden");
+  settingsDialog.classList.remove("hidden");
 }
-function closeFilterDialog() {
-  filterDialog.classList.add("hidden");
+function closeSettingsDialog() {
+  settingsDialog.classList.add("hidden");
   overlay.classList.remove("blurred");
 }
 
-settingsBtn?.addEventListener('click', openFilterDialog);
-clearFilterBtn?.addEventListener('click', () => {
+settingsBtn?.addEventListener('click', openSettingsDialog);
+toggleAllPlacesBtn?.addEventListener('click', () => {
   const onlyLowBox = placeList.querySelector('input[data-onlylow="1"]');
   if (onlyLowBox) onlyLowBox.checked = false;
   const boxes = placeList.querySelectorAll('input[type="checkbox"][data-place]');
   const allChecked = [...boxes].every(b => b.checked);
   boxes.forEach(b => b.checked = !allChecked);
-  clearFilterBtn.textContent = allChecked ? 'Välj alla' : 'Avmarkera alla';
+  toggleAllPlacesBtn.textContent = allChecked ? 'Välj alla' : 'Avmarkera alla';
 });
-applyFilterBtn?.addEventListener('click', () => {
+applySettingsBtn?.addEventListener('click', () => {
   const onlyLowBox = placeList.querySelector('input[data-onlylow="1"]');
   onlyLow = !!onlyLowBox?.checked;
 
@@ -1182,13 +1182,13 @@ applyFilterBtn?.addEventListener('click', () => {
     localStorage.setItem('vitalisera' + key.charAt(0).toUpperCase() + key.slice(1), String(!!b.checked));
   });
 
-  savePlaceFilter();
+  saveSettings();
   show("Laddar inventeringslistor...", null, { autoreset: false });
   renderLists();
-  closeFilterDialog();
+  closeSettingsDialog();
   statusDefault();
 });
-cancelFilterBtn?.addEventListener('click', () => closeFilterDialog());
+cancelSettingsBtn?.addEventListener('click', () => closeSettingsDialog());
 
 // På iOS PWA-läge är window.print() begränsad — öppna istället ny tab i Safari
 // (target=_blank tvingar ut ur standalone) som auto-triggar print efter render.
@@ -1209,7 +1209,7 @@ function hidePrintLoading() {
 
 qs('#printListBtn')?.addEventListener('click', () => {
   // Applya valda inställningar först (annars skriver vi ut det gamla filtret).
-  applyFilterBtn?.click();
+  applySettingsBtn?.click();
   const isStandalone = navigator.standalone === true ||
     window.matchMedia('(display-mode: standalone)').matches;
   if (isStandalone) {
@@ -1852,7 +1852,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (!dlg.classList.contains('hidden')) { closeDialog(); e.preventDefault(); return; }
   if (!searchDialog.classList.contains('hidden')) { closeSearchDialog(); e.preventDefault(); return; }
-  if (!filterDialog.classList.contains('hidden')) { closeFilterDialog(); e.preventDefault(); return; }
+  if (!settingsDialog.classList.contains('hidden')) { closeSettingsDialog(); e.preventDefault(); return; }
   if (!nameDialog.classList.contains('hidden')) { /* nameDialog kräver namn — skip */ return; }
 });
 
@@ -3293,7 +3293,7 @@ async function startCamera(){
 
 /* ===== Preload ===== */
 window._lastCacheTs = 0;
-loadPlaceFilter();
+loadSettings();
 
 // Stale-while-revalidate: rendera från localStorage direkt om möjligt,
 // hämta sen färsk server-data i bakgrunden.

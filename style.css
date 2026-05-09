@@ -441,32 +441,32 @@ body:has(.dialog:not(.hidden))::after {
   border-radius: 8px; border: 1px solid #ccc; resize: vertical;
 }
 
-/* Filterdialog */
-#filterDialog { text-align: left; }
-#filterDialog h2 { text-align: center; margin: 0 0 0.6rem; }
-#filterDialog .checklist {
+/* Inställningsdialog */
+#settingsDialog { text-align: left; }
+#settingsDialog h2 { text-align: center; margin: 0 0 0.6rem; }
+#settingsDialog .checklist {
   padding: 8px 10px; margin: 0;
   max-height: 60vh; overflow-y: auto;
 }
-#filterDialog .placeRow {
+#settingsDialog .placeRow {
   display: flex; align-items: center; gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid rgba(0,0,0,.06);
   min-height: 44px;
 }
-#filterDialog .placeRow:last-child { border-bottom: none; }
-#filterDialog input[type="checkbox"] {
+#settingsDialog .placeRow:last-child { border-bottom: none; }
+#settingsDialog input[type="checkbox"] {
   flex-shrink: 0; width: 24px; height: 24px;
   accent-color: var(--primary);
   padding: 0; margin: 0; border: 0;
   appearance: auto; -webkit-appearance: auto;
 }
-#filterDialog .placeTxt, #filterDialog label {
+#settingsDialog .placeTxt, #settingsDialog label {
   flex: 1 1 auto; text-align: left;
   font-size: 1rem; color: var(--text);
   white-space: normal;
 }
-#filterDialog .filterSectionTitle {
+#settingsDialog .filterSectionTitle {
   margin: 18px 0 6px;
   padding-top: 14px;
   border-top: 2px solid var(--primary, #1f5e69);
@@ -474,7 +474,7 @@ body:has(.dialog:not(.hidden))::after {
   font-size: 1.05rem;
   color: var(--primary, #1f5e69);
 }
-#filterDialog .filterSectionTitle--first {
+#settingsDialog .filterSectionTitle--first {
   margin-top: 0;
   padding-top: 0;
   border-top: none;

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 92;
+const APP_VERSION = 93;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -172,17 +172,29 @@ maybeShowWhatsNew();
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
 
 async function gasCall(fn, params = {}) {
-  const res = await fetch(GAS_URL, {
-    method: 'POST',
-    body: JSON.stringify({ fn, ...params }),
-    redirect: 'follow'
-  });
-  if (!res.ok) throw new Error('Server error: ' + res.status);
-  const text = await res.text();
+  // 30s timeout: GAS cold-start kan ta ~10s, mobilnät-tap kan tappa förbindelsen
+  // helt utan native error. Utan timeout hänger UI:n i evighet.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 30000);
   try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error('Ogiltigt svar från servern');
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({ fn, ...params }),
+      redirect: 'follow',
+      signal: ac.signal
+    });
+    if (!res.ok) throw new Error('Server error: ' + res.status);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error('Ogiltigt svar från servern');
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Timeout — servern svarade inte inom 30s');
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -689,8 +701,21 @@ function appendLog(msg, tag, icon = "⏳") {
   e.onclick = () => openContainerForTag(tag);
   logList.prepend(e);
   while (logList.children.length > MAX_LOG) logList.removeChild(logList.lastChild);
+  // Visa toggle-knappen så snart vi har minst en logg-post
+  const tog = qs('#logToggleBtn');
+  if (tog) tog.classList.remove('hidden');
   return e;
 }
+
+// Toggle-knapp för historik (default kollapsad)
+qs('#logToggleBtn')?.addEventListener('click', () => {
+  const list = qs('#logList');
+  const tog = qs('#logToggleBtn');
+  if (!list || !tog) return;
+  const collapsed = list.classList.toggle('collapsed');
+  tog.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  tog.textContent = collapsed ? '▾ Historik' : '▴ Historik';
+});
 function markAsDone(e) {
   const icon = e.querySelector(".icon");
   const msg  = e.querySelector(".msg");
@@ -798,14 +823,16 @@ function flushUpdates() {
 
       setTimeout(() => {
         if (msgLine) msgLine.textContent = "";
-        statusDefault();
+        // Vid fail: behåll status-meddelandet (med pendingSync-CSS på listraderna)
+        // tills nästa flush rensar det. Annars försvinner felet tyst efter 5s.
+        if (failedTags.length === 0) statusDefault();
       }, 5000);
 
       gasCall('cacheTs').then(ts => {
         if (ts > (window._lastCacheTs || 0)) {
           window._lastCacheTs = ts;
           console.log("Servercache uppdaterad, hämtar ny data...");
-          gasCall('preload').then(initData);
+          preloadShared().then(initData);
         }
       });
     })
@@ -1092,6 +1119,12 @@ function openFilterDialog() {
       versionLabel.textContent = cache ? 'Version ' + cache.replace('vitalisera-inv-', '') : '';
     }).catch(() => {});
   }
+
+  // Synka knapptext med faktiska checkbox-tillståndet (annars HTML-default 'Välj alla'
+   // när alla redan är valda — vilseledande)
+  const placeBoxes = placeList.querySelectorAll('input[type="checkbox"][data-place]');
+  const allPlacesChecked = placeBoxes.length > 0 && [...placeBoxes].every(b => b.checked);
+  if (clearFilterBtn) clearFilterBtn.textContent = allPlacesChecked ? 'Avmarkera alla' : 'Välj alla';
 
   overlay.classList.add("blurred");
   filterDialog.classList.remove("hidden");
@@ -1393,8 +1426,19 @@ function renderSearchResults(q){
 
 /* ===== Preload helpers ===== */
 const PRELOAD_CACHE_KEY = 'vitaliseraPreloadCache_v2';
+// Race-skydd: cacheTs-pollern, flushUpdates-kedjan och manuell preloadData kan
+// alla råka anropa gasCall('preload') samtidigt. Om en gammal preload (med stale
+// data) returnerar EFTER en nyare optimistisk uppdatering, skrivs lokal state
+// över. Genom att dela en in-flight promise garanterar vi att bara EN preload-
+// fetch är live åt gången och alla callers får samma resultat.
+let _preloadInflight = null;
+function preloadShared() {
+  if (_preloadInflight) return _preloadInflight;
+  _preloadInflight = gasCall('preload').finally(() => { _preloadInflight = null; });
+  return _preloadInflight;
+}
 function preloadData() {
-  gasCall('preload').then(initData);
+  preloadShared().then(initData);
 }
 function initData(records, { fromCache = false } = {}) {
   if (!Array.isArray(records)) {
@@ -1802,6 +1846,16 @@ function openDialog(f){
     }, 200);
   }, { passive: true });
 })();
+// Global Escape-handler stänger toppdialog. Tab-trap inom dialogen stöds inte
+// fullt ut här, men minst kan användaren backa ut utan musen.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!dlg.classList.contains('hidden')) { closeDialog(); e.preventDefault(); return; }
+  if (!searchDialog.classList.contains('hidden')) { closeSearchDialog(); e.preventDefault(); return; }
+  if (!filterDialog.classList.contains('hidden')) { closeFilterDialog(); e.preventDefault(); return; }
+  if (!nameDialog.classList.contains('hidden')) { /* nameDialog kräver namn — skip */ return; }
+});
+
 function closeDialog(){
   currentDialogTag = null;
   try { dlgTitle?.blur(); } catch {}
@@ -2716,24 +2770,21 @@ function showLinkTagDialog(scannedTag) {
         const rowNum = btn.dataset.row ? Number(btn.dataset.row) : null;
         const matchTag = btn.dataset.tag;
         const matchName = btn.dataset.name;
-        btn.disabled = true;
-        btn.textContent = 'Kopplar…';
+        // Optimistisk uppdatering: lokala mutation + UI-respons direkt
+        const oldData = tagCache.get(matchTag);
+        if (oldData) oldData.altTags = [...(oldData.altTags || []), scannedTag];
+        closeDialog();
+        cooldown(scannedTag);
+        show(`Tag kopplad till "${matchName}"`, 'ok');
+        // Server-anrop i bakgrunden — rulla tillbaka vid fail
         gasCall('addTag', { sheetName, rowNum, newTag: scannedTag }).then(res => {
-          if (res?.ok) {
-            const oldData = tagCache.get(matchTag);
-            if (oldData) oldData.altTags = [...(oldData.altTags || []), scannedTag];
-            closeDialog();
-            cooldown(scannedTag);
-            show(`Tag kopplad till "${matchName}"`, 'ok');
-          } else {
-            btn.disabled = false;
-            btn.textContent = `Koppla till "${matchName}"`;
-            show(res?.collision ? `Redan kopplad till "${res.existingName}"` : 'Kunde inte koppla', 'warn');
+          if (!res?.ok) {
+            if (oldData) oldData.altTags = (oldData.altTags || []).filter(t => t !== scannedTag);
+            show(res?.collision ? `Redan kopplad till "${res.existingName}"` : 'Kunde inte koppla — rullade tillbaka', 'warn');
           }
         }).catch(() => {
-          btn.disabled = false;
-          btn.textContent = `Koppla till "${matchName}"`;
-          show('Nätverksfel — försök igen', 'warn');
+          if (oldData) oldData.altTags = (oldData.altTags || []).filter(t => t !== scannedTag);
+          show('Nätverksfel — kopplingen rullades tillbaka', 'warn');
         });
       };
     });
@@ -2830,22 +2881,40 @@ function openLinkSearchDialog(tagToLink) {
       btn.innerHTML = `<span class="sr-name">${esc(name)}</span><span class="sr-date">${hasTag ? "har tag" : "ingen tag"}</span>`;
       btn.onclick = () => {
         closeSearchDialog();
+        const isSynthetic = tag.startsWith("S");
+        if (!isSynthetic) {
+          // Optimistisk: appenda alt-tag direkt + UI-respons. Rulla tillbaka vid fail.
+          const oldData = tagCache.get(tag);
+          if (oldData) oldData.altTags = [...(oldData.altTags || []), tagToLink];
+          show(`Tag kopplad till "${name}"`, "ok");
+          renderLists();
+          cooldown(tagToLink);
+          gasCall('addTag', {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink})
+            .then(res => {
+              if (!res.ok) {
+                if (oldData) oldData.altTags = (oldData.altTags || []).filter(t => t !== tagToLink);
+                renderLists();
+                show(res.collision ? `Redan kopplad till "${res.existingName}"` : (res.msg || "Kunde inte koppla — rullade tillbaka"), "warn");
+              }
+            })
+            .catch(err => {
+              if (oldData) oldData.altTags = (oldData.altTags || []).filter(t => t !== tagToLink);
+              renderLists();
+              show("Nätverksfel — rullade tillbaka: " + (err.message || err), "warn");
+            });
+          return;
+        }
+        // Syntetisk artikel: kräver server-svar för att få den nya tag-nyckeln
         show("Kopplar tag…");
         gasCall('addTag', {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink})
           .then(res => {
             if (res.ok) {
               const oldData = tagCache.get(tag);
               if (oldData) {
-                if (tag.startsWith("S")) {
-                  // Syntetisk artikel fick sin första riktiga tag → byt cache-nyckel
-                  tagCache.delete(tag);
-                  tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null, altTags: oldData.altTags || [] });
-                  const oldMeta = metaCache.get(tag);
-                  if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
-                } else {
-                  // Befintlig artikel fick ytterligare alt-tag → appenda
-                  oldData.altTags = [...(oldData.altTags || []), res.tag];
-                }
+                tagCache.delete(tag);
+                tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null, altTags: oldData.altTags || [] });
+                const oldMeta = metaCache.get(tag);
+                if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
               }
               show(`Tag kopplad till "${name}"`, "ok");
               renderLists();
@@ -3101,6 +3170,7 @@ function prepareNewItemDialog(scanned){
       })
       .catch(err => markLogFail(le, err));
     closeDialog();cooldown(currentTag);
+    show(`Skapad: ${name}`, "ok");
   };
   qs("#cancelNewBtn").onclick=()=>{closeDialog();show("Avbrutet","warn");cooldown(currentTag);};
   openDialog(manualName);
@@ -3284,7 +3354,7 @@ _bootstrapPreload.finally(() => {
       if (ts > (window._lastCacheTs || 0)) {
         window._lastCacheTs = ts;
         console.log("Servercache uppdaterad, laddar om data tyst...");
-        gasCall('preload').then(initData);
+        preloadShared().then(initData).catch(() => {});
       }
     }).catch(() => {});
   }, 15000);

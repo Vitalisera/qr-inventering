@@ -1,6 +1,20 @@
 {
-  "latest": 92,
+  "latest": 93,
   "versions": [
+    {
+      "version": 93,
+      "date": "2026-05-09",
+      "notes": [
+        "Statushistoriken är default-kollapsad — tryck '▾ Historik' för att expandera. Tar mindre plats på skärmen.",
+        "Tag-koppling sker nu omedelbart i UI istället för att vänta på server (rullas tillbaka vid fel)",
+        "'Välj alla / Avmarkera alla'-knappen i ⚙️ visar nu rätt text från start beroende på faktiska tillståndet",
+        "Bekräftelse 'Skapad: X' när du sparar en ny artikel",
+        "Server-anrop har 30s timeout — UI hänger inte längre vid cold-start eller nät-tap",
+        "Säkerhetsfix: dubbla preload-anrop kan inte längre skriva över optimistiska ändringar",
+        "Synk-fel försvinner inte längre tyst efter 5 sekunder",
+        "Tillgänglighet: dialoger har nu role/aria-modal, Escape-tangenten stänger toppdialogen"
+      ]
+    },
     {
       "version": 92,
       "date": "2026-05-09",

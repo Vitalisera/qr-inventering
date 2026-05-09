@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=17">
 </head>
 
 <body>
@@ -40,7 +40,8 @@
   <!-- STATUS + LOGG -->
   <section id="statusContainer">
     <div id="status">Välj artikel i listan</div>
-    <div id="logList"></div>
+    <button id="logToggleBtn" type="button" class="hidden" aria-expanded="false" aria-controls="logList" aria-label="Visa eller dölj historik">▾ Historik</button>
+    <div id="logList" class="collapsed"></div>
   </section>
 
   <!-- LISTOR -->
@@ -69,7 +70,7 @@
   </section>
 
   <!-- NAMN -->
-  <div id="nameDialog" class="dialog hidden">
+  <div id="nameDialog" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
     <h2>Ange ditt namn <span class="help-toggle dark" data-help="name">?</span></h2>
     <div class="help-box" id="help-name">
       Ditt namn sparas lokalt i 10 dagar och visas i Sheetet vid varje registrering, så att man ser vem som inventerade.
@@ -79,7 +80,7 @@
   </div>
 
   <!-- ARTIKEL -->
-  <div id="dialogBox" class="dialog hidden">
+  <div id="dialogBox" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
     <h2 id="dialogTitle" contenteditable="true"></h2>
     <span class="help-toggle dark" data-help="article">?</span>
     <div class="help-box" id="help-article">
@@ -110,7 +111,7 @@
   </div>
 
   <!-- FILTER -->
-<div id="filterDialog" class="dialog hidden">
+<div id="filterDialog" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
   <h2>Inställningar <span class="help-toggle dark" data-help="filter">?</span></h2>
   <div class="help-box" id="help-filter">
     <b>Visa endast ... lågt saldo</b> döljer artiklar där mängden räcker.<br>
@@ -136,7 +137,7 @@
 </div>
 
   <!-- SÖK -->
-  <div id="searchDialog" class="dialog hidden">
+  <div id="searchDialog" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
     <h2>Sök artiklar <span class="help-toggle dark" data-help="search">?</span></h2>
     <div class="help-box" id="help-search">
       Sök artiklar med fritext. Tryck på ett resultat för att öppna artikeln. Tryck "Ny artikel" för att skapa en helt ny.
@@ -159,7 +160,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=90"></script>
+  <script src="app.js?v=91"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

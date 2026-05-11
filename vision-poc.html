@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Vision POC — Vitalisera</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; }
+    #video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    #overlay { position: fixed; top: 0; left: 0; right: 0; padding: calc(env(safe-area-inset-top, 0) + 8px) 16px 16px; background: linear-gradient(to bottom, rgba(0,0,0,.85) 0%, rgba(0,0,0,.6) 70%, transparent); z-index: 10; }
+    #title { margin: 0 0 8px; font-size: 12px; font-weight: 500; opacity: .65; letter-spacing: .3px; }
+    #predictions { margin: 0; padding: 0; list-style: none; }
+    #predictions li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; font-size: 17px; border-top: 1px solid rgba(255,255,255,.08); }
+    #predictions li:first-child { border-top: none; font-weight: 500; }
+    #predictions .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #predictions .conf { opacity: .55; font-feature-settings: "tnum"; flex-shrink: 0; }
+    #predictions .conf.high { color: #4ade80; opacity: 1; }
+    #predictions .conf.mid { color: #fbbf24; opacity: 1; }
+    #fps { position: fixed; top: calc(env(safe-area-inset-top, 0) + 12px); right: 12px; font-size: 11px; opacity: .5; font-feature-settings: "tnum"; z-index: 11; padding: 4px 8px; background: rgba(0,0,0,.4); border-radius: 4px; }
+    #status { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 12px); left: 16px; right: 16px; text-align: center; padding: 12px; font-size: 14px; background: rgba(0,0,0,.7); border-radius: 8px; z-index: 11; }
+    #status.hidden { display: none; }
+    #status.err { color: #ff6b6b; }
+  </style>
+</head>
+<body>
+  <video id="video" playsinline muted autoplay></video>
+  <div id="overlay">
+    <p id="title">MobileNet v2 — ImageNet (1000 klasser)</p>
+    <ul id="predictions"></ul>
+  </div>
+  <div id="fps"></div>
+  <div id="status">Laddar TensorFlow.js…</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+  <script>
+  (async () => {
+    const $status = document.getElementById('status');
+    const $preds = document.getElementById('predictions');
+    const $fps = document.getElementById('fps');
+    const video = document.getElementById('video');
+
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    function setStatus(msg, isErr) {
+      $status.textContent = msg;
+      $status.classList.toggle('err', !!isErr);
+      $status.classList.remove('hidden');
+    }
+    function hideStatus() {
+      setTimeout(() => $status.classList.add('hidden'), 1500);
+    }
+
+    try {
+      setStatus('Begär kamera…');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await new Promise(r => { video.onloadedmetadata = r; });
+      await video.play();
+
+      setStatus('Laddar MobileNet (~14 MB)…');
+      const model = await mobilenet.load({ version: 2, alpha: 1.0 });
+      console.log('TF backend:', tf.getBackend());
+
+      setStatus('Klar. Rikta kameran mot föremål.');
+      hideStatus();
+
+      let lastBatchTs = performance.now();
+      let frameCount = 0;
+      let running = true;
+
+      async function tick() {
+        if (!running) return;
+        const t0 = performance.now();
+        let predictions;
+        try {
+          predictions = await model.classify(video, 5);
+        } catch (err) {
+          console.error('classify error', err);
+          requestAnimationFrame(tick);
+          return;
+        }
+        const t1 = performance.now();
+
+        $preds.innerHTML = predictions.map(p => {
+          const conf = p.probability;
+          const cls = conf > 0.5 ? 'high' : conf > 0.2 ? 'mid' : '';
+          const lbl = p.className.split(',')[0];
+          return '<li><span class="lbl">' + esc(lbl) + '</span><span class="conf ' + cls + '">' + (conf*100).toFixed(0) + '%</span></li>';
+        }).join('');
+
+        frameCount++;
+        if (frameCount % 5 === 0) {
+          const dt = t1 - lastBatchTs;
+          const fps = (5 * 1000 / dt).toFixed(1);
+          $fps.textContent = fps + ' fps • ' + (t1-t0).toFixed(0) + ' ms';
+          lastBatchTs = t1;
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+
+      document.addEventListener('visibilitychange', () => {
+        running = !document.hidden;
+        if (running) requestAnimationFrame(tick);
+      });
+    } catch (err) {
+      console.error(err);
+      setStatus('Fel: ' + (err.message || err), true);
+    }
+  })();
+  </script>
+</body>
+</html>

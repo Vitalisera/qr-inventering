@@ -29,8 +29,9 @@
     #result .section h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; opacity: .55; text-transform: uppercase; letter-spacing: .5px; }
     #result ul { margin: 0; padding: 0; list-style: none; }
     #result li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.08); border-radius: 6px; }
-    #result li.match { background: rgba(74,222,128,.12); border: 1px solid rgba(74,222,128,.3); margin-bottom: 4px; cursor: pointer; }
-    #result li.match:active { background: rgba(74,222,128,.25); }
+    #result li.match { background: rgba(74,222,128,.12); border: 1px solid rgba(74,222,128,.3); margin-bottom: 4px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+    #result li.match:active { background: rgba(74,222,128,.35); transform: scale(0.98); }
+    #result li.match.logged { background: rgba(74,222,128,.06); opacity: 0.5; }
     #result .conf { opacity: .55; font-feature-settings: "tnum"; flex-shrink: 0; }
     #result .conf.high { color: #4ade80; opacity: 1; }
     #result .lbl-name { font-weight: 500; }
@@ -326,13 +327,18 @@
     $analyzeBtn.addEventListener('click', analyze);
 
     // Tap på artikel-match → logga som verifierad matchning (active learning)
-    $matches.addEventListener('click', async (e) => {
+    async function handleMatchTap(e) {
       const li = e.target.closest('li.match');
-      if (!li || li.dataset.logged === '1') return;
+      console.log('[match-tap]', { hasLi: !!li, lastResp: !!lastResponse, name: li && li.dataset.name });
+      if (!li) return;
+      if (li.classList.contains('logged')) {
+        showToast('Redan sparat', true);
+        return;
+      }
       const name = li.dataset.name;
-      if (!name || !lastResponse) return;
-      li.dataset.logged = '1';
-      li.style.opacity = '0.6';
+      if (!name) { showToast('Ingen artikelnamn-data på elementet', true); return; }
+      if (!lastResponse) { showToast('Inget Lambda-svar att spara mot', true); return; }
+      li.classList.add('logged');
       try {
         const res = await gasCall('logVisionMatch', {
           sessionId: SESSION_ID,
@@ -343,7 +349,6 @@
         });
         if (res && res.ok) {
           showToast('✓ Sparat — Claude lär sig: ' + name);
-          // Lägg till i lokal fewshots så nästa skanning i samma session också drar nytta
           fewshots.unshift({
             labels: (lastResponse.labels || []).slice(0, 6),
             texts: (lastResponse.texts || []).slice(0, 3),
@@ -354,11 +359,16 @@
           throw new Error(res && res.msg || 'Okänt fel');
         }
       } catch (err) {
-        li.dataset.logged = '';
-        li.style.opacity = '1';
+        li.classList.remove('logged');
         showToast('Kunde inte spara: ' + (err.message || err), true);
       }
-    });
+    }
+    $matches.addEventListener('click', handleMatchTap);
+    // iOS Safari kan ibland missa click på li — fallback på touchend
+    $matches.addEventListener('touchend', (e) => {
+      const li = e.target.closest('li.match');
+      if (li) { e.preventDefault(); handleMatchTap(e); }
+    }, { passive: false });
 
     $closeBtn.addEventListener('click', () => {
       $result.classList.add('hidden');

@@ -203,32 +203,59 @@
         const dataUrl = $canvas.toDataURL('image/jpeg', 0.85);
         const base64 = dataUrl.split(',', 2)[1];
 
-        setStatus('Skickar till AWS Rekognition…');
+        setStatus('Analyserar (AWS + Claude)…');
         const t0 = performance.now();
         const res = await fetch(REK_API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64 })
+          body: JSON.stringify({ image: base64, articles: articles, session: SESSION_ID })
         });
         const ms = performance.now() - t0;
         if (!res.ok) throw new Error('Lambda HTTP ' + res.status + ': ' + (await res.text()));
         const data = await res.json();
 
-        console.log('Rekognition response in', ms.toFixed(0), 'ms', data);
+        console.log('Lambda response in', ms.toFixed(0), 'ms', data);
 
         // Rendera resultat
         $snapPreview.src = dataUrl;
 
-        const matches = matchArticles(data.labels || [], data.texts || [], articles);
-        $matches.innerHTML = matches.length ? matches.map(m => `
-          <li class="match" data-name="${esc(m.name)}">
-            <div>
-              <span class="lbl-name">${esc(m.name)}</span>
-              <span class="lbl-meta">via: ${m.hits.map(esc).join(', ')}</span>
-            </div>
-            <span class="conf ${m.score >= 4 ? 'high' : ''}">${m.score}</span>
-          </li>
-        `).join('') : '<li style="opacity:.5">Inga artikelmatchningar från labels eller text</li>';
+        // Claude-matchningar (semantic, prioriterad)
+        const claudeMatches = Array.isArray(data.claude_matches) ? data.claude_matches : [];
+        // Fallback: enkel substring-match om Claude inte gav resultat
+        const fallbackMatches = claudeMatches.length === 0
+          ? matchArticles(data.labels || [], data.texts || [], articles)
+          : [];
+
+        const cacheMeta = data.claude_cache || {};
+        const cacheNote = cacheMeta.cache_read
+          ? ` • cache: ${cacheMeta.cache_read} in, ${cacheMeta.output} out`
+          : cacheMeta.cache_create
+          ? ` • cache CREATED (${cacheMeta.cache_create} tokens)`
+          : '';
+
+        if (claudeMatches.length) {
+          $matches.innerHTML = claudeMatches.map(m => `
+            <li class="match" data-name="${esc(m.name)}">
+              <div>
+                <span class="lbl-name">${esc(m.name)}</span>
+                <span class="lbl-meta">Claude: ${esc(m.reason || '')}</span>
+              </div>
+              <span class="conf high">✓</span>
+            </li>
+          `).join('') + `<li style="opacity:.4;font-size:11px;padding:6px 12px">Latens: ${ms.toFixed(0)} ms${cacheNote}</li>`;
+        } else if (fallbackMatches.length) {
+          $matches.innerHTML = '<li style="opacity:.5;font-size:11px;padding:6px 12px">Claude gav inga matchningar — visar enkla substring-träffar:</li>' + fallbackMatches.map(m => `
+            <li class="match" data-name="${esc(m.name)}">
+              <div>
+                <span class="lbl-name">${esc(m.name)}</span>
+                <span class="lbl-meta">via: ${m.hits.map(esc).join(', ')}</span>
+              </div>
+              <span class="conf ${m.score >= 4 ? 'high' : ''}">${m.score}</span>
+            </li>
+          `).join('');
+        } else {
+          $matches.innerHTML = `<li style="opacity:.5">Inga artikelmatchningar</li><li style="opacity:.4;font-size:11px;padding:6px 12px">Latens: ${ms.toFixed(0)} ms${cacheNote}</li>`;
+        }
 
         $texts.innerHTML = (data.texts || []).length
           ? data.texts.map(t => `<li><span>${esc(t.text)}</span><span class="conf">${t.confidence}</span></li>`).join('')

@@ -154,6 +154,25 @@
     }
 
     let articles = [];
+    let fewshots = [];
+    let lastResponse = null; // sparas för logVisionMatch-anropet vid tap
+
+    async function gasCall(fn, params) {
+      const res = await fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify(Object.assign({ fn }, params || {}))
+      });
+      if (!res.ok) throw new Error('GAS HTTP ' + res.status);
+      return await res.json();
+    }
+
+    function showToast(msg, isErr) {
+      const t = document.createElement('div');
+      t.textContent = msg;
+      t.style.cssText = 'position:fixed;bottom:80px;left:16px;right:16px;padding:12px;background:' + (isErr ? '#ef4444' : '#4ade80') + ';color:#000;text-align:center;border-radius:8px;z-index:50;font-weight:500';
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 2200);
+    }
 
     async function init() {
       if (!REK_API_URL) {
@@ -177,8 +196,31 @@
         if (!r.ok) throw new Error('Preload HTTP ' + r.status);
         const records = await r.json();
 
-        articles = [...new Set(records.map(rec => String(rec[1] || '').trim()).filter(Boolean))];
+        // Bygg artiklar med synonymer från preload (rec[14] = synonyms-array per Code.js:313)
+        const articleMap = new Map();
+        for (const rec of records) {
+          const name = String(rec[1] || '').trim();
+          if (!name) continue;
+          const syns = Array.isArray(rec[14]) ? rec[14].map(s => String(s).trim()).filter(Boolean) : [];
+          if (!articleMap.has(name)) articleMap.set(name, new Set());
+          for (const s of syns) articleMap.get(name).add(s);
+        }
+        articles = Array.from(articleMap.entries()).map(([name, synSet]) => ({
+          name,
+          synonyms: Array.from(synSet).slice(0, 6) // begränsa per artikel för prompt-storlek
+        }));
         $articleCount.textContent = articles.length;
+
+        // Hämta tidigare verifierade matchningar (active learning)
+        try {
+          const fs = await gasCall('getFewshots', { limit: 20 });
+          if (fs && fs.ok && Array.isArray(fs.fewshots)) {
+            fewshots = fs.fewshots;
+            console.log('Loaded', fewshots.length, 'fewshots for active learning');
+          }
+        } catch (e) {
+          console.warn('Kunde inte hämta fewshots', e);
+        }
 
         hideStatus();
       } catch (err) {
@@ -208,13 +250,14 @@
         const res = await fetch(REK_API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64, articles: articles, session: SESSION_ID })
+          body: JSON.stringify({ image: base64, articles: articles, fewshots: fewshots, session: SESSION_ID })
         });
         const ms = performance.now() - t0;
         if (!res.ok) throw new Error('Lambda HTTP ' + res.status + ': ' + (await res.text()));
         const data = await res.json();
 
         console.log('Lambda response in', ms.toFixed(0), 'ms', data);
+        lastResponse = data; // sparas för tap-handler (active learning)
 
         // Rendera resultat
         $snapPreview.src = dataUrl;
@@ -223,7 +266,7 @@
         const claudeMatches = Array.isArray(data.claude_matches) ? data.claude_matches : [];
         // Fallback: enkel substring-match om Claude inte gav resultat
         const fallbackMatches = claudeMatches.length === 0
-          ? matchArticles(data.labels || [], data.texts || [], articles)
+          ? matchArticles(data.labels || [], data.texts || [], articles.map(a => a.name || a))
           : [];
 
         const cacheMeta = data.claude_cache || {};
@@ -281,6 +324,42 @@
     }
 
     $analyzeBtn.addEventListener('click', analyze);
+
+    // Tap på artikel-match → logga som verifierad matchning (active learning)
+    $matches.addEventListener('click', async (e) => {
+      const li = e.target.closest('li.match');
+      if (!li || li.dataset.logged === '1') return;
+      const name = li.dataset.name;
+      if (!name || !lastResponse) return;
+      li.dataset.logged = '1';
+      li.style.opacity = '0.6';
+      try {
+        const res = await gasCall('logVisionMatch', {
+          sessionId: SESSION_ID,
+          awsLabels: lastResponse.labels || [],
+          awsTexts: lastResponse.texts || [],
+          claudeMatches: lastResponse.claude_matches || [],
+          chosenArticle: name
+        });
+        if (res && res.ok) {
+          showToast('✓ Sparat — Claude lär sig: ' + name);
+          // Lägg till i lokal fewshots så nästa skanning i samma session också drar nytta
+          fewshots.unshift({
+            labels: (lastResponse.labels || []).slice(0, 6),
+            texts: (lastResponse.texts || []).slice(0, 3),
+            article: name
+          });
+          fewshots = fewshots.slice(0, 20);
+        } else {
+          throw new Error(res && res.msg || 'Okänt fel');
+        }
+      } catch (err) {
+        li.dataset.logged = '';
+        li.style.opacity = '1';
+        showToast('Kunde inte spara: ' + (err.message || err), true);
+      }
+    });
+
     $closeBtn.addEventListener('click', () => {
       $result.classList.add('hidden');
       $analyzeBtn.classList.remove('hidden');

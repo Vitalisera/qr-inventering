@@ -29,9 +29,23 @@
     #result .section h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; opacity: .55; text-transform: uppercase; letter-spacing: .5px; }
     #result ul { margin: 0; padding: 0; list-style: none; }
     #result li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.08); border-radius: 6px; }
-    #result li.match { background: rgba(74,222,128,.12); border: 1px solid rgba(74,222,128,.3); margin-bottom: 4px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+    #result li.match { background: rgba(74,222,128,.12); border: 1px solid rgba(74,222,128,.3); margin-bottom: 4px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; padding: 12px; }
     #result li.match:active { background: rgba(74,222,128,.35); transform: scale(0.98); }
     #result li.match.logged { background: rgba(74,222,128,.06); opacity: 0.5; }
+    #result li.match.selected { background: rgba(74,222,128,.28); border-color: #4ade80; }
+    #result li.match .row { display: flex; align-items: center; gap: 12px; }
+    #result li.match .check { width: 22px; height: 22px; border-radius: 4px; border: 2px solid rgba(255,255,255,.4); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #000; background: transparent; }
+    #result li.match.selected .check { background: #4ade80; border-color: #4ade80; }
+    #result li.match.selected .check::after { content: '✓'; font-weight: 700; }
+    #result li.match .info { flex: 1; min-width: 0; }
+    #result li.match .qty-stepper { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    #result li.match .qty-btn { width: 32px; height: 32px; border-radius: 6px; background: rgba(255,255,255,.1); color: #fff; border: none; font-size: 18px; font-weight: 500; touch-action: manipulation; }
+    #result li.match .qty-btn:active { background: rgba(255,255,255,.2); }
+    #result li.match .qty-btn:disabled { opacity: 0.3; }
+    #result li.match .qty-val { min-width: 26px; text-align: center; font-feature-settings: "tnum"; font-weight: 500; }
+    #register-btn { position: fixed; bottom: calc(env(safe-area-inset-bottom, 0) + 12px); left: 16px; right: 16px; padding: 16px; font-size: 17px; font-weight: 600; background: #4ade80; color: #000; border: none; border-radius: 12px; z-index: 22; touch-action: manipulation; }
+    #register-btn:disabled { background: #444; color: #888; }
+    #register-btn.hidden { display: none; }
     #result .conf { opacity: .55; font-feature-settings: "tnum"; flex-shrink: 0; }
     #result .conf.high { color: #4ade80; opacity: 1; }
     #result .lbl-name { font-weight: 500; }
@@ -74,9 +88,11 @@
       <ul id="labels"></ul>
     </div>
 
-    <div style="height: 80px"></div>
+    <div style="height: 140px"></div>
     <button id="close-btn">Stäng — ny analys</button>
   </div>
+
+  <button id="register-btn" class="hidden">Inventera 0 valda</button>
 
   <script>
     const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
@@ -93,6 +109,7 @@
     const $status = document.getElementById('status');
     const $result = document.getElementById('result');
     const $closeBtn = document.getElementById('close-btn');
+    const $registerBtn = document.getElementById('register-btn');
     const $snapPreview = document.getElementById('snap-preview');
     const $matches = document.getElementById('matches');
     const $texts = document.getElementById('texts');
@@ -118,6 +135,129 @@
     }
 
     // Enkel substring + ord-overlap för POC. Robust fuzzy är i autocomplete.js för prod.
+    // === Multi-pick rendering + state-helpers ===
+    function findArticle(name) {
+      return articles.find(a => (a.name || a) === name) || null;
+    }
+
+    function renderMultiPick(cacheNote, latencyMs) {
+      const rows = currentMatches.map(m => {
+        const art = findArticle(m.name);
+        const canInv = !!(art && art.instance);
+        const sel = selectedItems.get(m.name);
+        const qty = sel ? sel.qty : 1;
+        const cls = (sel ? 'selected ' : '') + (canInv ? '' : 'no-inv');
+        return `
+          <li class="match ${cls}" data-name="${esc(m.name)}" ${canInv ? '' : 'data-noinv="1"'}>
+            <div class="row">
+              <div class="check"></div>
+              <div class="info">
+                <div class="lbl-name">${esc(m.name)}</div>
+                <div class="lbl-meta">${m.reason ? 'Claude: ' + esc(m.reason) : ''}${canInv ? '' : ' • <span style="color:#fbbf24">kan inte inventeras</span>'}</div>
+              </div>
+              ${canInv ? `
+                <div class="qty-stepper" data-name="${esc(m.name)}">
+                  <button type="button" class="qty-btn qty-minus" aria-label="−">−</button>
+                  <span class="qty-val">${qty}</span>
+                  <button type="button" class="qty-btn qty-plus" aria-label="+">+</button>
+                </div>
+              ` : ''}
+            </div>
+          </li>
+        `;
+      }).join('');
+      const latencyPart = latencyMs > 0 ? ' • Latens: ' + latencyMs.toFixed(0) + ' ms' + cacheNote : '';
+      $matches.innerHTML = rows + `<li style="opacity:.4;font-size:11px;padding:8px 12px;text-align:center">Tap rad för att välja • +/− för antal${latencyPart}</li>`;
+    }
+
+    function updateRegisterBtn() {
+      const totalArticles = selectedItems.size;
+      const totalQty = Array.from(selectedItems.values()).reduce((s, x) => s + x.qty, 0);
+      $registerBtn.disabled = totalArticles === 0;
+      $registerBtn.textContent = totalArticles === 0
+        ? 'Inventera 0 valda'
+        : 'Inventera ' + totalArticles + (totalArticles === 1 ? ' artikel' : ' artiklar') + ' (' + totalQty + ' st)';
+    }
+
+    function toggleSelect(name) {
+      if (selectedItems.has(name)) {
+        selectedItems.delete(name);
+      } else {
+        const art = findArticle(name);
+        if (!art || !art.instance) return;
+        selectedItems.set(name, { qty: 1, article: art });
+      }
+      renderMultiPick('', 0);
+      updateRegisterBtn();
+    }
+
+    function adjustQty(name, delta) {
+      const sel = selectedItems.get(name);
+      if (sel) {
+        sel.qty = Math.max(1, sel.qty + delta);
+      } else if (delta > 0) {
+        const art = findArticle(name);
+        if (!art || !art.instance) return;
+        selectedItems.set(name, { qty: 1, article: art });
+      } else {
+        return;
+      }
+      renderMultiPick('', 0);
+      updateRegisterBtn();
+    }
+
+    async function registerSelected() {
+      if (selectedItems.size === 0) return;
+      $registerBtn.disabled = true;
+      const originalText = $registerBtn.textContent;
+      $registerBtn.textContent = 'Inventerar ' + selectedItems.size + '…';
+      try {
+        // Bygg batch-payload mot Vitalisera GAS
+        const userName = localStorage.getItem('vitaliseraUser') || 'POC4';
+        const batch = [];
+        for (const [name, sel] of selectedItems.entries()) {
+          const inst = sel.article.instance;
+          batch.push({
+            fn: 'updateCount',
+            tag: inst.tag,
+            newCount: (inst.currentQty || 0) + sel.qty,
+            user: userName,
+            sheetName: inst.sheetName,
+            rowNum: inst.rowNum
+          });
+        }
+        const res = await gasCall('batch', { batch });
+        if (!res || res.ok === false) throw new Error(res && res.msg || 'Batch failed');
+
+        // Active learning: logga varje verifierad matchning
+        for (const [name] of selectedItems.entries()) {
+          gasCall('logVisionMatch', {
+            sessionId: SESSION_ID,
+            awsLabels: (lastResponse && lastResponse.labels) || [],
+            awsTexts: (lastResponse && lastResponse.texts) || [],
+            claudeMatches: currentMatches,
+            chosenArticle: name
+          }).catch(e => console.warn('logVisionMatch failed', e));
+          fewshots.unshift({
+            labels: ((lastResponse && lastResponse.labels) || []).slice(0, 6),
+            texts: ((lastResponse && lastResponse.texts) || []).slice(0, 3),
+            article: name
+          });
+        }
+        fewshots = fewshots.slice(0, 20);
+        writeCache(FEWSHOTS_CACHE_KEY, fewshots);
+
+        showToast('✓ ' + selectedItems.size + ' artiklar inventerade');
+        selectedItems.clear();
+        // Stäng result-vyn så användaren kan göra ny analys
+        setTimeout(() => { $closeBtn.click(); }, 800);
+      } catch (err) {
+        showToast('Kunde inte inventera: ' + (err.message || err), true);
+        $registerBtn.disabled = false;
+        $registerBtn.textContent = originalText;
+      }
+    }
+
     function matchArticles(labels, texts, articles) {
       const allTerms = [...labels.map(l => l.name), ...texts.map(t => t.text)].filter(Boolean);
       const matches = new Map();
@@ -157,6 +297,8 @@
     let articles = [];
     let fewshots = [];
     let lastResponse = null; // sparas för logVisionMatch-anropet vid tap
+    let currentMatches = []; // claude_matches från senaste analyze
+    const selectedItems = new Map(); // name → {qty, article}
 
     async function gasCall(fn, params) {
       const res = await fetch(GAS_URL, {
@@ -175,8 +317,10 @@
       setTimeout(() => t.remove(), 2200);
     }
 
-    const ARTICLES_CACHE_KEY = 'vitalisera-poc4-articles';
-    const FEWSHOTS_CACHE_KEY = 'vitalisera-poc4-fewshots';
+    // CACHE_VERSION bumpas när cache-shape ändras så gamla cachar invalideras
+    const CACHE_VERSION = 'v2';
+    const ARTICLES_CACHE_KEY = 'vitalisera-poc4-articles-' + CACHE_VERSION;
+    const FEWSHOTS_CACHE_KEY = 'vitalisera-poc4-fewshots-' + CACHE_VERSION;
     const CACHE_TTL_MS = 60 * 60 * 1000; // 1 timme
 
     function readCache(key) {
@@ -194,17 +338,33 @@
     }
 
     function recordsToArticles(records) {
+      // Behåll mer av varje record för batch-inventering.
+      // preload rad-format (Code.js:313):
+      //   [tag, name, type, qty, unit, last, user, sheetName, minQty, step, comment, rowNum, altTags, category, synonyms, sheetPlace]
+      //    0    1    2     3    4     5     6     7          8       9     10       11      12       13        14         15
       const articleMap = new Map();
       for (const rec of records) {
         const name = String(rec[1] || '').trim();
         if (!name) continue;
         const syns = Array.isArray(rec[14]) ? rec[14].map(s => String(s).trim()).filter(Boolean) : [];
-        if (!articleMap.has(name)) articleMap.set(name, new Set());
-        for (const s of syns) articleMap.get(name).add(s);
+        const tag = String(rec[0] || '');
+        const sheetName = String(rec[7] || '').trim();
+        const rowNum = rec[11] || null;
+        const qty = Number(rec[3]) || 0;
+        if (!articleMap.has(name)) {
+          articleMap.set(name, { syns: new Set(), instances: [] });
+        }
+        const entry = articleMap.get(name);
+        for (const s of syns) entry.syns.add(s);
+        // Spara FÖRSTA instansen för batch-inventering (om flera artiklar har samma namn)
+        if (entry.instances.length === 0 && sheetName && rowNum) {
+          entry.instances.push({ tag, sheetName, rowNum, currentQty: qty });
+        }
       }
-      return Array.from(articleMap.entries()).map(([name, synSet]) => ({
+      return Array.from(articleMap.entries()).map(([name, entry]) => ({
         name,
-        synonyms: Array.from(synSet).slice(0, 6)
+        synonyms: Array.from(entry.syns).slice(0, 6),
+        instance: entry.instances[0] || null
       }));
     }
 
@@ -319,18 +479,15 @@
         const data = await res.json();
 
         console.log('Lambda response in', ms.toFixed(0), 'ms', data);
-        lastResponse = data; // sparas för tap-handler (active learning)
+        lastResponse = data;
 
-        // Rendera resultat
         $snapPreview.src = dataUrl;
 
-        // Claude-matchningar (semantic, prioriterad)
         const claudeMatches = Array.isArray(data.claude_matches) ? data.claude_matches : [];
-        // Fallback: enkel substring-match om Claude inte gav resultat
-        const fallbackMatches = claudeMatches.length === 0
-          ? matchArticles(data.labels || [], data.texts || [], articles.map(a => a.name || a))
-          : [];
+        currentMatches = claudeMatches;
+        selectedItems.clear(); // ny analys → rensa selections
 
+        // Latens + cache-info
         const cacheMeta = data.claude_cache || {};
         const cacheNote = cacheMeta.cache_read
           ? ` • cache: ${cacheMeta.cache_read} in, ${cacheMeta.output} out`
@@ -339,27 +496,27 @@
           : '';
 
         if (claudeMatches.length) {
-          $matches.innerHTML = claudeMatches.map(m => `
-            <li class="match" data-name="${esc(m.name)}">
-              <div>
-                <span class="lbl-name">${esc(m.name)}</span>
-                <span class="lbl-meta">Claude: ${esc(m.reason || '')}</span>
-              </div>
-              <span class="conf high">✓</span>
-            </li>
-          `).join('') + `<li style="opacity:.4;font-size:11px;padding:6px 12px">Latens: ${ms.toFixed(0)} ms${cacheNote}</li>`;
-        } else if (fallbackMatches.length) {
-          $matches.innerHTML = '<li style="opacity:.5;font-size:11px;padding:6px 12px">Claude gav inga matchningar — visar enkla substring-träffar:</li>' + fallbackMatches.map(m => `
-            <li class="match" data-name="${esc(m.name)}">
-              <div>
-                <span class="lbl-name">${esc(m.name)}</span>
-                <span class="lbl-meta">via: ${m.hits.map(esc).join(', ')}</span>
-              </div>
-              <span class="conf ${m.score >= 4 ? 'high' : ''}">${m.score}</span>
-            </li>
-          `).join('');
+          renderMultiPick(cacheNote, ms);
+          $closeBtn.style.bottom = 'calc(env(safe-area-inset-bottom, 0) + 80px)';
+          $closeBtn.style.background = '#444';
+          $closeBtn.textContent = 'Stäng utan att inventera';
+          $registerBtn.classList.remove('hidden');
+          updateRegisterBtn();
         } else {
-          $matches.innerHTML = `<li style="opacity:.5">Inga artikelmatchningar</li><li style="opacity:.4;font-size:11px;padding:6px 12px">Latens: ${ms.toFixed(0)} ms${cacheNote}</li>`;
+          // Fallback: substring-träffar utan multi-pick
+          const fallbackMatches = matchArticles(data.labels || [], data.texts || [], articles.map(a => a.name || a));
+          $matches.innerHTML = fallbackMatches.length
+            ? '<li style="opacity:.5;font-size:11px;padding:6px 12px">Claude gav inga matchningar — substring-träffar:</li>' + fallbackMatches.map(m => `
+                <li class="match" data-name="${esc(m.name)}">
+                  <div class="row"><div class="info"><span class="lbl-name">${esc(m.name)}</span>
+                    <span class="lbl-meta">via: ${m.hits.map(esc).join(', ')}</span></div>
+                    <span class="conf ${m.score >= 4 ? 'high' : ''}">${m.score}</span></div>
+                </li>`).join('')
+            : `<li style="opacity:.5">Inga artikelmatchningar</li><li style="opacity:.4;font-size:11px;padding:6px 12px">Latens: ${ms.toFixed(0)} ms${cacheNote}</li>`;
+          $registerBtn.classList.add('hidden');
+          $closeBtn.style.bottom = '';
+          $closeBtn.style.background = '';
+          $closeBtn.textContent = 'Stäng — ny analys';
         }
 
         $texts.innerHTML = (data.texts || []).length
@@ -387,46 +544,28 @@
 
     $analyzeBtn.addEventListener('click', analyze);
 
-    // Tap på artikel-match → logga som verifierad matchning (active learning)
-    async function handleMatchTap(e) {
-      const li = e.target.closest('li.match');
-      console.log('[match-tap]', { hasLi: !!li, lastResp: !!lastResponse, name: li && li.dataset.name });
-      if (!li) return;
-      if (li.classList.contains('logged')) {
-        showToast('Redan sparat', true);
+    // Multi-pick tap-handler: toggle select på li-tap, justera qty på +/-
+    function handleMatchInteraction(e, isTouch) {
+      const minus = e.target.closest('.qty-minus');
+      const plus = e.target.closest('.qty-plus');
+      if (minus) {
+        const stepper = minus.closest('.qty-stepper');
+        if (stepper) { if (isTouch) e.preventDefault(); adjustQty(stepper.dataset.name, -1); }
         return;
       }
-      const name = li.dataset.name;
-      if (!name) { showToast('Ingen artikelnamn-data på elementet', true); return; }
-      if (!lastResponse) { showToast('Inget Lambda-svar att spara mot', true); return; }
-      li.classList.add('logged');
-      try {
-        const res = await gasCall('logVisionMatch', {
-          sessionId: SESSION_ID,
-          awsLabels: lastResponse.labels || [],
-          awsTexts: lastResponse.texts || [],
-          claudeMatches: lastResponse.claude_matches || [],
-          chosenArticle: name
-        });
-        if (res && res.ok) {
-          showToast('✓ Sparat — Claude lär sig: ' + name);
-          fewshots.unshift({
-            labels: (lastResponse.labels || []).slice(0, 6),
-            texts: (lastResponse.texts || []).slice(0, 3),
-            article: name
-          });
-          fewshots = fewshots.slice(0, 20);
-        } else {
-          throw new Error(res && res.msg || 'Okänt fel');
-        }
-      } catch (err) {
-        li.classList.remove('logged');
-        showToast('Kunde inte spara: ' + (err.message || err), true);
+      if (plus) {
+        const stepper = plus.closest('.qty-stepper');
+        if (stepper) { if (isTouch) e.preventDefault(); adjustQty(stepper.dataset.name, +1); }
+        return;
       }
+      const li = e.target.closest('li.match');
+      if (!li || li.dataset.noinv === '1') return;
+      const name = li.dataset.name;
+      if (!name) return;
+      if (isTouch) e.preventDefault();
+      toggleSelect(name);
     }
-    $matches.addEventListener('click', handleMatchTap);
-    // iOS Safari kan ibland missa click på li — fallback på touchend.
-    // Men: scroll triggar också touchend. Filtrera bort om fingret flyttats >10px.
+    $matches.addEventListener('click', (e) => handleMatchInteraction(e, false));
     let touchStartXY = null;
     $matches.addEventListener('touchstart', (e) => {
       const t = e.touches[0];
@@ -441,9 +580,10 @@
       const dx = Math.abs(t.clientX - start.x);
       const dy = Math.abs(t.clientY - start.y);
       if (dx > 10 || dy > 10) return; // scroll, inte tap
-      const li = e.target.closest('li.match');
-      if (li) { e.preventDefault(); handleMatchTap(e); }
+      handleMatchInteraction(e, true);
     }, { passive: false });
+
+    $registerBtn.addEventListener('click', registerSelected);
 
     $closeBtn.addEventListener('click', () => {
       $result.classList.add('hidden');

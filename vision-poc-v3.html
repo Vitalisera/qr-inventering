@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Vision POC v3 — CLIP-varianter / Vitalisera</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; }
+    #video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    #canvas { display: none; }
+    #overlay { position: fixed; top: 0; left: 0; right: 0; padding: calc(env(safe-area-inset-top, 0) + 8px) 16px 16px; background: linear-gradient(to bottom, rgba(0,0,0,.85) 0%, rgba(0,0,0,.6) 70%, transparent); z-index: 10; }
+    #title { margin: 0 0 8px; font-size: 11px; font-weight: 500; opacity: .7; letter-spacing: .3px; line-height: 1.4; }
+    #title .tag { display: inline-block; background: rgba(255,255,255,.12); padding: 2px 7px; border-radius: 3px; margin-right: 4px; }
+    #predictions { margin: 0; padding: 0; list-style: none; }
+    #predictions li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; font-size: 17px; border-top: 1px solid rgba(255,255,255,.08); }
+    #predictions li:first-child { border-top: none; font-weight: 500; }
+    #predictions .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #predictions .conf { opacity: .55; font-feature-settings: "tnum"; flex-shrink: 0; }
+    #predictions .conf.high { color: #4ade80; opacity: 1; }
+    #predictions .conf.mid { color: #fbbf24; opacity: 1; }
+    #fps { position: fixed; top: calc(env(safe-area-inset-top, 0) + 12px); right: 12px; font-size: 11px; opacity: .7; font-feature-settings: "tnum"; z-index: 11; padding: 4px 8px; background: rgba(0,0,0,.5); border-radius: 4px; text-align: right; line-height: 1.4; }
+    #stability { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 90px); left: 16px; right: 110px; padding: 6px 10px; font-size: 12px; font-feature-settings: "tnum"; z-index: 11; background: rgba(0,0,0,.5); border-radius: 4px; line-height: 1.35; opacity: 0; transition: opacity .25s; }
+    #stability.show { opacity: 1; }
+    #preview { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 88px); right: 12px; width: 88px; height: 88px; z-index: 11; border: 1px solid rgba(255,255,255,.3); border-radius: 4px; background: #111; image-rendering: -webkit-optimize-contrast; }
+    #preview-label { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 74px); right: 12px; font-size: 9px; opacity: .55; z-index: 11; text-align: center; width: 88px; }
+    #share-btn { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 12px); left: 16px; right: 16px; padding: 14px; font-size: 16px; font-weight: 500; background: #4ade80; color: #000; border: none; border-radius: 10px; z-index: 12; cursor: pointer; -webkit-appearance: none; }
+    #share-btn:disabled { background: #555; color: #999; }
+    #share-btn.hidden { display: none; }
+    #status { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 12px); left: 16px; right: 16px; text-align: center; padding: 12px 14px 8px; font-size: 14px; background: rgba(0,0,0,.8); border-radius: 8px; z-index: 11; }
+    #status.hidden { display: none; }
+    #status.err { color: #ff6b6b; }
+    #progress { margin-top: 10px; height: 4px; background: rgba(255,255,255,.1); border-radius: 2px; overflow: hidden; }
+    #progress-bar { height: 100%; width: 0%; background: #4ade80; transition: width .2s; }
+  </style>
+</head>
+<body>
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="canvas" width="224" height="224"></canvas>
+  <div id="overlay">
+    <p id="title">
+      <span class="tag" id="model-tag">?</span>
+      <span class="tag" id="prompt-tag">?</span>
+      <span id="article-count">?</span> artiklar •
+      <span id="session-id">?</span>
+    </p>
+    <ul id="predictions"></ul>
+  </div>
+  <div id="fps"></div>
+  <div id="stability"></div>
+  <canvas id="preview" width="224" height="224"></canvas>
+  <div id="preview-label">vad modellen ser</div>
+  <button id="share-btn" class="hidden">📸 Dela observation</button>
+  <div id="status">Initierar…<div id="progress" style="display:none"><div id="progress-bar"></div></div></div>
+
+  <script type="module">
+    import {
+      AutoTokenizer,
+      CLIPTextModelWithProjection,
+      CLIPVisionModelWithProjection,
+      AutoProcessor,
+      RawImage,
+      env
+    } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
+    const SYNTHETIC_TAG_RE = /^S[A-Za-z0-9]+R\d+$/;
+
+    // URL-konfigurerbara varianter
+    const params = new URLSearchParams(location.search);
+    const MODEL_KEY = (params.get('model') || 'B32').toUpperCase();
+    const PROMPT_KEY = (params.get('prompts') || 'raw').toLowerCase();
+
+    const MODELS = {
+      B32: { id: 'Xenova/clip-vit-base-patch32', dim: 512, label: 'B/32' },
+      B16: { id: 'Xenova/clip-vit-base-patch16', dim: 512, label: 'B/16' },
+      L14: { id: 'Xenova/clip-vit-large-patch14', dim: 768, label: 'L/14' }
+    };
+
+    const PROMPTS = {
+      raw: n => n,
+      photo: n => 'a photo of ' + n,
+      context: n => 'a photo of ' + n + ', a household or kitchen item on a table',
+      swedish: n => 'ett foto av ' + n
+    };
+
+    const modelCfg = MODELS[MODEL_KEY] || MODELS.B32;
+    const promptFn = PROMPTS[PROMPT_KEY] || PROMPTS.raw;
+    const EMBED_DIM = modelCfg.dim;
+
+    const $status = document.getElementById('status');
+    const $preds = document.getElementById('predictions');
+    const $fps = document.getElementById('fps');
+    const $articleCount = document.getElementById('article-count');
+    const $sessionId = document.getElementById('session-id');
+    const $stability = document.getElementById('stability');
+    const $progress = document.getElementById('progress');
+    const $progressBar = document.getElementById('progress-bar');
+    const $shareBtn = document.getElementById('share-btn');
+    const $preview = document.getElementById('preview');
+    const $modelTag = document.getElementById('model-tag');
+    const $promptTag = document.getElementById('prompt-tag');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const previewCtx = $preview.getContext('2d');
+
+    const SESSION_ID = Math.random().toString(36).slice(2, 7).toUpperCase();
+    $sessionId.textContent = SESSION_ID;
+    $modelTag.textContent = modelCfg.label;
+    $promptTag.textContent = PROMPT_KEY;
+
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    function setStatus(msg, isErr) {
+      $status.firstChild.textContent = msg;
+      $status.classList.toggle('err', !!isErr);
+      $status.classList.remove('hidden');
+    }
+    function setProgress(pct) {
+      $progress.style.display = pct >= 0 ? 'block' : 'none';
+      if (pct >= 0) $progressBar.style.width = pct + '%';
+    }
+    function hideStatus() {
+      setTimeout(() => $status.classList.add('hidden'), 1500);
+    }
+
+    function l2Normalize(arr, dim) {
+      const out = new Float32Array(arr.length);
+      const n = arr.length / dim;
+      for (let i = 0; i < n; i++) {
+        let sumSq = 0;
+        for (let j = 0; j < dim; j++) sumSq += arr[i*dim + j] ** 2;
+        const inv = 1 / Math.sqrt(sumSq + 1e-12);
+        for (let j = 0; j < dim; j++) out[i*dim + j] = arr[i*dim + j] * inv;
+      }
+      return out;
+    }
+
+    // State för diagnostik
+    let lastTop5 = [];
+    let stableLabel = null;
+    let stableFrames = 0;
+
+    async function shareObservation() {
+      try {
+        $shareBtn.disabled = true;
+        const w = video.videoWidth, h = video.videoHeight;
+        const sc = document.createElement('canvas');
+        sc.width = w; sc.height = h;
+        const sctx = sc.getContext('2d');
+        sctx.drawImage(video, 0, 0, w, h);
+
+        // Overlay top-5 över video-frame
+        const fontPx = Math.round(w * 0.028);
+        const linePx = Math.round(fontPx * 1.5);
+        sctx.fillStyle = 'rgba(0,0,0,0.78)';
+        sctx.fillRect(0, 0, w, linePx * 7 + 20);
+        sctx.fillStyle = '#fff';
+        sctx.font = (fontPx*0.8) + 'px -apple-system, sans-serif';
+        sctx.fillText(`CLIP ${modelCfg.label} · prompts=${PROMPT_KEY} · ${$articleCount.textContent} artiklar · session ${SESSION_ID}`, 16, linePx + 4);
+        sctx.font = fontPx + 'px -apple-system, sans-serif';
+        for (let i = 0; i < lastTop5.length; i++) {
+          const p = lastTop5[i];
+          const y = (i + 2) * linePx + 10;
+          sctx.fillText(`${p.label}`, 16, y);
+          sctx.textAlign = 'right';
+          sctx.fillText((p.score*100).toFixed(1), w - 16, y);
+          sctx.textAlign = 'left';
+        }
+
+        // Crop-preview i hörn — visar exakt vad CLIP såg
+        const previewSize = Math.round(w * 0.28);
+        sctx.drawImage(canvas, w - previewSize - 16, h - previewSize - 16, previewSize, previewSize);
+        sctx.strokeStyle = '#4ade80';
+        sctx.lineWidth = 3;
+        sctx.strokeRect(w - previewSize - 16, h - previewSize - 16, previewSize, previewSize);
+        sctx.fillStyle = '#4ade80';
+        sctx.font = (fontPx*0.7) + 'px -apple-system, sans-serif';
+        sctx.fillText('CLIP-input', w - previewSize - 12, h - previewSize - 20);
+
+        const blob = await new Promise(r => sc.toBlob(r, 'image/jpeg', 0.88));
+        const file = new File([blob], `obs-${SESSION_ID}-${Date.now()}.jpg`, { type: 'image/jpeg' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: 'Vision POC v3 observation' });
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = file.name;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') console.error('share error', err);
+      } finally {
+        $shareBtn.disabled = false;
+      }
+    }
+    $shareBtn.addEventListener('click', shareObservation);
+
+    try {
+      setStatus('Begär kamera…');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await new Promise(r => { video.onloadedmetadata = r; });
+      await video.play();
+
+      setStatus('Hämtar artikellista…');
+      const preloadRes = await fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify({ fn: 'preload' })
+      });
+      if (!preloadRes.ok) throw new Error('Preload HTTP ' + preloadRes.status);
+      const records = await preloadRes.json();
+
+      const otagBara = records.filter(r => SYNTHETIC_TAG_RE.test(String(r[0] || '')));
+      const labels = [...new Set(otagBara.map(r => String(r[1] || '').trim()).filter(Boolean))];
+      $articleCount.textContent = labels.length;
+      console.log('Otag-bara:', labels.length, '/ totalt', records.length, '· modell:', modelCfg.label, '· prompts:', PROMPT_KEY);
+
+      if (labels.length === 0) throw new Error('Inga otag-bara artiklar hittades');
+
+      setStatus('Laddar CLIP ' + modelCfg.label + '…');
+      env.allowLocalModels = false;
+      env.useBrowserCache = true;
+
+      const [tokenizer, textModel, processor, visionModel] = await Promise.all([
+        AutoTokenizer.from_pretrained(modelCfg.id),
+        CLIPTextModelWithProjection.from_pretrained(modelCfg.id, { quantized: true }),
+        AutoProcessor.from_pretrained(modelCfg.id),
+        CLIPVisionModelWithProjection.from_pretrained(modelCfg.id, { quantized: true })
+      ]);
+
+      // Embedda artikellista (text) med vald prompt-format
+      setStatus('Embeddar ' + labels.length + ' artiklar (' + PROMPT_KEY + ')…');
+      setProgress(0);
+      const BATCH = 32;
+      const prompts = labels.map(promptFn);
+      const textEmbedsAll = new Float32Array(labels.length * EMBED_DIM);
+      for (let i = 0; i < prompts.length; i += BATCH) {
+        const slice = prompts.slice(i, i + BATCH);
+        const inputs = tokenizer(slice, { padding: true, truncation: true });
+        const { text_embeds } = await textModel(inputs);
+        textEmbedsAll.set(text_embeds.data, i * EMBED_DIM);
+        setProgress(Math.round(100 * Math.min(i + BATCH, prompts.length) / prompts.length));
+        await new Promise(r => setTimeout(r, 0));
+      }
+      const textEmbedsN = l2Normalize(textEmbedsAll, EMBED_DIM);
+      setProgress(-1);
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+      setStatus('Klar. Rikta kameran.');
+      hideStatus();
+      $shareBtn.classList.remove('hidden');
+
+      let lastBatchTs = performance.now();
+      let frameCount = 0;
+      let running = true;
+      let inferenceBusy = false;
+
+      async function inferOnce() {
+        if (inferenceBusy) return;
+        inferenceBusy = true;
+        const t0 = performance.now();
+        try {
+          const vw = video.videoWidth, vh = video.videoHeight;
+          const side = Math.min(vw, vh);
+          const sx = (vw - side) / 2, sy = (vh - side) / 2;
+          ctx.drawImage(video, sx, sy, side, side, 0, 0, 224, 224);
+
+          // Spegla canvas till synligt preview (vad modellen ser)
+          previewCtx.drawImage(canvas, 0, 0, 88, 88);
+
+          const rawImage = new RawImage(
+            new Uint8ClampedArray(ctx.getImageData(0, 0, 224, 224).data),
+            224, 224, 4
+          );
+          const imageInputs = await processor(rawImage);
+          const { image_embeds } = await visionModel(imageInputs);
+
+          const imgArr = image_embeds.data;
+          let sumSq = 0;
+          for (let j = 0; j < EMBED_DIM; j++) sumSq += imgArr[j] ** 2;
+          const inv = 1 / Math.sqrt(sumSq + 1e-12);
+          const imgN = new Float32Array(EMBED_DIM);
+          for (let j = 0; j < EMBED_DIM; j++) imgN[j] = imgArr[j] * inv;
+
+          const scores = new Float32Array(labels.length);
+          for (let i = 0; i < labels.length; i++) {
+            let s = 0;
+            for (let j = 0; j < EMBED_DIM; j++) s += textEmbedsN[i*EMBED_DIM + j] * imgN[j];
+            scores[i] = s;
+          }
+
+          const top = Array.from(scores)
+            .map((s, i) => ({ label: labels[i], score: s }))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5);
+
+          const t1 = performance.now();
+          const inferMs = t1 - t0;
+
+          lastTop5 = top;
+
+          $preds.innerHTML = top.map(p => {
+            const cls = p.score > 0.30 ? 'high' : p.score > 0.25 ? 'mid' : '';
+            return '<li><span class="lbl">' + esc(p.label) + '</span><span class="conf ' + cls + '">' + (p.score*100).toFixed(1) + '</span></li>';
+          }).join('');
+
+          // Stabilitets-spårning
+          if (top[0].label === stableLabel) {
+            stableFrames++;
+          } else {
+            stableLabel = top[0].label;
+            stableFrames = 1;
+          }
+          if (stableFrames >= 2) {
+            $stability.textContent = `🔒 ${stableLabel} stable: ${stableFrames} frames`;
+            $stability.classList.add('show');
+          } else {
+            $stability.classList.remove('show');
+          }
+
+          frameCount++;
+          if (frameCount % 3 === 0) {
+            const dt = t1 - lastBatchTs;
+            const fps = (3 * 1000 / dt).toFixed(1);
+            $fps.textContent = fps + ' fps • ' + inferMs.toFixed(0) + ' ms';
+            lastBatchTs = t1;
+          }
+        } catch (err) {
+          console.error('inference error', err);
+        } finally {
+          inferenceBusy = false;
+        }
+      }
+
+      async function loop() {
+        if (!running) return;
+        await inferOnce();
+        if (running) requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+
+      document.addEventListener('visibilitychange', () => {
+        running = !document.hidden;
+        if (running) requestAnimationFrame(loop);
+      });
+    } catch (err) {
+      console.error(err);
+      setStatus('Fel: ' + (err.message || err), true);
+      setProgress(-1);
+    }
+  </script>
+</body>
+</html>

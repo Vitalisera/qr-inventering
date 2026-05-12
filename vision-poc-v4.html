@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Vision POC v4 — AWS Rekognition / Vitalisera</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; }
+    #video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    #canvas { display: none; }
+    #header { position: fixed; top: 0; left: 0; right: 0; padding: calc(env(safe-area-inset-top, 0) + 8px) 16px 12px; background: linear-gradient(to bottom, rgba(0,0,0,.7) 0%, transparent 100%); z-index: 10; font-size: 12px; opacity: .85; }
+    #header .tag { display: inline-block; background: rgba(255,255,255,.12); padding: 2px 7px; border-radius: 3px; margin-right: 4px; }
+    #analyze-btn { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 16px); left: 16px; right: 16px; padding: 18px; font-size: 18px; font-weight: 600; background: #4ade80; color: #000; border: none; border-radius: 12px; z-index: 12; cursor: pointer; -webkit-appearance: none; box-shadow: 0 4px 20px rgba(74,222,128,.4); }
+    #analyze-btn:disabled { background: #555; color: #999; box-shadow: none; }
+    #analyze-btn.hidden { display: none; }
+    #status { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 24px 32px; font-size: 18px; background: rgba(0,0,0,.85); border-radius: 12px; z-index: 13; text-align: center; max-width: 80%; }
+    #status.hidden { display: none; }
+    #status.err { color: #ff6b6b; }
+    #spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid rgba(255,255,255,.2); border-top-color: #4ade80; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 12px; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Resultat-overlay (efter Analyze) */
+    #result { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.92); padding: calc(env(safe-area-inset-top, 0) + 16px) 16px calc(env(safe-area-inset-bottom, 0) + 16px); overflow-y: auto; }
+    #result.hidden { display: none; }
+    #result h2 { margin: 0 0 16px; font-size: 18px; font-weight: 500; opacity: .85; }
+    #result .section { margin-bottom: 24px; }
+    #result .section h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; opacity: .55; text-transform: uppercase; letter-spacing: .5px; }
+    #result ul { margin: 0; padding: 0; list-style: none; }
+    #result li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.08); border-radius: 6px; }
+    #result li.match { background: rgba(74,222,128,.12); border: 1px solid rgba(74,222,128,.3); margin-bottom: 4px; cursor: pointer; }
+    #result li.match:active { background: rgba(74,222,128,.25); }
+    #result .conf { opacity: .55; font-feature-settings: "tnum"; flex-shrink: 0; }
+    #result .conf.high { color: #4ade80; opacity: 1; }
+    #result .lbl-name { font-weight: 500; }
+    #result .lbl-meta { display: block; font-size: 11px; opacity: .6; margin-top: 2px; }
+    #result #snap-preview { width: 100%; max-height: 200px; object-fit: contain; border-radius: 8px; margin-bottom: 16px; background: #222; }
+    #close-btn { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 16px); left: 16px; right: 16px; padding: 14px; font-size: 16px; font-weight: 500; background: #444; color: #fff; border: none; border-radius: 10px; z-index: 21; -webkit-appearance: none; }
+  </style>
+</head>
+<body>
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="canvas"></canvas>
+
+  <div id="header">
+    <span class="tag">POC v4</span>
+    <span class="tag">AWS Rekognition</span>
+    <span id="article-count">?</span> artiklar •
+    <span id="session-id">?</span>
+  </div>
+
+  <button id="analyze-btn">📷 Analysera</button>
+
+  <div id="status" class="hidden">Initierar…</div>
+
+  <div id="result" class="hidden">
+    <h2>Resultat</h2>
+    <img id="snap-preview" alt="Snapped frame">
+
+    <div class="section">
+      <h3>Möjliga artiklar (matchade mot din lista)</h3>
+      <ul id="matches"></ul>
+    </div>
+
+    <div class="section">
+      <h3>Detekterad text (OCR)</h3>
+      <ul id="texts"></ul>
+    </div>
+
+    <div class="section">
+      <h3>Rekognition labels (generic)</h3>
+      <ul id="labels"></ul>
+    </div>
+
+    <div style="height: 80px"></div>
+    <button id="close-btn">Stäng — ny analys</button>
+  </div>
+
+  <script>
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
+    const SYNTHETIC_TAG_RE = /^S[A-Za-z0-9]+R\d+$/;
+
+    // API-URL från ?api=... eller localStorage
+    const urlParams = new URLSearchParams(location.search);
+    let REK_API_URL = urlParams.get('api') || localStorage.getItem('rekApiUrl') || '';
+    if (urlParams.get('api')) localStorage.setItem('rekApiUrl', urlParams.get('api'));
+
+    const $video = document.getElementById('video');
+    const $canvas = document.getElementById('canvas');
+    const $analyzeBtn = document.getElementById('analyze-btn');
+    const $status = document.getElementById('status');
+    const $result = document.getElementById('result');
+    const $closeBtn = document.getElementById('close-btn');
+    const $snapPreview = document.getElementById('snap-preview');
+    const $matches = document.getElementById('matches');
+    const $texts = document.getElementById('texts');
+    const $labels = document.getElementById('labels');
+    const $articleCount = document.getElementById('article-count');
+    const $sessionId = document.getElementById('session-id');
+
+    const SESSION_ID = Math.random().toString(36).slice(2, 7).toUpperCase();
+    $sessionId.textContent = SESSION_ID;
+
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    function setStatus(msg, isErr) {
+      $status.innerHTML = (isErr ? '' : '<span id="spinner"></span>') + esc(msg);
+      $status.classList.toggle('err', !!isErr);
+      $status.classList.remove('hidden');
+    }
+    function hideStatus() { $status.classList.add('hidden'); }
+
+    // Normalisera sträng för fuzzy match
+    function norm(s) {
+      return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    }
+
+    // Enkel substring + ord-overlap för POC. Robust fuzzy är i autocomplete.js för prod.
+    function matchArticles(labels, texts, articles) {
+      const allTerms = [...labels.map(l => l.name), ...texts.map(t => t.text)].filter(Boolean);
+      const matches = new Map();
+
+      for (const article of articles) {
+        const aName = norm(article);
+        const aWords = aName.split(/\s+/).filter(w => w.length >= 3);
+        if (!aWords.length) continue;
+        let score = 0;
+        let hits = [];
+        for (const term of allTerms) {
+          const tN = norm(term);
+          const tWords = tN.split(/\s+/).filter(w => w.length >= 3);
+          // Direct substring (artikelnamn innehåller term, eller tvärtom)
+          if (tN.length >= 3 && (aName.includes(tN) || tN.includes(aName))) {
+            score += 3;
+            hits.push(term);
+          }
+          // Ord-overlap
+          for (const tw of tWords) {
+            for (const aw of aWords) {
+              if (tw === aw || (tw.length >= 4 && aw.includes(tw)) || (aw.length >= 4 && tw.includes(aw))) {
+                score += 1;
+                if (!hits.includes(term)) hits.push(term);
+              }
+            }
+          }
+        }
+        if (score > 0) matches.set(article, { score, hits });
+      }
+      return Array.from(matches.entries())
+        .map(([name, m]) => ({ name, score: m.score, hits: m.hits }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10);
+    }
+
+    let articles = [];
+
+    async function init() {
+      if (!REK_API_URL) {
+        setStatus('Saknar API-URL. Öppna med ?api=https://....lambda-url.eu-west-1.on.aws/', true);
+        $analyzeBtn.disabled = true;
+        return;
+      }
+
+      try {
+        setStatus('Begär kamera…');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+          audio: false
+        });
+        $video.srcObject = stream;
+        await new Promise(r => { $video.onloadedmetadata = r; });
+        await $video.play();
+
+        setStatus('Hämtar artikellista…');
+        const r = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ fn: 'preload' }) });
+        if (!r.ok) throw new Error('Preload HTTP ' + r.status);
+        const records = await r.json();
+
+        const otagBara = records.filter(rec => SYNTHETIC_TAG_RE.test(String(rec[0] || '')));
+        articles = [...new Set(otagBara.map(rec => String(rec[1] || '').trim()).filter(Boolean))];
+        $articleCount.textContent = articles.length;
+
+        hideStatus();
+      } catch (err) {
+        setStatus('Init-fel: ' + (err.message || err), true);
+      }
+    }
+
+    async function analyze() {
+      try {
+        $analyzeBtn.disabled = true;
+        setStatus('Snappar frame…');
+
+        // Snap video-frame till canvas, JPEG-encode för mindre payload
+        const vw = $video.videoWidth, vh = $video.videoHeight;
+        // Center-crop till kvadrat och resize till max 1024 — Rekognition tar max 5MB
+        const side = Math.min(vw, vh);
+        const target = Math.min(1024, side);
+        $canvas.width = target;
+        $canvas.height = target;
+        const ctx = $canvas.getContext('2d');
+        ctx.drawImage($video, (vw-side)/2, (vh-side)/2, side, side, 0, 0, target, target);
+        const dataUrl = $canvas.toDataURL('image/jpeg', 0.85);
+        const base64 = dataUrl.split(',', 2)[1];
+
+        setStatus('Skickar till AWS Rekognition…');
+        const t0 = performance.now();
+        const res = await fetch(REK_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: base64 })
+        });
+        const ms = performance.now() - t0;
+        if (!res.ok) throw new Error('Lambda HTTP ' + res.status + ': ' + (await res.text()));
+        const data = await res.json();
+
+        console.log('Rekognition response in', ms.toFixed(0), 'ms', data);
+
+        // Rendera resultat
+        $snapPreview.src = dataUrl;
+
+        const matches = matchArticles(data.labels || [], data.texts || [], articles);
+        $matches.innerHTML = matches.length ? matches.map(m => `
+          <li class="match" data-name="${esc(m.name)}">
+            <div>
+              <span class="lbl-name">${esc(m.name)}</span>
+              <span class="lbl-meta">via: ${m.hits.map(esc).join(', ')}</span>
+            </div>
+            <span class="conf ${m.score >= 4 ? 'high' : ''}">${m.score}</span>
+          </li>
+        `).join('') : '<li style="opacity:.5">Inga artikelmatchningar från labels eller text</li>';
+
+        $texts.innerHTML = (data.texts || []).length
+          ? data.texts.map(t => `<li><span>${esc(t.text)}</span><span class="conf">${t.confidence}</span></li>`).join('')
+          : '<li style="opacity:.5">Ingen text hittad</li>';
+
+        $labels.innerHTML = (data.labels || []).length
+          ? data.labels.slice(0, 10).map(l => `<li>
+              <div>
+                <span>${esc(l.name)}</span>
+                ${l.parents.length ? '<span class="lbl-meta">' + l.parents.map(esc).join(' › ') + '</span>' : ''}
+              </div>
+              <span class="conf ${l.confidence >= 80 ? 'high' : ''}">${l.confidence}</span>
+            </li>`).join('')
+          : '<li style="opacity:.5">Inga labels</li>';
+
+        hideStatus();
+        $result.classList.remove('hidden');
+        $analyzeBtn.classList.add('hidden');
+      } catch (err) {
+        setStatus('Fel: ' + (err.message || err), true);
+        $analyzeBtn.disabled = false;
+      }
+    }
+
+    $analyzeBtn.addEventListener('click', analyze);
+    $closeBtn.addEventListener('click', () => {
+      $result.classList.add('hidden');
+      $analyzeBtn.classList.remove('hidden');
+      $analyzeBtn.disabled = false;
+    });
+
+    init();
+  </script>
+</body>
+</html>

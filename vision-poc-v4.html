@@ -425,8 +425,22 @@
       }
     }
     $matches.addEventListener('click', handleMatchTap);
-    // iOS Safari kan ibland missa click på li — fallback på touchend
+    // iOS Safari kan ibland missa click på li — fallback på touchend.
+    // Men: scroll triggar också touchend. Filtrera bort om fingret flyttats >10px.
+    let touchStartXY = null;
+    $matches.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      touchStartXY = t ? { x: t.clientX, y: t.clientY } : null;
+    }, { passive: true });
     $matches.addEventListener('touchend', (e) => {
+      const start = touchStartXY;
+      touchStartXY = null;
+      if (!start) return;
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const dx = Math.abs(t.clientX - start.x);
+      const dy = Math.abs(t.clientY - start.y);
+      if (dx > 10 || dy > 10) return; // scroll, inte tap
       const li = e.target.closest('li.match');
       if (li) { e.preventDefault(); handleMatchTap(e); }
     }, { passive: false });

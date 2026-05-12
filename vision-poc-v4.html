@@ -177,8 +177,7 @@
         if (!r.ok) throw new Error('Preload HTTP ' + r.status);
         const records = await r.json();
 
-        const otagBara = records.filter(rec => SYNTHETIC_TAG_RE.test(String(rec[0] || '')));
-        articles = [...new Set(otagBara.map(rec => String(rec[1] || '').trim()).filter(Boolean))];
+        articles = [...new Set(records.map(rec => String(rec[1] || '').trim()).filter(Boolean))];
         $articleCount.textContent = articles.length;
 
         hideStatus();

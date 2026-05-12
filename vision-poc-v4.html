@@ -212,22 +212,30 @@
       const originalText = $registerBtn.textContent;
       $registerBtn.textContent = 'Inventerar ' + selectedItems.size + '…';
       try {
-        // Bygg batch-payload mot Vitalisera GAS
+        // Bygg batch-payload mot Vitalisera GAS — format per batchUpdates i Code.js:500
+        // { fnName: 'updateCount', args: { tag, newCount, userName, sheetName, rowNum } }
         const userName = localStorage.getItem('vitaliseraUser') || 'POC4';
         const batch = [];
         for (const [name, sel] of selectedItems.entries()) {
           const inst = sel.article.instance;
           batch.push({
-            fn: 'updateCount',
-            tag: inst.tag,
-            newCount: (inst.currentQty || 0) + sel.qty,
-            user: userName,
-            sheetName: inst.sheetName,
-            rowNum: inst.rowNum
+            fnName: 'updateCount',
+            args: {
+              tag: inst.tag,
+              newCount: (inst.currentQty || 0) + sel.qty,
+              userName: userName,
+              sheetName: inst.sheetName,
+              rowNum: inst.rowNum
+            }
           });
         }
         const res = await gasCall('batch', { batch });
-        if (!res || res.ok === false) throw new Error(res && res.msg || 'Batch failed');
+        // batchUpdates returnerar { ok, results: [{tag, ok, msg}, ...] }
+        if (!res) throw new Error('Inget svar från servern');
+        if (res.ok === false) {
+          const failed = (res.results || []).filter(r => !r.ok).map(r => r.tag + ': ' + (r.msg || '')).slice(0, 3);
+          throw new Error('Vissa misslyckades: ' + failed.join(', '));
+        }
 
         // Active learning: logga varje verifierad matchning
         for (const [name] of selectedItems.entries()) {

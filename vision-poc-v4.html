@@ -175,6 +175,64 @@
       setTimeout(() => t.remove(), 2200);
     }
 
+    const ARTICLES_CACHE_KEY = 'vitalisera-poc4-articles';
+    const FEWSHOTS_CACHE_KEY = 'vitalisera-poc4-fewshots';
+    const CACHE_TTL_MS = 60 * 60 * 1000; // 1 timme
+
+    function readCache(key) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        if (!obj || !obj.ts) return null;
+        return { ts: obj.ts, data: obj.data, stale: (Date.now() - obj.ts) > CACHE_TTL_MS };
+      } catch { return null; }
+    }
+    function writeCache(key, data) {
+      try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data })); }
+      catch (e) { console.warn('Cache write failed for ' + key, e); }
+    }
+
+    function recordsToArticles(records) {
+      const articleMap = new Map();
+      for (const rec of records) {
+        const name = String(rec[1] || '').trim();
+        if (!name) continue;
+        const syns = Array.isArray(rec[14]) ? rec[14].map(s => String(s).trim()).filter(Boolean) : [];
+        if (!articleMap.has(name)) articleMap.set(name, new Set());
+        for (const s of syns) articleMap.get(name).add(s);
+      }
+      return Array.from(articleMap.entries()).map(([name, synSet]) => ({
+        name,
+        synonyms: Array.from(synSet).slice(0, 6)
+      }));
+    }
+
+    async function refreshArticlesInBackground() {
+      try {
+        const r = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ fn: 'preload' }) });
+        if (!r.ok) return;
+        const records = await r.json();
+        const fresh = recordsToArticles(records);
+        writeCache(ARTICLES_CACHE_KEY, fresh);
+        if (fresh.length !== articles.length) {
+          articles = fresh;
+          $articleCount.textContent = articles.length + ' (uppdaterad)';
+        }
+      } catch (e) { console.warn('Bg-refresh av articles misslyckades', e); }
+    }
+
+    async function refreshFewshotsInBackground() {
+      try {
+        const fs = await gasCall('getFewshots', { limit: 20 });
+        if (fs && fs.ok && Array.isArray(fs.fewshots)) {
+          fewshots = fs.fewshots;
+          writeCache(FEWSHOTS_CACHE_KEY, fewshots);
+          console.log('Bg-refresh: ' + fewshots.length + ' fewshots');
+        }
+      } catch (e) { console.warn('Bg-refresh av fewshots misslyckades', e); }
+    }
+
     async function init() {
       if (!REK_API_URL) {
         setStatus('Saknar API-URL. Öppna med ?api=https://....lambda-url.eu-west-1.on.aws/', true);
@@ -192,36 +250,39 @@
         await new Promise(r => { $video.onloadedmetadata = r; });
         await $video.play();
 
+        // Stale-while-revalidate: visa cache direkt, fetcha färskt i bakgrunden
+        const cachedArticles = readCache(ARTICLES_CACHE_KEY);
+        const cachedFewshots = readCache(FEWSHOTS_CACHE_KEY);
+
+        if (cachedArticles && Array.isArray(cachedArticles.data)) {
+          articles = cachedArticles.data;
+          $articleCount.textContent = articles.length;
+          if (cachedFewshots && Array.isArray(cachedFewshots.data)) {
+            fewshots = cachedFewshots.data;
+          }
+          hideStatus();
+          // Stale eller fresh — alltid bakgrundsuppdate så datan inte driver iväg
+          refreshArticlesInBackground();
+          refreshFewshotsInBackground();
+          return;
+        }
+
+        // Ingen cache — fetcha synkront och visa progress
         setStatus('Hämtar artikellista…');
         const r = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({ fn: 'preload' }) });
         if (!r.ok) throw new Error('Preload HTTP ' + r.status);
         const records = await r.json();
-
-        // Bygg artiklar med synonymer från preload (rec[14] = synonyms-array per Code.js:313)
-        const articleMap = new Map();
-        for (const rec of records) {
-          const name = String(rec[1] || '').trim();
-          if (!name) continue;
-          const syns = Array.isArray(rec[14]) ? rec[14].map(s => String(s).trim()).filter(Boolean) : [];
-          if (!articleMap.has(name)) articleMap.set(name, new Set());
-          for (const s of syns) articleMap.get(name).add(s);
-        }
-        articles = Array.from(articleMap.entries()).map(([name, synSet]) => ({
-          name,
-          synonyms: Array.from(synSet).slice(0, 6) // begränsa per artikel för prompt-storlek
-        }));
+        articles = recordsToArticles(records);
+        writeCache(ARTICLES_CACHE_KEY, articles);
         $articleCount.textContent = articles.length;
 
-        // Hämta tidigare verifierade matchningar (active learning)
         try {
           const fs = await gasCall('getFewshots', { limit: 20 });
           if (fs && fs.ok && Array.isArray(fs.fewshots)) {
             fewshots = fs.fewshots;
-            console.log('Loaded', fewshots.length, 'fewshots for active learning');
+            writeCache(FEWSHOTS_CACHE_KEY, fewshots);
           }
-        } catch (e) {
-          console.warn('Kunde inte hämta fewshots', e);
-        }
+        } catch (e) { console.warn('Kunde inte hämta fewshots', e); }
 
         hideStatus();
       } catch (err) {

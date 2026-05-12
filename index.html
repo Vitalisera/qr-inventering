@@ -35,6 +35,15 @@
     <video id="preview" autoplay muted playsinline></video>
     <div id="overlay"><div id="scanBox"><div id="scanLaser"></div></div></div>
     <button id="lensSwitchBtn" class="hidden" type="button" aria-label="Byt kameralins" title="Byt kameralins">📷</button>
+
+    <!-- Skanläges-toggle (tag vs bild). Synlig bara när kameran är på. -->
+    <div id="scanModeToggle" class="hidden" role="tablist" aria-label="Skannerläge">
+      <button id="modeTagBtn" type="button" class="scan-mode active" role="tab" aria-selected="true">🏷️ Tag</button>
+      <button id="modeImgBtn" type="button" class="scan-mode" role="tab" aria-selected="false">📷 Bild</button>
+    </div>
+
+    <!-- Analysera-knapp visas bara i bildläge -->
+    <button id="analyzeBtn" class="hidden" type="button">📷 Analysera bilden</button>
   </section>
 
   <!-- STATUS + LOGG -->
@@ -167,7 +176,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=103"></script>
+  <script src="app.js?v=104"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

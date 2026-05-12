@@ -1,6 +1,13 @@
 {
-  "latest": 103,
+  "latest": 104,
   "versions": [
+    {
+      "version": 104,
+      "date": "2026-05-13",
+      "notes": [
+        "Nytt: bildigenkänning i kameran. När kameran är på finns en toggle nere till höger — välj 'Bild' istället för 'Tag', tryck 'Analysera bilden', och appen försöker känna igen flera artiklar samtidigt med hjälp av AI. Bra för att inventera en hel låda med ett foto. Markera de artiklar som verkligen är på bilden (alla är förmarkerade) och justera antalet, tryck sen 'Inventera'."
+      ]
+    },
     {
       "version": 103,
       "date": "2026-05-12",

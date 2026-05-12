@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 103;
+const APP_VERSION = 104;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -632,6 +632,15 @@ function hideCamera(){
   stopFocusCycler();
   stopCropDecode();
   qs('#lensSwitchBtn')?.classList.add('hidden');
+  qs('#scanModeToggle')?.classList.add('hidden');
+  qs('#analyzeBtn')?.classList.add('hidden');
+  // Återställ till tag-läge när kameran stängs
+  if (_scanMode === 'image') {
+    _scanMode = 'tag';
+    qs('#modeTagBtn')?.classList.add('active');
+    qs('#modeImgBtn')?.classList.remove('active');
+    if (window.vision && window.vision.closeResult) window.vision.closeResult();
+  }
   try{ reader && reader.reset(); }catch{}
   try{
     const so = v.srcObject;
@@ -647,6 +656,7 @@ function hideCamera(){
 
 async function showCamera(){
   qs('#cameraBox')?.classList.remove('hidden');
+  qs('#scanModeToggle')?.classList.remove('hidden');
   cameraVisible = true;
   startBtn.textContent = "Dölj skanner";
   // Force-restart laser-animation. iOS Safari startar inte alltid CSS-animations
@@ -3288,6 +3298,81 @@ function ensureName(cb){
     setCookie("vitaliseraUser",n,365);setCookie("vitaliseraExpiry",String(Date.now()+365*86400000),365);
     nameDialog.classList.add("hidden");if(typeof cb==="function")cb();};
 }
+
+/* ===== Skanlägen (tag-skanning vs bild-igenkänning) =====
+ * Vision-modulen lazy-loadas vid första byte till "Bild"-läge.
+ * Tag-läge = zxing-decoder aktiv (default), Bild-läge = decoder pausad + Analysera-knapp synlig.
+ */
+let _scanMode = 'tag';
+let _visionScriptPromise = null;
+
+// Exponera globalt så vision.js kan återanvända huvudappens GAS-pipeline
+window.GAS_URL = GAS_URL;
+window.gasCall = gasCall;
+window.preloadData = preloadData;
+
+function _loadVisionScript() {
+  if (_visionScriptPromise) return _visionScriptPromise;
+  _visionScriptPromise = new Promise((resolve, reject) => {
+    if (window.vision) return resolve();
+    const s = document.createElement('script');
+    s.src = 'vision.js?v=' + APP_VERSION;
+    s.onload = () => resolve();
+    s.onerror = () => { _visionScriptPromise = null; reject(new Error('Kunde inte ladda vision.js')); };
+    document.head.appendChild(s);
+  });
+  return _visionScriptPromise;
+}
+
+async function setScanMode(mode) {
+  if (mode === _scanMode) return;
+  const $tag = qs('#modeTagBtn');
+  const $img = qs('#modeImgBtn');
+  const $analyze = qs('#analyzeBtn');
+  _scanMode = mode;
+
+  if (mode === 'image') {
+    $tag?.classList.remove('active'); $tag?.setAttribute('aria-selected', 'false');
+    $img?.classList.add('active'); $img?.setAttribute('aria-selected', 'true');
+    // Pausa zxing-decoding men behåll videostream live för snap.
+    // FIX (v104 review): reader.reset() i zxing 0.20 stoppar tracks + nullar srcObject.
+    // Spara stream-referens innan reset och återställ direkt efter, så video fortsätter.
+    stopCropDecode();
+    const savedStream = v.srcObject;
+    try { reader && reader.reset(); } catch {}
+    if (savedStream && !v.srcObject) {
+      try { v.srcObject = savedStream; await v.play(); } catch (e) { console.warn('Stream-restore', e); }
+    }
+    $analyze?.classList.remove('hidden');
+    // Lazy-load + init vision-modulen
+    try {
+      await _loadVisionScript();
+      if (window.vision && window.vision.init) await window.vision.init();
+    } catch (e) {
+      show('Kunde inte starta bildigenkänning: ' + (e.message || e), 'warn');
+      setScanMode('tag');
+    }
+  } else {
+    $img?.classList.remove('active'); $img?.setAttribute('aria-selected', 'false');
+    $tag?.classList.add('active'); $tag?.setAttribute('aria-selected', 'true');
+    $analyze?.classList.add('hidden');
+    if (window.vision && window.vision.closeResult) window.vision.closeResult();
+    // Återstarta zxing-decoder om kameran fortfarande är på
+    if (cameraOn && v.srcObject) {
+      try { await startCamera(); } catch (e) { console.warn('Kunde inte återstarta zxing', e); }
+    }
+  }
+}
+
+qs('#modeTagBtn')?.addEventListener('click', () => setScanMode('tag'));
+qs('#modeImgBtn')?.addEventListener('click', () => setScanMode('image'));
+qs('#analyzeBtn')?.addEventListener('click', () => {
+  if (window.vision && window.vision.runAnalysis) {
+    window.vision.runAnalysis(v);
+  } else {
+    show('Vision-modulen är inte klar än', 'warn');
+  }
+});
 
 /* ===== Kamera ===== */
 startBtn?.addEventListener('click', ()=>{

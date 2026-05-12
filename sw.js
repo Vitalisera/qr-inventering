@@ -1,4 +1,4 @@
-const CACHE = 'vitalisera-inv-v103';
+const CACHE = 'vitalisera-inv-v104';
 // Egna assets — om någon av dessa failar är appen trasig, all-or-nothing är OK.
 const PRECACHE_OWN = [
   './',
@@ -16,8 +16,10 @@ const PRECACHE_EXTERNAL = [
   'https://unpkg.com/@zxing/library@0.20.0'
 ];
 
-// Network-first for app files, cache-first for static assets
-const NETWORK_FIRST = ['app.js', 'autocomplete.js', 'style.css', 'index.html', 'changelog.json'];
+// Network-first for app files, cache-first for static assets.
+// vision.js är network-first men INTE i PRECACHE_OWN — den lazy-loadas vid första
+// byte till "Bild"-läge i kamera-toggeln, sen cachas via NETWORK_FIRST-strategin.
+const NETWORK_FIRST = ['app.js', 'autocomplete.js', 'vision.js', 'style.css', 'index.html', 'changelog.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(

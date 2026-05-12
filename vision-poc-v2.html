@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Vision POC v2 — CLIP / Vitalisera</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; overflow: hidden; }
+    #video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    #overlay { position: fixed; top: 0; left: 0; right: 0; padding: calc(env(safe-area-inset-top, 0) + 8px) 16px 16px; background: linear-gradient(to bottom, rgba(0,0,0,.85) 0%, rgba(0,0,0,.6) 70%, transparent); z-index: 10; }
+    #title { margin: 0 0 8px; font-size: 12px; font-weight: 500; opacity: .65; letter-spacing: .3px; }
+    #predictions { margin: 0; padding: 0; list-style: none; }
+    #predictions li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; font-size: 17px; border-top: 1px solid rgba(255,255,255,.08); }
+    #predictions li:first-child { border-top: none; font-weight: 500; }
+    #predictions .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #predictions .conf { opacity: .55; font-feature-settings: "tnum"; flex-shrink: 0; }
+    #predictions .conf.high { color: #4ade80; opacity: 1; }
+    #predictions .conf.mid { color: #fbbf24; opacity: 1; }
+    #fps { position: fixed; top: calc(env(safe-area-inset-top, 0) + 12px); right: 12px; font-size: 11px; opacity: .5; font-feature-settings: "tnum"; z-index: 11; padding: 4px 8px; background: rgba(0,0,0,.4); border-radius: 4px; }
+    #status { position: fixed; bottom: calc(env(safe-area-inset-bottom, 16px) + 12px); left: 16px; right: 16px; text-align: center; padding: 12px 14px 8px; font-size: 14px; background: rgba(0,0,0,.7); border-radius: 8px; z-index: 11; }
+    #status.hidden { display: none; }
+    #status.err { color: #ff6b6b; }
+    #progress { margin-top: 10px; height: 4px; background: rgba(255,255,255,.1); border-radius: 2px; overflow: hidden; }
+    #progress-bar { height: 100%; width: 0%; background: #4ade80; transition: width .2s; }
+  </style>
+</head>
+<body>
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="canvas" style="display:none"></canvas>
+  <div id="overlay">
+    <p id="title">CLIP ViT-B/32 — <span id="article-count">?</span> Vitalisera-artiklar</p>
+    <ul id="predictions"></ul>
+  </div>
+  <div id="fps"></div>
+  <div id="status">Initierar…<div id="progress" style="display:none"><div id="progress-bar"></div></div></div>
+
+  <script type="module">
+    import {
+      AutoTokenizer,
+      CLIPTextModelWithProjection,
+      CLIPVisionModelWithProjection,
+      AutoProcessor,
+      RawImage,
+      env
+    } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+
+    // ANYONE_ANONYMOUS GAS-endpoint, samma som app.js
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
+    const MODEL_ID = 'Xenova/clip-vit-base-patch32';
+    const SYNTHETIC_TAG_RE = /^S[A-Za-z0-9]+R\d+$/;
+    const EMBED_DIM = 512;
+
+    const $status = document.getElementById('status');
+    const $preds = document.getElementById('predictions');
+    const $fps = document.getElementById('fps');
+    const $articleCount = document.getElementById('article-count');
+    const $progress = document.getElementById('progress');
+    const $progressBar = document.getElementById('progress-bar');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    function setStatus(msg, isErr) {
+      $status.firstChild.textContent = msg;
+      $status.classList.toggle('err', !!isErr);
+      $status.classList.remove('hidden');
+    }
+    function setProgress(pct) {
+      $progress.style.display = pct >= 0 ? 'block' : 'none';
+      if (pct >= 0) $progressBar.style.width = pct + '%';
+    }
+    function hideStatus() {
+      setTimeout(() => $status.classList.add('hidden'), 1500);
+    }
+
+    function l2Normalize(arr, dim) {
+      const out = new Float32Array(arr.length);
+      const n = arr.length / dim;
+      for (let i = 0; i < n; i++) {
+        let sumSq = 0;
+        for (let j = 0; j < dim; j++) sumSq += arr[i*dim + j] ** 2;
+        const inv = 1 / Math.sqrt(sumSq + 1e-12);
+        for (let j = 0; j < dim; j++) out[i*dim + j] = arr[i*dim + j] * inv;
+      }
+      return out;
+    }
+
+    try {
+      // 1. Kamera
+      setStatus('Begär kamera…');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await new Promise(r => { video.onloadedmetadata = r; });
+      await video.play();
+
+      // 2. Artikellista
+      setStatus('Hämtar artikellista…');
+      const preloadRes = await fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify({ fn: 'preload' })
+      });
+      if (!preloadRes.ok) throw new Error('Preload HTTP ' + preloadRes.status);
+      const records = await preloadRes.json();
+
+      // Filtrera otag-bara + extrahera unika namn
+      const otagBara = records.filter(r => SYNTHETIC_TAG_RE.test(String(r[0] || '')));
+      const labels = [...new Set(otagBara.map(r => String(r[1] || '').trim()).filter(Boolean))];
+      $articleCount.textContent = labels.length;
+      console.log('Otag-bara artiklar:', labels.length, 'av totalt', records.length);
+
+      if (labels.length === 0) throw new Error('Inga otag-bara artiklar hittades i preload');
+
+      // 3. Modell
+      setStatus('Laddar CLIP-modell (~150 MB)…');
+      env.allowLocalModels = false;
+      env.useBrowserCache = true;
+
+      const [tokenizer, textModel, processor, visionModel] = await Promise.all([
+        AutoTokenizer.from_pretrained(MODEL_ID),
+        CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { quantized: true }),
+        AutoProcessor.from_pretrained(MODEL_ID),
+        CLIPVisionModelWithProjection.from_pretrained(MODEL_ID, { quantized: true })
+      ]);
+
+      // 4. Embedda artikellista (text). Batchar för att inte tappa minne på 500+ artiklar.
+      setStatus('Embeddar ' + labels.length + ' artikelnamn…');
+      setProgress(0);
+      const BATCH = 32;
+      const textEmbedsAll = new Float32Array(labels.length * EMBED_DIM);
+      for (let i = 0; i < labels.length; i += BATCH) {
+        const slice = labels.slice(i, i + BATCH);
+        const inputs = tokenizer(slice, { padding: true, truncation: true });
+        const { text_embeds } = await textModel(inputs);
+        textEmbedsAll.set(text_embeds.data, i * EMBED_DIM);
+        setProgress(Math.round(100 * Math.min(i + BATCH, labels.length) / labels.length));
+        await new Promise(r => setTimeout(r, 0)); // yield till UI
+      }
+      const textEmbedsN = l2Normalize(textEmbedsAll, EMBED_DIM);
+      setProgress(-1);
+
+      // 5. Canvas-setup för image-input
+      canvas.width = 224;
+      canvas.height = 224;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+      setStatus('Klar. Rikta kameran mot ett föremål.');
+      hideStatus();
+
+      let lastBatchTs = performance.now();
+      let frameCount = 0;
+      let running = true;
+      let inferenceBusy = false;
+
+      async function inferOnce() {
+        if (inferenceBusy) return;
+        inferenceBusy = true;
+        const t0 = performance.now();
+        try {
+          // Center-crop video → 224×224 canvas
+          const vw = video.videoWidth, vh = video.videoHeight;
+          const side = Math.min(vw, vh);
+          const sx = (vw - side) / 2, sy = (vh - side) / 2;
+          ctx.drawImage(video, sx, sy, side, side, 0, 0, 224, 224);
+
+          const rawImage = new RawImage(
+            new Uint8ClampedArray(ctx.getImageData(0, 0, 224, 224).data),
+            224, 224, 4
+          );
+          const imageInputs = await processor(rawImage);
+          const { image_embeds } = await visionModel(imageInputs);
+
+          // L2-normalize image embedding
+          const imgArr = image_embeds.data;
+          let sumSq = 0;
+          for (let j = 0; j < EMBED_DIM; j++) sumSq += imgArr[j] ** 2;
+          const inv = 1 / Math.sqrt(sumSq + 1e-12);
+          const imgN = new Float32Array(EMBED_DIM);
+          for (let j = 0; j < EMBED_DIM; j++) imgN[j] = imgArr[j] * inv;
+
+          // Cosine similarity mot alla text-embeddings (dot product på normaliserade)
+          const scores = new Float32Array(labels.length);
+          for (let i = 0; i < labels.length; i++) {
+            let s = 0;
+            for (let j = 0; j < EMBED_DIM; j++) s += textEmbedsN[i*EMBED_DIM + j] * imgN[j];
+            scores[i] = s;
+          }
+
+          // Top-5
+          const top = Array.from(scores)
+            .map((s, i) => ({ label: labels[i], score: s }))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5);
+
+          const t1 = performance.now();
+          const inferMs = t1 - t0;
+
+          // Cosine på CLIP är typiskt 0.15-0.35 → mappa till "konfidens" via skala
+          // Vi visar råa cosine-värden × 100 för transparens; thresholds 0.25/0.30
+          $preds.innerHTML = top.map(p => {
+            const cls = p.score > 0.30 ? 'high' : p.score > 0.25 ? 'mid' : '';
+            return '<li><span class="lbl">' + esc(p.label) + '</span><span class="conf ' + cls + '">' + (p.score*100).toFixed(1) + '</span></li>';
+          }).join('');
+
+          frameCount++;
+          if (frameCount % 3 === 0) {
+            const dt = t1 - lastBatchTs;
+            const fps = (3 * 1000 / dt).toFixed(1);
+            $fps.textContent = fps + ' fps • ' + inferMs.toFixed(0) + ' ms';
+            lastBatchTs = t1;
+          }
+        } catch (err) {
+          console.error('inference error', err);
+        } finally {
+          inferenceBusy = false;
+        }
+      }
+
+      async function loop() {
+        if (!running) return;
+        await inferOnce();
+        if (running) requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+
+      document.addEventListener('visibilitychange', () => {
+        running = !document.hidden;
+        if (running) requestAnimationFrame(loop);
+      });
+    } catch (err) {
+      console.error(err);
+      setStatus('Fel: ' + (err.message || err), true);
+      setProgress(-1);
+    }
+  </script>
+</body>
+</html>

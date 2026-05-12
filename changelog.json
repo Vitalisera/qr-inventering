@@ -1,6 +1,13 @@
 {
-  "latest": 102,
+  "latest": 103,
   "versions": [
+    {
+      "version": 103,
+      "date": "2026-05-12",
+      "notes": [
+        "Fix: Okänd tag-dialogen visade ibland en kommentar från föregående artikel. Nu rensas kommentaren korrekt mellan dialoger."
+      ]
+    },
     {
       "version": 102,
       "date": "2026-05-09",

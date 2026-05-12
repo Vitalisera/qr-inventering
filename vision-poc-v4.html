@@ -103,6 +103,19 @@
     let REK_API_URL = urlParams.get('api') || localStorage.getItem('rekApiUrl') || '';
     if (urlParams.get('api')) localStorage.setItem('rekApiUrl', urlParams.get('api'));
 
+    // C: Preconnect till Lambda så TLS-handshake börjar redan vid sidladdning.
+    // Sparar ~50-100 ms på FÖRSTA analyze-anropet (uppvärmd anslutning).
+    if (REK_API_URL) {
+      try {
+        const lambdaOrigin = new URL(REK_API_URL).origin;
+        const link = document.createElement('link');
+        link.rel = 'preconnect';
+        link.href = lambdaOrigin;
+        link.crossOrigin = '';
+        document.head.appendChild(link);
+      } catch (e) { /* ogiltig URL, ignorera */ }
+    }
+
     const $video = document.getElementById('video');
     const $canvas = document.getElementById('canvas');
     const $analyzeBtn = document.getElementById('analyze-btn');

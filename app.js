@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 104;
+const APP_VERSION = 105;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -650,7 +650,7 @@ function hideCamera(){
   cameraOn = false;
   cameraVisible = false;
   qs('#cameraBox')?.classList.add('hidden');
-  startBtn.textContent = "Skanna QR";
+  startBtn.textContent = "📷 Skanna";
   statusDefault();
 }
 
@@ -2680,6 +2680,7 @@ async function startTagCamera() {
   updateLensSwitchVisibility();
 
   const onTagResult = async res => {
+    if (_scanMode === 'image') return; // v105: ignorera tag-skann i bild-läge
     if (!res || !res.resultPoints || !tagScanCallback) return;
     const scanned = normTag(res.text || "");
     if (!scanned || scanned === lastCode) return;
@@ -3324,43 +3325,36 @@ function _loadVisionScript() {
   return _visionScriptPromise;
 }
 
-async function setScanMode(mode) {
-  if (mode === _scanMode) return;
+function setScanMode(mode) {
+  // FIX (v105): SYNKRON UI-uppdate först — inga awaits i UI-path så state är konsistent.
+  // FIX (v105): tar INTE reader.reset() vid image-mode (det stoppar tracks → svart video).
+  // Istället: zxing-loopen fortsätter köra i bakgrunden, men decode-callbackerna kollar
+  // _scanMode och ignorerar resultat vid 'image'-mode. Stream behålls intakt.
   const $tag = qs('#modeTagBtn');
   const $img = qs('#modeImgBtn');
   const $analyze = qs('#analyzeBtn');
-  _scanMode = mode;
 
+  _scanMode = mode;
   if (mode === 'image') {
     $tag?.classList.remove('active'); $tag?.setAttribute('aria-selected', 'false');
     $img?.classList.add('active'); $img?.setAttribute('aria-selected', 'true');
-    // Pausa zxing-decoding men behåll videostream live för snap.
-    // FIX (v104 review): reader.reset() i zxing 0.20 stoppar tracks + nullar srcObject.
-    // Spara stream-referens innan reset och återställ direkt efter, så video fortsätter.
-    stopCropDecode();
-    const savedStream = v.srcObject;
-    try { reader && reader.reset(); } catch {}
-    if (savedStream && !v.srcObject) {
-      try { v.srcObject = savedStream; await v.play(); } catch (e) { console.warn('Stream-restore', e); }
-    }
     $analyze?.classList.remove('hidden');
-    // Lazy-load + init vision-modulen
-    try {
-      await _loadVisionScript();
-      if (window.vision && window.vision.init) await window.vision.init();
-    } catch (e) {
-      show('Kunde inte starta bildigenkänning: ' + (e.message || e), 'warn');
-      setScanMode('tag');
-    }
+    // Stopppa min crop-decode-loop. Zxing-readern fortsätter men resultat ignoreras.
+    stopCropDecode();
+    // Lazy-load + init vision-modulen (utan att blocka UI)
+    _loadVisionScript()
+      .then(() => window.vision && window.vision.init && window.vision.init())
+      .catch(e => {
+        show('Kunde inte starta bildigenkänning: ' + (e.message || e), 'warn');
+        setScanMode('tag');
+      });
   } else {
     $img?.classList.remove('active'); $img?.setAttribute('aria-selected', 'false');
     $tag?.classList.add('active'); $tag?.setAttribute('aria-selected', 'true');
     $analyze?.classList.add('hidden');
     if (window.vision && window.vision.closeResult) window.vision.closeResult();
-    // Återstarta zxing-decoder om kameran fortfarande är på
-    if (cameraOn && v.srcObject) {
-      try { await startCamera(); } catch (e) { console.warn('Kunde inte återstarta zxing', e); }
-    }
+    // Kameran rullar redan. Zxing-readern är aktiv. Min crop-decode kanske behöver
+    // återstartas, men den triggas naturligt av nästa frame-processering.
   }
 }
 
@@ -3399,6 +3393,7 @@ async function startCamera(){
   updateLensSwitchVisibility();
   startFocusCycler();
   const onScanResult = async res => {
+    if (_scanMode === 'image') return; // v105: ignorera tag-skann i bild-läge
     if(!res||!res.resultPoints||busy||dialogOpen())return;
     if(!preloadDone){show("Laddar artiklar...",null,{autoreset:false});return;}
     const pts=res.resultPoints||[];

@@ -1,6 +1,13 @@
 {
-  "latest": 104,
+  "latest": 105,
   "versions": [
+    {
+      "version": 105,
+      "date": "2026-05-13",
+      "notes": [
+        "Bättre bildigenkänning: när du växlar till 'Bild' i kameran släcks inte längre kamerabilden, 'Analysera'-knappen visas i rätt läge, och resultatet visas i samma ljusa design som resten av appen. Skanna-knappen heter nu '📷 Skanna' i stället för 'Skanna QR'."
+      ]
+    },
     {
       "version": 104,
       "date": "2026-05-13",

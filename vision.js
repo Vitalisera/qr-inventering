@@ -155,11 +155,13 @@
     const div = document.createElement('div');
     div.id = 'visionResult';
     div.className = 'hidden';
+    const currentUser = (typeof window.getCurrentUser === 'function' && window.getCurrentUser()) || '(inget namn satt)';
     div.innerHTML = `
       <div class="vision-header">
         <h2>AI-analys</h2>
         <button id="visionClose" type="button" aria-label="Stäng">✕</button>
       </div>
+      <div class="vision-user-info">Inventeras som: <strong>${esc(currentUser)}</strong></div>
       <img id="visionPreview" alt="Snap">
       <div class="vision-section">
         <div class="vision-section-title">Möjliga artiklar — markera de som ska inventeras</div>
@@ -296,26 +298,35 @@
   async function registerSelected() {
     if (selectedItems.size === 0) return;
     const btn = document.getElementById('visionRegister');
+
+    // FIX v106: kräv giltigt användarnamn innan batch (annars hamnar 'okänd' i Sheet)
+    const userName = (typeof window.getCurrentUser === 'function' && window.getCurrentUser())
+      || (localStorage.getItem('vitaliseraUser') || '').trim();
+    if (!userName) {
+      showToast('Du måste ange ditt namn först (öppna huvudappens skanner en gång)', true);
+      return;
+    }
+
     btn.disabled = true;
     const original = btn.textContent;
     btn.textContent = 'Inventerar ' + selectedItems.size + '…';
+
+    // Spara snapshots så vi kan appendLog även efter selectedItems.clear()
+    const itemsSnapshot = Array.from(selectedItems.entries()).map(([name, sel]) => ({
+      name, qty: sel.qty, article: sel.article
+    }));
+
     try {
-      const userName = localStorage.getItem('vitaliseraUser') || 'okänd';
-      const batch = [];
-      for (const [name, sel] of selectedItems.entries()) {
-        const inst = sel.article.instance;
-        // Absolut total: stepper-värdet är NEW total (inte += currentQty)
-        batch.push({
-          fnName: 'updateCount',
-          args: {
-            tag: inst.tag,
-            newCount: sel.qty,
-            userName: userName,
-            sheetName: inst.sheetName,
-            rowNum: inst.rowNum
-          }
-        });
-      }
+      const batch = itemsSnapshot.map(it => ({
+        fnName: 'updateCount',
+        args: {
+          tag: it.article.instance.tag,
+          newCount: it.qty,
+          userName: userName,
+          sheetName: it.article.instance.sheetName,
+          rowNum: it.article.instance.rowNum
+        }
+      }));
       const res = await gasCallLocal('batch', { batch });
       if (!res) throw new Error('Inget svar från servern');
       if (res.ok === false) {
@@ -323,27 +334,34 @@
         throw new Error('Vissa misslyckades: ' + failed.join(', '));
       }
 
+      // FIX v106: integrera med huvudappens historik (logList)
+      if (typeof window.appendLog === 'function') {
+        for (const it of itemsSnapshot) {
+          window.appendLog(it.name + ' – ' + it.qty + ' (via bild)', it.article.instance.tag, '📷');
+        }
+      }
+
       // Active learning: logga varje verifierad matchning
-      for (const [name] of selectedItems.entries()) {
+      for (const it of itemsSnapshot) {
         gasCallLocal('logVisionMatch', {
           sessionId: SESSION_ID,
           awsLabels: (lastResponse && lastResponse.labels) || [],
           awsTexts: (lastResponse && lastResponse.texts) || [],
           claudeMatches: currentMatches,
-          chosenArticle: name
+          chosenArticle: it.name
         }).catch(e => console.warn('logVisionMatch failed', e));
         fewshots.unshift({
           labels: ((lastResponse && lastResponse.labels) || []).slice(0, 6),
           texts: ((lastResponse && lastResponse.texts) || []).slice(0, 3),
-          article: name
+          article: it.name
         });
       }
       fewshots = fewshots.slice(0, 20);
       writeCache(FEWSHOTS_CACHE_KEY, fewshots);
 
-      showToast('✓ ' + selectedItems.size + ' artiklar inventerade');
+      showToast('✓ ' + itemsSnapshot.length + ' artiklar inventerade som ' + userName);
       selectedItems.clear();
-      // Stäng result + uppdatera huvudappens listor om möjligt
+      // Stäng result + uppdatera huvudappens listor
       setTimeout(() => {
         closeResult();
         if (typeof window.preloadData === 'function') window.preloadData();

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 105;
+const APP_VERSION = 106;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -3307,10 +3307,15 @@ function ensureName(cb){
 let _scanMode = 'tag';
 let _visionScriptPromise = null;
 
-// Exponera globalt så vision.js kan återanvända huvudappens GAS-pipeline
+// Exponera globalt så vision.js kan återanvända huvudappens GAS-pipeline + historik
 window.GAS_URL = GAS_URL;
 window.gasCall = gasCall;
 window.preloadData = preloadData;
+window.appendLog = appendLog;
+// Hjälp för vision.js att hitta nuvarande user (matchar main app:s ensureName-flöde)
+window.getCurrentUser = function () {
+  return (localStorage.getItem('vitaliseraUser') || '').trim();
+};
 
 function _loadVisionScript() {
   if (_visionScriptPromise) return _visionScriptPromise;

@@ -1,6 +1,13 @@
 {
-  "latest": 105,
+  "latest": 106,
   "versions": [
+    {
+      "version": 106,
+      "date": "2026-05-13",
+      "notes": [
+        "Bildinventering integrerad med historiken: artiklar du inventerar via bild visas nu i 'Historik'-listan med 📷-ikon, ditt namn skrivs in i Sheet, och resultat-vyn visar tydligt vilket namn du inventerar som. Om du inte har satt något namn än kommer en varning."
+      ]
+    },
     {
       "version": 105,
       "date": "2026-05-13",

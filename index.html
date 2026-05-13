@@ -35,15 +35,6 @@
     <video id="preview" autoplay muted playsinline></video>
     <div id="overlay"><div id="scanBox"><div id="scanLaser"></div></div></div>
     <button id="lensSwitchBtn" class="hidden" type="button" aria-label="Byt kameralins" title="Byt kameralins">📷</button>
-
-    <!-- Skanläges-toggle (tag vs bild). Synlig bara när kameran är på. -->
-    <div id="scanModeToggle" class="hidden" role="tablist" aria-label="Skannerläge">
-      <button id="modeTagBtn" type="button" class="scan-mode active" role="tab" aria-selected="true">🏷️ Tag</button>
-      <button id="modeImgBtn" type="button" class="scan-mode" role="tab" aria-selected="false">📷 Bild</button>
-    </div>
-
-    <!-- Analysera-knapp visas bara i bildläge -->
-    <button id="analyzeBtn" class="hidden" type="button">📷 Analysera bilden</button>
   </section>
 
   <!-- STATUS + LOGG -->
@@ -165,6 +156,7 @@
 
   <!-- FABs + LJUD -->
   <button id="startBtn" class="btn fab">📷 Skanna</button>
+  <button id="snapBtn" class="btn fab snap-fab hidden" type="button" aria-label="Analysera bild med AI">📸 Analysera bild</button>
   <button id="searchFab" class="btn fab">Sök</button>
   <button id="settingsBtn" class="btn fab" aria-label="Inställningar" title="Inställningar">⚙️</button>
 
@@ -176,7 +168,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=106"></script>
+  <script src="app.js?v=108"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

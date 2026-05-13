@@ -1,6 +1,20 @@
 {
-  "latest": 106,
+  "latest": 108,
   "versions": [
+    {
+      "version": 108,
+      "date": "2026-05-13",
+      "notes": [
+        "Bildanalys helt integrerad i kameraflödet. När kameran är på dyker en kameraknapp upp ovanför 'Dölj skanner' — tryck för att fota och låta AI gissa vad artikeln heter. Resultatet visas i samma sökruta som vanlig sökning, och tap på en artikel öppnar samma inventeringsdialog som tag-skanning. Ingen separat AI-vy längre."
+      ]
+    },
+    {
+      "version": 107,
+      "date": "2026-05-13",
+      "notes": [
+        "Bildinventering hittar nu ditt namn även om bara cookien finns kvar (innan klagade den 'inget namn satt' fast namnet var sparat). Inventera-knappen ligger inte längre bakom Sök/Dölj-knapparna."
+      ]
+    },
     {
       "version": 106,
       "date": "2026-05-13",

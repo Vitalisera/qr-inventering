@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 106;
+const APP_VERSION = 108;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -227,11 +227,24 @@ async function gasCall(fn, params = {}) {
     });
     if (!res.ok) throw new Error('Server error: ' + res.status);
     const text = await res.text();
+    let parsed;
     try {
-      return JSON.parse(text);
+      parsed = JSON.parse(text);
     } catch {
       throw new Error('Ogiltigt svar från servern');
     }
+    // Vision active-learning-hook: om föregående AI-analys finns och inventering
+    // (logTag/updateCount) lyckades → trigga consumeVisionResult som loggar fewshot.
+    // Detta är minimal-invasivt; en future Save-abstraktion kunde flyttat ut det.
+    if (parsed && parsed.ok !== false
+        && (fn === 'logTag' || fn === 'updateCount')
+        && window._lastVisionResult
+        && window.vision && typeof window.vision.consumeVisionResult === 'function') {
+      let _name = params.name;
+      if (!_name && params.tag) _name = tagCache.get(params.tag)?.name;
+      if (_name) try { window.vision.consumeVisionResult(_name); } catch (e) { console.warn('vision hook', e); }
+    }
+    return parsed;
   } catch (err) {
     if (err.name === 'AbortError') throw new Error('Timeout — servern svarade inte inom 30s');
     throw err;
@@ -632,15 +645,10 @@ function hideCamera(){
   stopFocusCycler();
   stopCropDecode();
   qs('#lensSwitchBtn')?.classList.add('hidden');
-  qs('#scanModeToggle')?.classList.add('hidden');
-  qs('#analyzeBtn')?.classList.add('hidden');
-  // Återställ till tag-läge när kameran stängs
-  if (_scanMode === 'image') {
-    _scanMode = 'tag';
-    qs('#modeTagBtn')?.classList.add('active');
-    qs('#modeImgBtn')?.classList.remove('active');
-    if (window.vision && window.vision.closeResult) window.vision.closeResult();
-  }
+  // Göm snap-FAB + ev. AI-notice när kameran stängs
+  const $snap = qs('#snapBtn');
+  if ($snap) { $snap.classList.remove('show'); setTimeout(() => $snap.classList.add('hidden'), 280); }
+  if (window.vision && window.vision.hideVisionNotice) window.vision.hideVisionNotice();
   try{ reader && reader.reset(); }catch{}
   try{
     const so = v.srcObject;
@@ -656,9 +664,14 @@ function hideCamera(){
 
 async function showCamera(){
   qs('#cameraBox')?.classList.remove('hidden');
-  qs('#scanModeToggle')?.classList.remove('hidden');
   cameraVisible = true;
   startBtn.textContent = "Dölj skanner";
+  // Fäll upp snap-FAB ovanför Dölj skanner — växer fram med RAF för smooth animation
+  const $snap = qs('#snapBtn');
+  if ($snap) {
+    $snap.classList.remove('hidden');
+    requestAnimationFrame(() => $snap.classList.add('show'));
+  }
   // Force-restart laser-animation. iOS Safari startar inte alltid CSS-animations
   // automatiskt när elementet just blivit synligt — utan en reflow ligger den
   // pausad tills första style-mutation (flashFeedback) väcker den.
@@ -2680,7 +2693,6 @@ async function startTagCamera() {
   updateLensSwitchVisibility();
 
   const onTagResult = async res => {
-    if (_scanMode === 'image') return; // v105: ignorera tag-skann i bild-läge
     if (!res || !res.resultPoints || !tagScanCallback) return;
     const scanned = normTag(res.text || "");
     if (!scanned || scanned === lastCode) return;
@@ -2956,7 +2968,9 @@ function openLinkSearchDialog(tagToLink) {
   searchResults.innerHTML = "";
   overlay.classList.add("blurred");
   searchDialog.classList.remove("hidden");
-  searchInput.focus();
+  // iOS Safari: focus inom samma tick blockas pga dialog inte hunnit renderas.
+  // RAF säkrar att fokus + tangentbord öppnas direkt utan extra tap.
+  requestAnimationFrame(searchInput.focus.bind(searchInput));
 
   const h2 = searchDialog.querySelector("h2");
   const origTitle = h2.textContent;
@@ -3300,22 +3314,22 @@ function ensureName(cb){
     nameDialog.classList.add("hidden");if(typeof cb==="function")cb();};
 }
 
-/* ===== Skanlägen (tag-skanning vs bild-igenkänning) =====
- * Vision-modulen lazy-loadas vid första byte till "Bild"-läge.
- * Tag-läge = zxing-decoder aktiv (default), Bild-läge = decoder pausad + Analysera-knapp synlig.
+/* ===== Bildanalys (snap-FAB + existing searchDialog) =====
+ * vision.js är tunn orkestrerare som hookar in i huvudappens existing flöden:
+ *   - Artikellistan: window.tagCache (huvudappens cache)
+ *   - Inventering: openContainerForTag → existing dialog → existing gasCall pipeline
+ *   - Historik/logg: existing appendLog + setLocalMeta + preloadData
+ *   - Fewshots: hookade i gasCall nedan när logTag/updateCount lyckas efter en AI-träff
  */
-let _scanMode = 'tag';
 let _visionScriptPromise = null;
 
-// Exponera globalt så vision.js kan återanvända huvudappens GAS-pipeline + historik
+// Exponera till vision.js (återanvänder huvudappens GAS-pipeline)
 window.GAS_URL = GAS_URL;
 window.gasCall = gasCall;
 window.preloadData = preloadData;
-window.appendLog = appendLog;
-// Hjälp för vision.js att hitta nuvarande user (matchar main app:s ensureName-flöde)
-window.getCurrentUser = function () {
-  return (localStorage.getItem('vitaliseraUser') || '').trim();
-};
+window.tagCache = tagCache;
+window.show = show;
+window.statusDefault = statusDefault;
 
 function _loadVisionScript() {
   if (_visionScriptPromise) return _visionScriptPromise;
@@ -3330,48 +3344,61 @@ function _loadVisionScript() {
   return _visionScriptPromise;
 }
 
-function setScanMode(mode) {
-  // FIX (v105): SYNKRON UI-uppdate först — inga awaits i UI-path så state är konsistent.
-  // FIX (v105): tar INTE reader.reset() vid image-mode (det stoppar tracks → svart video).
-  // Istället: zxing-loopen fortsätter köra i bakgrunden, men decode-callbackerna kollar
-  // _scanMode och ignorerar resultat vid 'image'-mode. Stream behålls intakt.
-  const $tag = qs('#modeTagBtn');
-  const $img = qs('#modeImgBtn');
-  const $analyze = qs('#analyzeBtn');
-
-  _scanMode = mode;
-  if (mode === 'image') {
-    $tag?.classList.remove('active'); $tag?.setAttribute('aria-selected', 'false');
-    $img?.classList.add('active'); $img?.setAttribute('aria-selected', 'true');
-    $analyze?.classList.remove('hidden');
-    // Stopppa min crop-decode-loop. Zxing-readern fortsätter men resultat ignoreras.
-    stopCropDecode();
-    // Lazy-load + init vision-modulen (utan att blocka UI)
-    _loadVisionScript()
-      .then(() => window.vision && window.vision.init && window.vision.init())
-      .catch(e => {
-        show('Kunde inte starta bildigenkänning: ' + (e.message || e), 'warn');
-        setScanMode('tag');
-      });
-  } else {
-    $img?.classList.remove('active'); $img?.setAttribute('aria-selected', 'false');
-    $tag?.classList.add('active'); $tag?.setAttribute('aria-selected', 'true');
-    $analyze?.classList.add('hidden');
-    if (window.vision && window.vision.closeResult) window.vision.closeResult();
-    // Kameran rullar redan. Zxing-readern är aktiv. Min crop-decode kanske behöver
-    // återstartas, men den triggas naturligt av nästa frame-processering.
-  }
-}
-
-qs('#modeTagBtn')?.addEventListener('click', () => setScanMode('tag'));
-qs('#modeImgBtn')?.addEventListener('click', () => setScanMode('image'));
-qs('#analyzeBtn')?.addEventListener('click', () => {
-  if (window.vision && window.vision.runAnalysis) {
-    window.vision.runAnalysis(v);
-  } else {
-    show('Vision-modulen är inte klar än', 'warn');
-  }
+// Snap-FAB: tap → lazy-load vision.js → runAnalysis. AI-träffar visas via
+// window.openVisionResults (definierad nedan) i existing #searchDialog.
+qs('#snapBtn')?.addEventListener('click', () => {
+  _loadVisionScript()
+    .then(() => window.vision && window.vision.init && window.vision.init())
+    .then(() => window.vision && window.vision.runAnalysis(v))
+    .catch(e => show('Kunde inte starta bildanalys: ' + (e.message || e), 'warn'));
 });
+
+// vision.js anropar denna vid AI-resultat. Populerar existing #searchDialog
+// med AI-träffar i samma .statusRow-format som vanlig sökning → tap leder
+// till existing openContainerForTag → existing inventeringsdialog.
+// FIX v108-review #2: använd _linkModeCleanup-hooken (existing pattern från
+// openLinkSearchDialog) så Escape-tangenten också triggar cleanup. Annars
+// hänger AI-titel/placeholder kvar nästa gång sökrutan öppnas.
+window.openVisionResults = function (matches) {
+  if (!Array.isArray(matches) || matches.length === 0) return;
+  openSearchDialog();
+  const h2 = searchDialog.querySelector('h2');
+  const origTitle = h2.textContent;
+  const origPlaceholder = searchInput.placeholder;
+  h2.textContent = 'AI-förslag';
+  // FIX v108-review #3: neutral placeholder eftersom skrivande triggar vanlig sökning
+  searchInput.placeholder = 'Eller sök artikel…';
+  searchInput.value = '';
+  _linkModeCleanup = () => {
+    h2.textContent = origTitle;
+    searchInput.placeholder = origPlaceholder;
+  };
+
+  searchResults.innerHTML = '';
+  for (const m of matches) {
+    if (!m || !m.name) continue;
+    let foundTag = null;
+    for (const [tag, val] of tagCache.entries()) {
+      if (val && val.name === m.name) { foundTag = tag; break; }
+    }
+    if (!foundTag) continue;
+
+    const meta = metaCache.get(foundTag) || {};
+    const saldo = meta.qty != null && meta.qty !== '' ? `${esc(meta.qty)} ${esc(meta.unit || '')}`.trim() : '';
+    const reasonHint = m.reason ? ` <span class="sr-syn ai-badge">(AI: ${esc(m.reason).slice(0,40)})</span>` : ` <span class="ai-badge">🤖</span>`;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'statusRow';
+    btn.innerHTML = `<span class="sr-name">${esc(m.name)}${reasonHint}</span><span class="sr-saldo">${saldo}</span><span class="sr-date">${esc(meta.lastStr || '')}</span>`;
+    const _tag = foundTag;
+    addSafeTap(btn,
+      () => { closeSearchDialog(); openContainerForTag(_tag); },
+      () => { closeSearchDialog(); const c = tagCache.get(_tag); if (c) prepareContainerDialog(c, _tag, { editMode: true }); }
+    );
+    searchResults.appendChild(btn);
+  }
+};
 
 /* ===== Kamera ===== */
 startBtn?.addEventListener('click', ()=>{
@@ -3398,7 +3425,6 @@ async function startCamera(){
   updateLensSwitchVisibility();
   startFocusCycler();
   const onScanResult = async res => {
-    if (_scanMode === 'image') return; // v105: ignorera tag-skann i bild-läge
     if(!res||!res.resultPoints||busy||dialogOpen())return;
     if(!preloadDone){show("Laddar artiklar...",null,{autoreset:false});return;}
     const pts=res.resultPoints||[];

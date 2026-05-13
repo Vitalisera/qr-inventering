@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 108;
+const APP_VERSION = 109;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -227,24 +227,11 @@ async function gasCall(fn, params = {}) {
     });
     if (!res.ok) throw new Error('Server error: ' + res.status);
     const text = await res.text();
-    let parsed;
     try {
-      parsed = JSON.parse(text);
+      return JSON.parse(text);
     } catch {
       throw new Error('Ogiltigt svar från servern');
     }
-    // Vision active-learning-hook: om föregående AI-analys finns och inventering
-    // (logTag/updateCount) lyckades → trigga consumeVisionResult som loggar fewshot.
-    // Detta är minimal-invasivt; en future Save-abstraktion kunde flyttat ut det.
-    if (parsed && parsed.ok !== false
-        && (fn === 'logTag' || fn === 'updateCount')
-        && window._lastVisionResult
-        && window.vision && typeof window.vision.consumeVisionResult === 'function') {
-      let _name = params.name;
-      if (!_name && params.tag) _name = tagCache.get(params.tag)?.name;
-      if (_name) try { window.vision.consumeVisionResult(_name); } catch (e) { console.warn('vision hook', e); }
-    }
-    return parsed;
   } catch (err) {
     if (err.name === 'AbortError') throw new Error('Timeout — servern svarade inte inom 30s');
     throw err;
@@ -1582,6 +1569,13 @@ function openContainerForTag(tag) {
   currentDialogTag = tag;
   const cached = tagCache.get(tag);
   if (!cached) return;
+  // FIX v109: ANY artikel-val efter AI-analys triggar fewshot-loggning.
+  // consumeVisionResult har egen tidsfönster-guard (5 min) + manualOverride-flag
+  // som signalerar om valt namn fanns i AI-listan eller inte. Det betyder Robert
+  // kan lära modellen även när AI missade — bara att söka manuellt och tap:a räcker.
+  if (window.vision && typeof window.vision.consumeVisionResult === 'function' && cached.name) {
+    try { window.vision.consumeVisionResult(cached.name); } catch (e) { console.warn('vision tap-hook', e); }
+  }
 
   const { name, type, sheetName, rowNum } = cached;
 
@@ -3365,7 +3359,12 @@ window.openVisionResults = function (matches) {
   const h2 = searchDialog.querySelector('h2');
   const origTitle = h2.textContent;
   const origPlaceholder = searchInput.placeholder;
-  h2.textContent = 'AI-förslag';
+  // FIX v109: visa hur mycket data som skickas till AI så Robert kan diagnosa
+  // synonym-pipelinen direkt utan devtools (om syn-count är 0 är cachen stale)
+  const _vd = window._lastVisionResult || {};
+  const _artCount = window.tagCache ? window.tagCache.size : 0;
+  const _synSample = (window._lastVisionStats && window._lastVisionStats.synonymCount) || 0;
+  h2.textContent = 'AI-förslag • ' + _artCount + ' artiklar' + (_synSample ? ' • ' + _synSample + ' syn' : '');
   // FIX v108-review #3: neutral placeholder eftersom skrivande triggar vanlig sökning
   searchInput.placeholder = 'Eller sök artikel…';
   searchInput.value = '';
@@ -3392,6 +3391,9 @@ window.openVisionResults = function (matches) {
     btn.className = 'statusRow';
     btn.innerHTML = `<span class="sr-name">${esc(m.name)}${reasonHint}</span><span class="sr-saldo">${saldo}</span><span class="sr-date">${esc(meta.lastStr || '')}</span>`;
     const _tag = foundTag;
+    // FIX v109: tap-fewshot-trigger flyttad till openContainerForTag-wrapper
+    // (central choke-point) så ALLA val efter AI-analys räknas — inklusive
+    // manuell sökning om användaren inte hittade i AI-listan.
     addSafeTap(btn,
       () => { closeSearchDialog(); openContainerForTag(_tag); },
       () => { closeSearchDialog(); const c = tagCache.get(_tag); if (c) prepareContainerDialog(c, _tag, { editMode: true }); }

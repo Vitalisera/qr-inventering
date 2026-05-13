@@ -131,6 +131,12 @@
       if (typeof window.show === 'function') window.show('Artikellistan inte laddad ännu', 'warn');
       return;
     }
+    // Debug: verifiera att synonymer flödar igenom (Robert fick 100% match på POC #4
+    // efter att synonymer skickades — om antalet synonyms-totalt här är 0 är pipelinen bruten)
+    const synTotal = articles.reduce((s, a) => s + (a.synonyms || []).length, 0);
+    console.log('vision: ' + articles.length + ' artiklar, ' + synTotal + ' synonymer skickas till Lambda');
+    // Exponera så app.js kan visa i AI-dialog-titeln (Robert ser direkt om syn=0)
+    window._lastVisionStats = { articleCount: articles.length, synonymCount: synTotal };
 
     // Snap frame
     const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
@@ -181,24 +187,30 @@
     }
   }
 
-  // Anropas av app.js efter framgångsrik inventering — loggar (labels, texts, valt namn)
-  // som fewshot för framtida körningar. Rensar global state.
-  // FIX v108-review #1: verifiera att artikelnamnet faktiskt finns bland AI-matchningarna
-  // — annars är detta en orelaterad tag-skanning som råkade ske efter AI-analys, vilket
-  // skulle förgifta fewshot-pipen med fel-data.
+  // Anropas av app.js när användaren väljer en artikel (openContainerForTag).
+  // FIX v109: tar bort matched-guard. Användaren vill kunna LÄRA modellen även
+  // när AI missade — då söker hen manuellt och tapet räknas som bekräftelse.
+  // Skydd mot pipeline-förgiftning från orelaterade tag-skanningar: tidsfönster
+  // 5 min sedan AI-analysen kördes. Efter det rensas _lastVisionResult.
+  const FEWSHOT_WINDOW_MS = 5 * 60 * 1000;
+
   function consumeVisionResult(chosenArticle) {
     const r = window._lastVisionResult;
     if (!r || !chosenArticle) return;
-    const matched = Array.isArray(r.claudeMatches)
+    if (Date.now() - (r.ts || 0) > FEWSHOT_WINDOW_MS) {
+      window._lastVisionResult = null;
+      return;
+    }
+    const wasInAiMatches = Array.isArray(r.claudeMatches)
       && r.claudeMatches.some(m => m && m.name === chosenArticle);
-    if (!matched) return;
     window._lastVisionResult = null;
     gasCall('logVisionMatch', {
       sessionId: SESSION_ID,
       awsLabels: r.labels,
       awsTexts: r.texts,
       claudeMatches: r.claudeMatches,
-      chosenArticle: chosenArticle
+      chosenArticle: chosenArticle,
+      manualOverride: !wasInAiMatches // signalerar "AI missade, användaren hittade manuellt"
     }).catch(e => console.warn('logVisionMatch', e));
     fewshots.unshift({
       labels: (r.labels || []).slice(0, 6),

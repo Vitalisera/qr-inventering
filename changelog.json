@@ -1,6 +1,13 @@
 {
-  "latest": 108,
+  "latest": 109,
   "versions": [
+    {
+      "version": 109,
+      "date": "2026-05-13",
+      "notes": [
+        "Du kan nu lära AI:n även när den missade rätt artikel — bara sök manuellt och tap:a på den, så loggas träningsdata. Inom 5 min efter en bildanalys räknas alla artikel-val som bekräftelse. Plus: AI-dialogens titel visar nu hur många artiklar och synonymer som skickades till AI:n, så du ser direkt om något saknas i listan."
+      ]
+    },
     {
       "version": 108,
       "date": "2026-05-13",

@@ -1,6 +1,13 @@
 {
-  "latest": 109,
+  "latest": 110,
   "versions": [
+    {
+      "version": 110,
+      "date": "2026-05-13",
+      "notes": [
+        "Smidigare bildanalys: när du trycker 'Analysera bild' fryser bilden direkt och en spinner visas medan AI:n tänker. Resultatet öppnas automatiskt i sökrutan när det är klart — du behöver inte längre trycka på någon mellanruta."
+      ]
+    },
     {
       "version": 109,
       "date": "2026-05-13",

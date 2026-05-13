@@ -149,7 +149,14 @@
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     const base64 = dataUrl.split(',', 2)[1];
 
-    if (typeof window.show === 'function') window.show('Analyserar bild…', null, { autoreset: false });
+    // UX FIX v110: frys video + visa spinner-overlay (samma "Förbereder utskrift…"-mönster
+    // för konsekvent stil). Resultatet öppnar searchDialog DIREKT — inget notice-mellansteg.
+    try { videoEl.pause(); } catch {}
+    if (typeof window.showPrintLoading === 'function') {
+      window.showPrintLoading('Analyserar bild…');
+    } else if (typeof window.show === 'function') {
+      window.show('Analyserar bild…', null, { autoreset: false });
+    }
 
     try {
       const t0 = performance.now();
@@ -165,7 +172,7 @@
 
       const matches = Array.isArray(data.claude_matches) ? data.claude_matches : [];
 
-      // Spara senaste AWS+Claude-output globalt — used av fewshot-hooken vid inventering
+      // Spara senaste AWS+Claude-output globalt — used av fewshot-hooken
       window._lastVisionResult = {
         labels: data.labels || [],
         texts: data.texts || [],
@@ -174,15 +181,23 @@
         snapDataUrl: dataUrl
       };
 
+      // Återställ UI: göm overlay + spela video igen
+      if (typeof window.hidePrintLoading === 'function') window.hidePrintLoading();
+      try { videoEl.play().catch(() => {}); } catch {}
       if (typeof window.statusDefault === 'function') window.statusDefault();
 
       if (matches.length === 0) {
         if (typeof window.show === 'function') window.show('AI hittade inga matchningar', 'warn');
         return;
       }
-      showVisionNotice(matches);
+      // Öppna searchDialog DIREKT (UX FIX v110: skipa notice-mellansteg)
+      if (typeof window.openVisionResults === 'function') {
+        window.openVisionResults(matches);
+      }
     } catch (err) {
       console.error('vision: analys-fel', err);
+      if (typeof window.hidePrintLoading === 'function') window.hidePrintLoading();
+      try { videoEl.play().catch(() => {}); } catch {}
       if (typeof window.show === 'function') window.show('Bildanalys misslyckades: ' + (err.message || err), 'warn');
     }
   }

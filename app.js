@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 109;
+const APP_VERSION = 110;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -3317,13 +3317,15 @@ function ensureName(cb){
  */
 let _visionScriptPromise = null;
 
-// Exponera till vision.js (återanvänder huvudappens GAS-pipeline)
+// Exponera till vision.js (återanvänder huvudappens GAS-pipeline + UI)
 window.GAS_URL = GAS_URL;
 window.gasCall = gasCall;
 window.preloadData = preloadData;
 window.tagCache = tagCache;
 window.show = show;
 window.statusDefault = statusDefault;
+window.showPrintLoading = showPrintLoading; // återanvänds som "Analyserar bild…"-overlay
+window.hidePrintLoading = hidePrintLoading;
 
 function _loadVisionScript() {
   if (_visionScriptPromise) return _visionScriptPromise;

@@ -1,6 +1,13 @@
 {
-  "latest": 110,
+  "latest": 111,
   "versions": [
+    {
+      "version": 111,
+      "date": "2026-05-13",
+      "notes": [
+        "Bildanalysen är nu strikt seriell: skanna → identifiera → tap. Varje ny snap nollställer förra analysens data så ett feltryck på en gammal artikel inte längre kan logga fel träningsdata. Plus: tidsfönstret för fewshot-loggning kortat från 5 min till 90 sek."
+      ]
+    },
     {
       "version": 110,
       "date": "2026-05-13",

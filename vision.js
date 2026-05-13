@@ -126,6 +126,9 @@
       if (typeof window.show === 'function') window.show('Ingen kamerabild ännu', 'warn');
       return;
     }
+    // FIX v111 alternativ C: varje snap nollställer förra analysen explicit.
+    // Förhindrar förgiftning om användaren analyserade A, sedan B utan att välja A.
+    window._lastVisionResult = null;
     const articles = buildArticlesFromTagCache();
     if (articles.length === 0) {
       if (typeof window.show === 'function') window.show('Artikellistan inte laddad ännu', 'warn');
@@ -205,9 +208,10 @@
   // Anropas av app.js när användaren väljer en artikel (openContainerForTag).
   // FIX v109: tar bort matched-guard. Användaren vill kunna LÄRA modellen även
   // när AI missade — då söker hen manuellt och tapet räknas som bekräftelse.
-  // Skydd mot pipeline-förgiftning från orelaterade tag-skanningar: tidsfönster
-  // 5 min sedan AI-analysen kördes. Efter det rensas _lastVisionResult.
-  const FEWSHOT_WINDOW_MS = 5 * 60 * 1000;
+  // FIX v111: tidsfönstret kortat från 5 min → 90 sek. Robert: "skanningen är
+  // seriell. skanna-identifiera-tap. Annars nollställs allt vid nästa skan."
+  // Plus: runAnalysis nollställer _lastVisionResult INNAN ny snap (alternativ C).
+  const FEWSHOT_WINDOW_MS = 90 * 1000;
 
   function consumeVisionResult(chosenArticle) {
     const r = window._lastVisionResult;

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 116;
+const APP_VERSION = 117;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -1972,10 +1972,12 @@ function closeDialog(){
 }
 let _aiSuggestTimer = null;
 function resetDialog(){
-  // Bort med stale fokus innan vi bygger nytt innehåll. På iOS PWA kan en
-  // kvardröjande focus från föregående dialog/input få nästa textarea
-  // (t.ex. commentEdit) att felaktigt få fokus och dra upp tangentbordet.
-  try { document.activeElement?.blur?.(); } catch {}
+  // Bort med stale fokus innan vi bygger nytt innehåll. Begränsa till element INOM dlg —
+  // annars blur:as t.ex. searchInput när Koppla-till-befintlig öppnar sökdialogen parallellt
+  // med att den föregående dialogen stängs (closeDialog kör resetDialog i RAF).
+  try {
+    if (dlg.contains(document.activeElement)) document.activeElement.blur?.();
+  } catch {}
   dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip,.commentBlock').forEach(el=>el.remove());
 }
 

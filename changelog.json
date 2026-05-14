@@ -1,6 +1,13 @@
 {
-  "latest": 116,
+  "latest": 117,
   "versions": [
+    {
+      "version": 117,
+      "date": "2026-05-14",
+      "notes": [
+        "Riktig fix för fokus i sökrutan vid 'Koppla till befintlig': den föregående dialogens rensning blur:ade hela sidan, inklusive den nya sökrutan. Nu rensas bara fokus inom den dialog som stängs — sökrutan bevarar sitt fokus så tangentbordet öppnas direkt."
+      ]
+    },
     {
       "version": 116,
       "date": "2026-05-14",

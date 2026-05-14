@@ -1,6 +1,13 @@
 {
-  "latest": 113,
+  "latest": 114,
   "versions": [
+    {
+      "version": 114,
+      "date": "2026-05-14",
+      "notes": [
+        "Robustare koppling av tags vid dåligt nätverk: appen försöker nu automatiskt upp till 4 gånger innan den ger upp. Varje försök syns i historiken, så du ser direkt om kopplingen lyckas, misslyckas eller kräver fler försök — inga fler tysta fel på instabilt wifi."
+      ]
+    },
     {
       "version": 113,
       "date": "2026-05-14",

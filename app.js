@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 113;
+const APP_VERSION = 114;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -238,6 +238,36 @@ async function gasCall(fn, params = {}) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Retry-wrapper för gasCall — för wifi/nät-instabilitet. Försöker upp till retries+1 gånger
+// med exponential backoff. Retry:ar bara transient-fel (timeout, nätverk, server-error utan
+// specifik orsak). Validation-fel (collision, ogiltig tag, saknad flik) returneras direkt
+// utan retry. onAttempt-callback körs före varje försök så UI kan visa "försök N".
+async function gasCallWithRetry(fn, params = {}, opts = {}) {
+  const retries = opts.retries ?? 3;
+  const backoff = opts.backoff ?? [800, 2000, 5000];
+  const onAttempt = opts.onAttempt || (() => {});
+  let lastErr = '';
+  for (let i = 0; i <= retries; i++) {
+    onAttempt(i + 1, retries + 1);
+    try {
+      const res = await gasCall(fn, params);
+      // Success
+      if (res?.ok) return res;
+      // Specifika permanent-fel: returnera direkt utan retry
+      if (res?.collision) return res;
+      if (res?.msg && /Ogiltig|sheetName.*krävs|Flik finns inte|saknas/i.test(res.msg)) return res;
+      lastErr = res?.msg || 'Okänt server-fel';
+    } catch (err) {
+      lastErr = err.message || String(err);
+    }
+    if (i < retries) {
+      if (window.DEBUG_TAG) console.warn(`gasCallWithRetry ${fn} försök ${i+1} fail: ${lastErr}, retry om ${backoff[i]}ms`);
+      await new Promise(r => setTimeout(r, backoff[i] || 1000));
+    }
+  }
+  return { ok: false, msg: `Misslyckades efter ${retries+1} försök: ${lastErr}`, exhausted: true };
 }
 
 // Kastar om svaret har ok:false. Används för alla muterande anrop så att .then() inte
@@ -2320,8 +2350,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
   if (scanTagBtn) {
     scanTagBtn.onclick = () => {
       startTagScanMode((scannedTag) => {
+        const targetName = cached?.name || tag;
+        const le = appendLog(`${targetName} – tag ${scannedTag} kopplas`, tag);
         setMsg("Sparar tag…", "");
-        gasCall('addTag', {sheetName: _sn || (cached?.place), rowNum: _rn || (cached?.rowNum), newTag: scannedTag})
+        gasCallWithRetry('addTag',
+          {sheetName: _sn || (cached?.place), rowNum: _rn || (cached?.rowNum), newTag: scannedTag},
+          {onAttempt: (n, total) => { if (n > 1 && le) le.querySelector('.msg').textContent = `${targetName} – tag ${scannedTag} kopplas (försök ${n}/${total})`; }})
           .then(res => {
             if (res.ok) {
               tagDisplay.value = res.tag;
@@ -2338,14 +2372,20 @@ function prepareContainerDialog(item, tag, opts = {}) {
                 }
               }
               setMsg("Tag kopplad!", "ok");
+              markAsDone(le);
               renderLists();
             } else if (res.collision) {
               setMsg(`Taggen är redan kopplad till "${res.existingName}"`, "warn");
+              if (le) le.querySelector('.msg').textContent = `${targetName} – redan kopplad till "${res.existingName}"`;
             } else {
               setMsg(res.msg || "Kunde inte spara tag", "warn");
+              if (le) le.querySelector('.msg').textContent = `${targetName} – ${res.msg || 'misslyckades'}`;
             }
           })
-          .catch(err => setMsg("Fel: " + (err.message || err), "warn"));
+          .catch(err => {
+            setMsg("Fel: " + (err.message || err), "warn");
+            if (le) le.querySelector('.msg').textContent = `${targetName} – fel: ${err.message || err}`;
+          });
       });
     };
   }
@@ -2899,20 +2939,27 @@ function showLinkTagDialog(scannedTag) {
         if (oldData) tagCache.set(matchTag, { ...oldData, altTags: [...(oldData.altTags || []), scannedTag], pendingSync: true });
         closeDialog();
         cooldown(scannedTag);
+        const le = appendLog(`${matchName} – tag ${scannedTag} kopplas`, matchTag);
         show(`Tag kopplad till "${matchName}"`, 'ok');
-        // Server-anrop i bakgrunden — rulla tillbaka vid fail
-        gasCall('addTag', { sheetName, rowNum, newTag: scannedTag }).then(res => {
+        // Server-anrop i bakgrunden — retry vid nätverks-/timeout-fel, rulla tillbaka om alla försök fail:ar
+        gasCallWithRetry('addTag',
+          { sheetName, rowNum, newTag: scannedTag },
+          {onAttempt: (n, total) => { if (n > 1 && le) le.querySelector('.msg').textContent = `${matchName} – tag ${scannedTag} kopplas (försök ${n}/${total})`; }}
+        ).then(res => {
           const cur = tagCache.get(matchTag);
           if (!res?.ok) {
             if (cur) tagCache.set(matchTag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== scannedTag), pendingSync: false });
-            show(res?.collision ? `Redan kopplad till "${res.existingName}"` : 'Kunde inte koppla — rullade tillbaka', 'warn');
+            show(res?.collision ? `Redan kopplad till "${res.existingName}"` : (res?.msg || 'Kunde inte koppla — rullade tillbaka'), 'warn');
+            if (le) le.querySelector('.msg').textContent = `${matchName} – ${res?.msg || 'misslyckades'}`;
           } else if (cur) {
             tagCache.set(matchTag, { ...cur, pendingSync: false });
+            markAsDone(le);
           }
-        }).catch(() => {
+        }).catch((err) => {
           const cur = tagCache.get(matchTag);
           if (cur) tagCache.set(matchTag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== scannedTag), pendingSync: false });
-          show('Nätverksfel — kopplingen rullades tillbaka', 'warn');
+          show('Oväntat fel — kopplingen rullades tillbaka', 'warn');
+          if (le) le.querySelector('.msg').textContent = `${matchName} – fel: ${err?.message || err}`;
         });
       };
     });
@@ -3017,31 +3064,40 @@ function openLinkSearchDialog(tagToLink) {
           // pendingSync:true skyddar mot initData-clobber under server-anropet.
           const oldData = tagCache.get(tag);
           if (oldData) tagCache.set(tag, { ...oldData, altTags: [...(oldData.altTags || []), tagToLink], pendingSync: true });
+          const le = appendLog(`${name} – tag ${tagToLink} kopplas`, tag);
           show(`Tag kopplad till "${name}"`, "ok");
           renderLists();
           cooldown(tagToLink);
-          gasCall('addTag', {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink})
+          gasCallWithRetry('addTag',
+            {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink},
+            {onAttempt: (n, total) => { if (n > 1 && le) le.querySelector('.msg').textContent = `${name} – tag ${tagToLink} kopplas (försök ${n}/${total})`; }})
             .then(res => {
               const cur = tagCache.get(tag);
               if (!res.ok) {
                 if (cur) tagCache.set(tag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== tagToLink), pendingSync: false });
                 renderLists();
                 show(res.collision ? `Redan kopplad till "${res.existingName}"` : (res.msg || "Kunde inte koppla — rullade tillbaka"), "warn");
+                if (le) le.querySelector('.msg').textContent = `${name} – ${res.msg || 'misslyckades'}`;
               } else if (cur) {
                 tagCache.set(tag, { ...cur, pendingSync: false });
+                markAsDone(le);
               }
             })
             .catch(err => {
               const cur = tagCache.get(tag);
               if (cur) tagCache.set(tag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== tagToLink), pendingSync: false });
               renderLists();
-              show("Nätverksfel — rullade tillbaka: " + (err.message || err), "warn");
+              show("Oväntat fel — rullade tillbaka: " + (err.message || err), "warn");
+              if (le) le.querySelector('.msg').textContent = `${name} – fel: ${err.message || err}`;
             });
           return;
         }
         // Syntetisk artikel: kräver server-svar för att få den nya tag-nyckeln
+        const le = appendLog(`${name} – tag ${tagToLink} kopplas`, tag);
         show("Kopplar tag…");
-        gasCall('addTag', {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink})
+        gasCallWithRetry('addTag',
+          {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink},
+          {onAttempt: (n, total) => { if (n > 1 && le) le.querySelector('.msg').textContent = `${name} – tag ${tagToLink} kopplas (försök ${n}/${total})`; }})
           .then(res => {
             if (res.ok) {
               const oldData = tagCache.get(tag);
@@ -3052,15 +3108,22 @@ function openLinkSearchDialog(tagToLink) {
                 if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
               }
               show(`Tag kopplad till "${name}"`, "ok");
+              markAsDone(le);
               renderLists();
             } else if (res.collision) {
               show(`Taggen är redan kopplad till "${res.existingName}"`, "warn");
+              if (le) le.querySelector('.msg').textContent = `${name} – redan kopplad till "${res.existingName}"`;
             } else {
               show(res.msg || "Kunde inte koppla tag", "warn");
+              if (le) le.querySelector('.msg').textContent = `${name} – ${res.msg || 'misslyckades'}`;
             }
             cooldown(tagToLink);
           })
-          .catch(err => { show("Fel: " + (err.message || err), "warn"); cooldown(tagToLink); });
+          .catch(err => {
+            show("Fel: " + (err.message || err), "warn");
+            if (le) le.querySelector('.msg').textContent = `${name} – fel: ${err.message || err}`;
+            cooldown(tagToLink);
+          });
       };
       searchResults.appendChild(btn);
       count++;

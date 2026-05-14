@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 112;
+const APP_VERSION = 113;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2302,12 +2302,13 @@ function prepareContainerDialog(item, tag, opts = {}) {
     });
   }
 
-  // Skanna tag-knapp
+  // Skanna tag-knapp. `cached` lyfts till funktionsnivå så scanTagBtn-handlern
+  // kan referera den utan ReferenceError-risk (var tidigare block-scoped i tagDisplay-blocket).
   const scanTagBtn = extra.querySelector("#scanTagBtn");
   const tagDisplay = extra.querySelector("#tagDisplay");
+  const cached = tagCache.get(tag);
   if (tagDisplay) {
     tagDisplay.addEventListener("click", () => {
-      const cached = tagCache.get(tag);
       const primary = tag.startsWith("S") ? null : tag;
       const alts = cached?.altTags || [];
       const all = [primary, ...alts].filter(Boolean);
@@ -2329,11 +2330,11 @@ function prepareContainerDialog(item, tag, opts = {}) {
               if (oldData) {
                 if (tag.startsWith("S")) {
                   tagCache.delete(tag);
-                  tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null, altTags: oldData.altTags || [] });
+                  tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null, altTags: oldData.altTags || [], pendingSync: false });
                   const oldMeta = metaCache.get(tag);
                   if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
                 } else {
-                  oldData.altTags = [...(oldData.altTags || []), res.tag];
+                  tagCache.set(tag, { ...oldData, altTags: [...(oldData.altTags || []), res.tag], pendingSync: false });
                 }
               }
               setMsg("Tag kopplad!", "ok");
@@ -2892,20 +2893,25 @@ function showLinkTagDialog(scannedTag) {
         const rowNum = btn.dataset.row ? Number(btn.dataset.row) : null;
         const matchTag = btn.dataset.tag;
         const matchName = btn.dataset.name;
-        // Optimistisk uppdatering: lokala mutation + UI-respons direkt
+        // Optimistisk uppdatering: lokala mutation + UI-respons direkt.
+        // pendingSync:true skyddar mot initData-clobber MELLAN tap och server-svar.
         const oldData = tagCache.get(matchTag);
-        if (oldData) oldData.altTags = [...(oldData.altTags || []), scannedTag];
+        if (oldData) tagCache.set(matchTag, { ...oldData, altTags: [...(oldData.altTags || []), scannedTag], pendingSync: true });
         closeDialog();
         cooldown(scannedTag);
         show(`Tag kopplad till "${matchName}"`, 'ok');
         // Server-anrop i bakgrunden — rulla tillbaka vid fail
         gasCall('addTag', { sheetName, rowNum, newTag: scannedTag }).then(res => {
+          const cur = tagCache.get(matchTag);
           if (!res?.ok) {
-            if (oldData) oldData.altTags = (oldData.altTags || []).filter(t => t !== scannedTag);
+            if (cur) tagCache.set(matchTag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== scannedTag), pendingSync: false });
             show(res?.collision ? `Redan kopplad till "${res.existingName}"` : 'Kunde inte koppla — rullade tillbaka', 'warn');
+          } else if (cur) {
+            tagCache.set(matchTag, { ...cur, pendingSync: false });
           }
         }).catch(() => {
-          if (oldData) oldData.altTags = (oldData.altTags || []).filter(t => t !== scannedTag);
+          const cur = tagCache.get(matchTag);
+          if (cur) tagCache.set(matchTag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== scannedTag), pendingSync: false });
           show('Nätverksfel — kopplingen rullades tillbaka', 'warn');
         });
       };
@@ -3008,21 +3014,26 @@ function openLinkSearchDialog(tagToLink) {
         const isSynthetic = tag.startsWith("S");
         if (!isSynthetic) {
           // Optimistisk: appenda alt-tag direkt + UI-respons. Rulla tillbaka vid fail.
+          // pendingSync:true skyddar mot initData-clobber under server-anropet.
           const oldData = tagCache.get(tag);
-          if (oldData) oldData.altTags = [...(oldData.altTags || []), tagToLink];
+          if (oldData) tagCache.set(tag, { ...oldData, altTags: [...(oldData.altTags || []), tagToLink], pendingSync: true });
           show(`Tag kopplad till "${name}"`, "ok");
           renderLists();
           cooldown(tagToLink);
           gasCall('addTag', {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink})
             .then(res => {
+              const cur = tagCache.get(tag);
               if (!res.ok) {
-                if (oldData) oldData.altTags = (oldData.altTags || []).filter(t => t !== tagToLink);
+                if (cur) tagCache.set(tag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== tagToLink), pendingSync: false });
                 renderLists();
                 show(res.collision ? `Redan kopplad till "${res.existingName}"` : (res.msg || "Kunde inte koppla — rullade tillbaka"), "warn");
+              } else if (cur) {
+                tagCache.set(tag, { ...cur, pendingSync: false });
               }
             })
             .catch(err => {
-              if (oldData) oldData.altTags = (oldData.altTags || []).filter(t => t !== tagToLink);
+              const cur = tagCache.get(tag);
+              if (cur) tagCache.set(tag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== tagToLink), pendingSync: false });
               renderLists();
               show("Nätverksfel — rullade tillbaka: " + (err.message || err), "warn");
             });

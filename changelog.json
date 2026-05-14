@@ -1,6 +1,13 @@
 {
-  "latest": 112,
+  "latest": 113,
   "versions": [
+    {
+      "version": 113,
+      "date": "2026-05-14",
+      "notes": [
+        "Stora förbättringar i tag-hanteringen: tags lagras nu med pipe-separator i stället för komma, vilket skyddar mot att Google Sheets tolkar dem som tal och kapar bort ledande nollor eller slår ihop flera tags till en. Parallella tag-tillägg på samma artikel kan inte längre råka ut för att en av dem försvinner."
+      ]
+    },
     {
       "version": 112,
       "date": "2026-05-14",

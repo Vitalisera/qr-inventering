@@ -853,6 +853,99 @@ function addUndoButton(logEntry, tag) {
   }, UNDO_WINDOW_MS);
 }
 
+/* ===== Save — funktion-grupperat objekt för spara-flöden =====
+ * Tunn helper: hanterar appendLog + cache-mutation + gasCallWithRetry + rollback + markAsDone.
+ * UI-side-effects (closeDialog, cooldown, renderLists, show/setMsg, DOM-update) sköts av callern.
+ */
+const Save = {
+  /**
+   * Koppla en skannad tag till en befintlig artikelrad.
+   *
+   * Hanterar två varianter automatiskt baserat på currentTag-prefix:
+   *   - Befintlig artikel (currentTag = numerisk tag): optimistisk altTags-push,
+   *     rollback vid fail.
+   *   - Syntetisk artikel (currentTag startsWith 'S'): ingen optimistic; vid
+   *     success byts cache-nyckeln S* → res.tag och metaCache flyttas.
+   *
+   * target: { name, sheetName, rowNum, currentTag }
+   * returnerar: { ok, tag?, res?, err?, le, collision?, alreadyPresent? }
+   */
+  async linkTag(scannedTag, target) {
+    const { name, sheetName, rowNum, currentTag } = target;
+    const isSynthetic = String(currentTag || '').startsWith('S');
+    const le = appendLog(`${name} – tag ${scannedTag} kopplas`, currentTag);
+
+    if (!isSynthetic) {
+      const oldData = tagCache.get(currentTag);
+      if (oldData) tagCache.set(currentTag, {
+        ...oldData,
+        altTags: [...(oldData.altTags || []), scannedTag],
+        pendingSync: true
+      });
+    }
+
+    let res;
+    try {
+      res = await gasCallWithRetry('addTag',
+        { sheetName, rowNum, newTag: scannedTag },
+        { onAttempt: (n, total) => {
+            if (n > 1 && le) le.querySelector('.msg').textContent =
+              `${name} – tag ${scannedTag} kopplas (försök ${n}/${total})`;
+          } }
+      );
+    } catch (err) {
+      if (!isSynthetic) {
+        const cur = tagCache.get(currentTag);
+        if (cur) tagCache.set(currentTag, {
+          ...cur,
+          altTags: (cur.altTags || []).filter(t => t !== scannedTag),
+          pendingSync: false
+        });
+      }
+      if (le) le.querySelector('.msg').textContent = `${name} – fel: ${err.message || err}`;
+      return { ok: false, err, le };
+    }
+
+    if (res && res.ok) {
+      if (isSynthetic) {
+        const oldData = tagCache.get(currentTag);
+        if (oldData) {
+          tagCache.delete(currentTag);
+          tagCache.set(res.tag, {
+            ...oldData,
+            sheetName: null,
+            rowNum: null,
+            altTags: oldData.altTags || [],
+            pendingSync: false
+          });
+          const oldMeta = metaCache.get(currentTag);
+          if (oldMeta) { metaCache.delete(currentTag); metaCache.set(res.tag, oldMeta); }
+        }
+      } else {
+        const cur = tagCache.get(currentTag);
+        if (cur) tagCache.set(currentTag, { ...cur, pendingSync: false });
+      }
+      markAsDone(le);
+      return { ok: true, tag: res.tag, alreadyPresent: !!res.alreadyPresent, le };
+    }
+
+    // Fail-path: res.ok === false (eller exhausted)
+    if (!isSynthetic) {
+      const cur = tagCache.get(currentTag);
+      if (cur) tagCache.set(currentTag, {
+        ...cur,
+        altTags: (cur.altTags || []).filter(t => t !== scannedTag),
+        pendingSync: false
+      });
+    }
+    const failMsg = res && res.collision
+      ? `redan kopplad till "${res.existingName}"`
+      : ((res && res.msg) || 'misslyckades');
+    if (le) le.querySelector('.msg').textContent = `${name} – ${failMsg}`;
+    return { ok: false, res, le, collision: !!(res && res.collision) };
+  }
+};
+
 /* ===== Bundlad uppdateringskö ===== */
 const updateQueue = [];
 let updateTimer = null;
@@ -2351,43 +2444,27 @@ function prepareContainerDialog(item, tag, opts = {}) {
   }
   if (scanTagBtn) {
     scanTagBtn.onclick = () => {
-      startTagScanMode((scannedTag) => {
+      startTagScanMode(async (scannedTag) => {
         const targetName = cached?.name || tag;
-        const le = appendLog(`${targetName} – tag ${scannedTag} kopplas`, tag);
         setMsg("Sparar tag…", "");
-        gasCallWithRetry('addTag',
-          {sheetName: _sn || (cached?.place), rowNum: _rn || (cached?.rowNum), newTag: scannedTag},
-          {onAttempt: (n, total) => { if (n > 1 && le) le.querySelector('.msg').textContent = `${targetName} – tag ${scannedTag} kopplas (försök ${n}/${total})`; }})
-          .then(res => {
-            if (res.ok) {
-              tagDisplay.value = res.tag;
-              tagDisplay.style.opacity = "1";
-              const oldData = tagCache.get(tag);
-              if (oldData) {
-                if (tag.startsWith("S")) {
-                  tagCache.delete(tag);
-                  tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null, altTags: oldData.altTags || [], pendingSync: false });
-                  const oldMeta = metaCache.get(tag);
-                  if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
-                } else {
-                  tagCache.set(tag, { ...oldData, altTags: [...(oldData.altTags || []), res.tag], pendingSync: false });
-                }
-              }
-              setMsg("Tag kopplad!", "ok");
-              markAsDone(le);
-              renderLists();
-            } else if (res.collision) {
-              setMsg(`Taggen är redan kopplad till "${res.existingName}"`, "warn");
-              if (le) le.querySelector('.msg').textContent = `${targetName} – redan kopplad till "${res.existingName}"`;
-            } else {
-              setMsg(res.msg || "Kunde inte spara tag", "warn");
-              if (le) le.querySelector('.msg').textContent = `${targetName} – ${res.msg || 'misslyckades'}`;
-            }
-          })
-          .catch(err => {
-            setMsg("Fel: " + (err.message || err), "warn");
-            if (le) le.querySelector('.msg').textContent = `${targetName} – fel: ${err.message || err}`;
-          });
+        const result = await Save.linkTag(scannedTag, {
+          name: targetName,
+          sheetName: _sn || (cached?.place),
+          rowNum: _rn || (cached?.rowNum),
+          currentTag: tag
+        });
+        if (result.ok) {
+          tagDisplay.value = result.tag;
+          tagDisplay.style.opacity = "1";
+          setMsg("Tag kopplad!", "ok");
+          renderLists();
+        } else if (result.collision) {
+          setMsg(`Taggen är redan kopplad till "${result.res.existingName}"`, "warn");
+        } else if (result.err) {
+          setMsg("Fel: " + (result.err.message || result.err), "warn");
+        } else {
+          setMsg(result.res?.msg || "Kunde inte spara tag", "warn");
+        }
       });
     };
   }
@@ -2932,39 +3009,29 @@ function showLinkTagDialog(scannedTag) {
 
     // Wire upp matches-knapparna: klick → addTag mot vald artikel
     target.querySelectorAll('.offMatchBtn').forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const sheetName = btn.dataset.sheet || null;
         const rowNum = btn.dataset.row ? Number(btn.dataset.row) : null;
         const matchTag = btn.dataset.tag;
         const matchName = btn.dataset.name;
-        // Optimistisk uppdatering: lokala mutation + UI-respons direkt.
-        // pendingSync:true skyddar mot initData-clobber MELLAN tap och server-svar.
-        const oldData = tagCache.get(matchTag);
-        if (oldData) tagCache.set(matchTag, { ...oldData, altTags: [...(oldData.altTags || []), scannedTag], pendingSync: true });
         closeDialog();
         cooldown(scannedTag);
-        const le = appendLog(`${matchName} – tag ${scannedTag} kopplas`, matchTag);
         show(`Tag kopplad till "${matchName}"`, 'ok');
-        // Server-anrop i bakgrunden — retry vid nätverks-/timeout-fel, rulla tillbaka om alla försök fail:ar
-        gasCallWithRetry('addTag',
-          { sheetName, rowNum, newTag: scannedTag },
-          {onAttempt: (n, total) => { if (n > 1 && le) le.querySelector('.msg').textContent = `${matchName} – tag ${scannedTag} kopplas (försök ${n}/${total})`; }}
-        ).then(res => {
-          const cur = tagCache.get(matchTag);
-          if (!res?.ok) {
-            if (cur) tagCache.set(matchTag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== scannedTag), pendingSync: false });
-            show(res?.collision ? `Redan kopplad till "${res.existingName}"` : (res?.msg || 'Kunde inte koppla — rullade tillbaka'), 'warn');
-            if (le) le.querySelector('.msg').textContent = `${matchName} – ${res?.msg || 'misslyckades'}`;
-          } else if (cur) {
-            tagCache.set(matchTag, { ...cur, pendingSync: false });
-            markAsDone(le);
-          }
-        }).catch((err) => {
-          const cur = tagCache.get(matchTag);
-          if (cur) tagCache.set(matchTag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== scannedTag), pendingSync: false });
-          show('Oväntat fel — kopplingen rullades tillbaka', 'warn');
-          if (le) le.querySelector('.msg').textContent = `${matchName} – fel: ${err?.message || err}`;
+        const result = await Save.linkTag(scannedTag, {
+          name: matchName,
+          sheetName,
+          rowNum,
+          currentTag: matchTag
         });
+        if (!result.ok) {
+          if (result.collision) {
+            show(`Redan kopplad till "${result.res.existingName}"`, 'warn');
+          } else if (result.err) {
+            show('Oväntat fel — kopplingen rullades tillbaka', 'warn');
+          } else {
+            show(result.res?.msg || 'Kunde inte koppla — rullade tillbaka', 'warn');
+          }
+        }
       };
     });
 
@@ -3066,74 +3133,47 @@ function openLinkSearchDialog(tagToLink) {
       btn.type = "button"; btn.className = "statusRow";
       const hasTag = !tag.startsWith("S");
       btn.innerHTML = `<span class="sr-name">${esc(name)}</span><span class="sr-date">${hasTag ? "har tag" : "ingen tag"}</span>`;
-      btn.onclick = () => {
+      btn.onclick = async () => {
         closeSearchDialog();
         const isSynthetic = tag.startsWith("S");
+        const target = {
+          name,
+          sheetName: val.sheetName || val.place,
+          rowNum: val.rowNum,
+          currentTag: tag
+        };
         if (!isSynthetic) {
-          // Optimistisk: appenda alt-tag direkt + UI-respons. Rulla tillbaka vid fail.
-          // pendingSync:true skyddar mot initData-clobber under server-anropet.
-          const oldData = tagCache.get(tag);
-          if (oldData) tagCache.set(tag, { ...oldData, altTags: [...(oldData.altTags || []), tagToLink], pendingSync: true });
-          const le = appendLog(`${name} – tag ${tagToLink} kopplas`, tag);
+          // Mönster A: optimistisk UI-respons innan server-svaret
           show(`Tag kopplad till "${name}"`, "ok");
           renderLists();
           cooldown(tagToLink);
-          gasCallWithRetry('addTag',
-            {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink},
-            {onAttempt: (n, total) => { if (n > 1 && le) le.querySelector('.msg').textContent = `${name} – tag ${tagToLink} kopplas (försök ${n}/${total})`; }})
-            .then(res => {
-              const cur = tagCache.get(tag);
-              if (!res.ok) {
-                if (cur) tagCache.set(tag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== tagToLink), pendingSync: false });
-                renderLists();
-                show(res.collision ? `Redan kopplad till "${res.existingName}"` : (res.msg || "Kunde inte koppla — rullade tillbaka"), "warn");
-                if (le) le.querySelector('.msg').textContent = `${name} – ${res.msg || 'misslyckades'}`;
-              } else if (cur) {
-                tagCache.set(tag, { ...cur, pendingSync: false });
-                markAsDone(le);
-              }
-            })
-            .catch(err => {
-              const cur = tagCache.get(tag);
-              if (cur) tagCache.set(tag, { ...cur, altTags: (cur.altTags || []).filter(t => t !== tagToLink), pendingSync: false });
-              renderLists();
-              show("Oväntat fel — rullade tillbaka: " + (err.message || err), "warn");
-              if (le) le.querySelector('.msg').textContent = `${name} – fel: ${err.message || err}`;
-            });
+          const result = await Save.linkTag(tagToLink, target);
+          if (!result.ok) {
+            renderLists();
+            if (result.collision) {
+              show(`Redan kopplad till "${result.res.existingName}"`, "warn");
+            } else if (result.err) {
+              show("Oväntat fel — rullade tillbaka: " + (result.err.message || result.err), "warn");
+            } else {
+              show(result.res?.msg || "Kunde inte koppla — rullade tillbaka", "warn");
+            }
+          }
           return;
         }
-        // Syntetisk artikel: kräver server-svar för att få den nya tag-nyckeln
-        const le = appendLog(`${name} – tag ${tagToLink} kopplas`, tag);
+        // Mönster B: syntetisk artikel kräver server-svar för key-swap
         show("Kopplar tag…");
-        gasCallWithRetry('addTag',
-          {sheetName: val.sheetName || val.place, rowNum: val.rowNum, newTag: tagToLink},
-          {onAttempt: (n, total) => { if (n > 1 && le) le.querySelector('.msg').textContent = `${name} – tag ${tagToLink} kopplas (försök ${n}/${total})`; }})
-          .then(res => {
-            if (res.ok) {
-              const oldData = tagCache.get(tag);
-              if (oldData) {
-                tagCache.delete(tag);
-                tagCache.set(res.tag, { ...oldData, sheetName: null, rowNum: null, altTags: oldData.altTags || [] });
-                const oldMeta = metaCache.get(tag);
-                if (oldMeta) { metaCache.delete(tag); metaCache.set(res.tag, oldMeta); }
-              }
-              show(`Tag kopplad till "${name}"`, "ok");
-              markAsDone(le);
-              renderLists();
-            } else if (res.collision) {
-              show(`Taggen är redan kopplad till "${res.existingName}"`, "warn");
-              if (le) le.querySelector('.msg').textContent = `${name} – redan kopplad till "${res.existingName}"`;
-            } else {
-              show(res.msg || "Kunde inte koppla tag", "warn");
-              if (le) le.querySelector('.msg').textContent = `${name} – ${res.msg || 'misslyckades'}`;
-            }
-            cooldown(tagToLink);
-          })
-          .catch(err => {
-            show("Fel: " + (err.message || err), "warn");
-            if (le) le.querySelector('.msg').textContent = `${name} – fel: ${err.message || err}`;
-            cooldown(tagToLink);
-          });
+        const result = await Save.linkTag(tagToLink, target);
+        if (result.ok) {
+          show(`Tag kopplad till "${name}"`, "ok");
+          renderLists();
+        } else if (result.collision) {
+          show(`Taggen är redan kopplad till "${result.res.existingName}"`, "warn");
+        } else if (result.err) {
+          show("Fel: " + (result.err.message || result.err), "warn");
+        } else {
+          show(result.res?.msg || "Kunde inte koppla tag", "warn");
+        }
+        cooldown(tagToLink);
       };
       searchResults.appendChild(btn);
       count++;

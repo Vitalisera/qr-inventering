@@ -1,6 +1,13 @@
 {
-  "latest": 115,
+  "latest": 116,
   "versions": [
+    {
+      "version": 116,
+      "date": "2026-05-14",
+      "notes": [
+        "Fokus i sökrutan funkar nu när du trycker 'Koppla till befintlig' på iPhone. Förra dialogen stängdes en bråkdels sekund efter att fokuset sattes, vilket fick iOS-tangentbordet att inte öppnas. Nu öppnas sökrutan först, sen stängs föregående."
+      ]
+    },
     {
       "version": 115,
       "date": "2026-05-14",

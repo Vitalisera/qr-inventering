@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 115;
+const APP_VERSION = 116;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2895,8 +2895,10 @@ function showLinkTagDialog(scannedTag) {
   qs("#createNewFromScan").onclick = () => { prepareNewItemDialog(scannedTag); };
   qs("#cancelLinkBtn").onclick = () => { closeDialog(); cooldown(scannedTag); };
   qs("#linkExistingBtn").onclick = () => {
-    closeDialog();
+    // iOS PWA: öppna sökdialogen INNAN vi stänger denna — annars blur:ar closeDialog()
+    // searchInput direkt efter att vi satt focus, och iOS-tangentbordet öppnas inte.
     openLinkSearchDialog(scannedTag);
+    closeDialog();
   };
   openDialog();
 
@@ -3027,16 +3029,15 @@ function openLinkSearchDialog(tagToLink) {
   searchResults.innerHTML = "";
   overlay.classList.add("blurred");
   searchDialog.classList.remove("hidden");
-  // iOS PWA quirk: focus kan blockas om (a) annat element har fokus, (b) dialogen inte
-  // hunnit renderas, eller (c) user-gesture-context förlorats via scan-callback.
-  // Multi-fallback: blur active → RAF + preventScroll → setTimeout-fallback x2.
+  // iOS PWA: focus måste köras SYNCHRONOUSLY inom user-gesture för att tangentbordet
+  // ska öppnas. RAF eller setTimeout läggs OFTA utanför user-gesture-fönstret på iOS.
+  // Matcher openSearchDialog (rad 1406) som funkar.
   if (document.activeElement && document.activeElement !== searchInput && document.activeElement.blur) {
     document.activeElement.blur();
   }
-  const doFocus = () => { try { searchInput.focus({ preventScroll: true }); } catch (_) { searchInput.focus(); } };
-  requestAnimationFrame(doFocus);
-  setTimeout(doFocus, 80);
-  setTimeout(doFocus, 250);
+  searchInput.focus();
+  // Fallback om sync-call råkade missa (sällan men hänt vid DOM-race):
+  requestAnimationFrame(() => searchInput.focus());
 
   const h2 = searchDialog.querySelector("h2");
   const origTitle = h2.textContent;

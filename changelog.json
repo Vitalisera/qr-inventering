@@ -1,6 +1,13 @@
 {
-  "latest": 111,
+  "latest": 112,
   "versions": [
+    {
+      "version": 112,
+      "date": "2026-05-14",
+      "notes": [
+        "Bättre träffsäkerhet vid skanning av streckkoder som börjar med nollor. Tidigare kunde ledande nollor tappas bort i artikellistan så att skannern inte hittade artikeln — nu matchas koden ändå."
+      ]
+    },
     {
       "version": 111,
       "date": "2026-05-13",

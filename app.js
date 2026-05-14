@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 111;
+const APP_VERSION = 112;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -401,10 +401,22 @@ function acceptScan(code, format) {
 }
 
 // Slår upp en skannad tag i tagCache — primär nyckel först, sedan altTags linjärt.
+// Fallback: gsheets tappar ledande nollor i TAG-celler ("01234" → 1234). Om exakt
+// match miss:ar, jämför numeriskt (utan ledande 0:or) så skadade tags fångas.
 function lookupByTag(scanned) {
   if (tagCache.has(scanned)) return { tag: scanned, item: tagCache.get(scanned) };
   for (const [primary, item] of tagCache.entries()) {
     if (item.altTags && item.altTags.includes(scanned)) return { tag: primary, item };
+  }
+  const scannedNum = scanned.replace(/^0+/, '') || '0';
+  if (scannedNum === scanned) return null;
+  for (const [primary, item] of tagCache.entries()) {
+    if ((primary.replace(/^0+/, '') || '0') === scannedNum) return { tag: primary, item };
+    if (item.altTags) {
+      for (const t of item.altTags) {
+        if ((String(t).replace(/^0+/, '') || '0') === scannedNum) return { tag: primary, item };
+      }
+    }
   }
   return null;
 }

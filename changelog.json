@@ -1,6 +1,13 @@
 {
-  "latest": 114,
+  "latest": 115,
   "versions": [
+    {
+      "version": 115,
+      "date": "2026-05-14",
+      "notes": [
+        "Bättre fokus i sökrutan när du kopplar tag till befintlig artikel — på iPad/iPhone gav RAF-fokus tyst miss ibland, nu kombineras flera fallbacks så markören hamnar rätt direkt."
+      ]
+    },
     {
       "version": 114,
       "date": "2026-05-14",

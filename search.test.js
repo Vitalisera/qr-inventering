@@ -185,6 +185,25 @@ t('PASSING-AFTER: Search.articles (koppla-dialog-vägen) HITTAR olivilja→Olivo
   assert(hits.find(h => h.tag === 't1').source === 'fuzzy', 'markerad som fuzzy-källa');
 });
 
+t('REGRESSION v119: koppla-dialog-vägen prefix-matchar "tvättm"→"Tvättmedel"', () => {
+  // Projektägarens skärmdump: query "tvättm" gav INTE "Tvättmedel" i den lokala
+  // länk-listan (bara under "Liknande (AI)"). Detta bevisar att Search.articles
+  // SJÄLV är korrekt — "tvättm" är ren prefix av "Tvättmedel" och måste ge en
+  // prefix-träff (source:'prefix'). Regressionen låg i dubbel-handler-
+  // interferensen i openLinkSearchDialog, inte i fuzzy-motorn.
+  const cache = new Map([
+    ['x1', { name: 'Tvättmedel', sheetName: 'Städ', rowNum: 3 }],
+    ['x2', { name: 'Schampoo', sheetName: 'Bad', rowNum: 8 }],
+    ['x3', { name: 'Disktrasor', sheetName: 'Kök', rowNum: 2 }],
+    ['x4', { name: 'Handsprit', sheetName: 'Bad', rowNum: 11 }],
+  ]);
+  const hits = Search.articles('tvättm', cache.entries(), { maxSuggestions: 50 });
+  const t1 = hits.find(h => h.tag === 'x1');
+  assert(t1, '"tvättm" hittar Tvättmedel i koppla-dialog-vägen');
+  eq(t1.source, 'prefix', 'prefix-match (inte fuzzy) eftersom "tvättm" är ren prefix');
+  assert(!hits.some(h => h.tag === 'x2'), 'Schampoo matchar INTE "tvättm" (avst. 7)');
+});
+
 t('koppla-dialog returnerar även syntetiska (ingen tag) artiklar', () => {
   const tags = Search.articles('vispgrädde', E(), { maxSuggestions: 50 }).map(h => h.tag);
   assert(tags.includes('S_KökR7'), 'syntetisk artikel finns kvar i urvalet');

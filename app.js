@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 119;
+const APP_VERSION = 120;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -1623,7 +1623,19 @@ searchFab?.addEventListener('click', openSearchDialog);
 closesearchFab?.addEventListener('click', closeSearchDialog);
 searchInput?.addEventListener('input', e => renderSearchResults(e.target.value));
 let _searchAiTimer = null;
+// Sätts av openLinkSearchDialog: i "koppla tag"-läge äger länk-handlern (.oninput,
+// rad ~3248) #searchResults helt. searchInput har dock en PERMANENT
+// addEventListener('input', renderSearchResults) (rad 1624) som .oninput INTE
+// ersätter — båda fyrar. Utan denna guard renderar fritextsöket (med AI-sektion
+// wired till openContainerForTag) ovanpå/efter länk-listan → fel artikel öppnas
+// i stället för att taggen kopplas. Guarden gör renderSearchResults inert i
+// länk-läge och städar dess pågående AI-timer.
+let _linkModeActive = false;
 function renderSearchResults(q){
+  if(_linkModeActive){
+    if(_searchAiTimer){ clearTimeout(_searchAiTimer); _searchAiTimer=null; }
+    return;
+  }
   const qn=(q||"").toLocaleLowerCase('sv').trim();
   searchResults.innerHTML="";
   if(_searchAiTimer){ clearTimeout(_searchAiTimer); _searchAiTimer=null; }
@@ -3239,11 +3251,31 @@ function openLinkSearchDialog(tagToLink) {
 
   const origHandler = searchInput.oninput;
   const origFabClick = closesearchFab.onclick;
+  // Bug 1: #newItemBtn har en PERMANENT addEventListener → createManualArticle
+  // (rad ~3584) som gör tag='M'+Date.now() och IGNORERAR den skannade taggen.
+  // I länk-läge ska "Ny artikel" i stället bära scannedTag vidare så den nya
+  // artikeln får taggen. Override via onclick (körs före listener) som öppnar
+  // ny-artikel-dialogen med tagToLink och stänger sökdialogen.
+  const newItemBtn = qs('#newItemBtn');
+  const origNewItemClick = newItemBtn ? newItemBtn.onclick : null;
+  if (newItemBtn) {
+    newItemBtn.onclick = (ev) => {
+      ev.stopImmediatePropagation();           // hindra createManualArticle-listenern
+      closeSearchDialog();                      // städar _linkModeCleanup nedan
+      prepareNewItemDialog(tagToLink);          // bär scannedTag → ny rad får taggen
+    };
+  }
+  _linkModeActive = true;
+  // Permanent addEventListener(renderSearchResults) är nu igång parallellt med
+  // .oninput-länk-handlern; stäng av fritextsökets pågående AI-timer direkt.
+  if (_searchAiTimer) { clearTimeout(_searchAiTimer); _searchAiTimer = null; }
   // Central cleanup — körs av closeSearchDialog oavsett om man avbryter eller slutför.
   _linkModeCleanup = () => {
+    _linkModeActive = false;
     h2.textContent = origTitle;
     searchInput.oninput = origHandler;
     closesearchFab.onclick = origFabClick;
+    if (newItemBtn) newItemBtn.onclick = origNewItemClick;
   };
   searchInput.oninput = (e) => {
     const qn = (e.target.value || "").toLocaleLowerCase('sv').trim();

@@ -1,6 +1,14 @@
 {
-  "latest": 119,
+  "latest": 120,
   "versions": [
+    {
+      "version": 120,
+      "date": "2026-05-15",
+      "notes": [
+        "Rättningar i 'Koppla till befintlig': sökningen hittar nu artiklar även vid delvis inskrivet namn (t.ex. 'tvättm' → 'Tvättmedel'), och om du trycker på ett AI-förslag kopplas taggen som den ska istället för att fel ruta öppnas.",
+        "När du skannar en okänd tagg och väljer 'Ny artikel' följer taggen nu med till den nya artikeln."
+      ]
+    },
     {
       "version": 119,
       "date": "2026-05-15",

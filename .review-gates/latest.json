@@ -1,68 +1,50 @@
 {
   "approved": true,
   "status": "approved",
-  "reviewer": "code-reviewer (Opus 4.7) — v94 pure-rename filter→settings",
-  "reviewed_at": "2026-05-09T12:00:00+02:00",
-  "reviewed_sha": "4b1fec78798fffd25ebdfe8c32fa7124f52cb081",
-  "target": "qr-pwa: app.js + index.html + style.css + sw.js — Round 4 rename från v93 system review",
-  "scope": "Granskar pure-rename: filterDialog→settingsDialog, applyFilterBtn→applySettingsBtn, cancelFilterBtn→cancelSettingsBtn, clearFilterBtn→toggleAllPlacesBtn, loadPlaceFilter→loadSettings, savePlaceFilter→saveSettings, openFilterDialog→openSettingsDialog, closeFilterDialog→closeSettingsDialog, help-filter→help-settings, data-help filter→settings. Plus APP_VERSION 93→94, sw.js CACHE v93→v94, app.js?v=91→v=94.",
-  "summary": "Renamen är komplett och konsekvent. Alla 8 JS-symboler bytta överallt där de förekommer (deklaration + alla referenser, inklusive printListBtn-handler rad 1212, Escape-handler rad 1855, dialogOpen-helper rad 689, init-anrop rad 3296). Alla 6 HTML-id/data-help-attribut bytta. Alla 9 CSS-selektorer bytta. Inga kvarvarande gamla namn någonstans. DOM-id matchar JS qs()-anrop 1:1. Help-toggle-handlern (rad 3404-3412) bygger helpId dynamiskt från data-help, så data-help='settings' → #help-settings funkar utan kodändring. Versionsstack (APP_VERSION=94, CACHE=v94, app.js?v=94) är synkad.",
+  "reviewer": "code-reviewer subagent — Nivå 2 (logSingle + flushUpdates-separation) 2026-05-15",
+  "reviewed_at": "2026-05-15T07:43:14+02:00",
+  "reviewed_sha": "c956b9aa71cbc34cf12352f6dd785584d90f2b8a",
+  "target": "qr-pwa app.js — Save.logSingle + flushUpdates-separation",
+  "scope": "Granskat hela git diff app.js (Nivå 2; Save.linkTag är redan committad i c956b9a och syns ej i diffen). Verifierat Save.logSingle-helper (rad 962-977) mot 4 callsites: #confirmSingle (2178), #registerSingleBtn (2564), skanning singel direkt (3629), skanning lookup singel (3645). Verifierat flushUpdates-separationen i 5 helpers (_buildBatch_ 995, _clearSyncBusyUI_ 1007, _applyBatchResults_ 1015, _renderBatchOutcome_ 1033, _revalidateCacheTs_ 1050) + orkestrator flushUpdates (1063) rad-för-rad mot pre-refaktor (git show HEAD:app.js). node --check OK, 49/49 tester pass.",
+  "summary": "Disciplinerad mekanisk extraktion: Save.logSingle konsoliderar ett exakt 8-stegs-mönster och flushUpdates bröts i 5 namngivna helpers utan beteendeändring. Rad-för-rad-jämförelse mot HEAD bekräftar identisk ordning och timing i synk-kärnan — _buildBatch_ tömmer kön synkront före gasCall, flushInFlight tilldelas synkront, _clearSyncBusyUI_ körs i både then och catch, finally-blocket nollar flushInFlight oförändrat. Cache-ordningen i lookup-callsiten (tagCache.set FÖRE Save.logSingle) är bevarad. Approved för lokal commit; deploy efter Roberts iPhone-verifiering.",
   "checks": {
-    "rename_completeness": "pass — grep efter alla 10 gamla namn (filterDialog, applyFilterBtn, cancelFilterBtn, clearFilterBtn, loadPlaceFilter, savePlaceFilter, openFilterDialog, closeFilterDialog, help-filter, data-help=\"filter\") returnerar 0 träffar i app.js/index.html/style.css/sw.js/manifest.json",
-    "dom_js_alignment": "pass — qs('#settingsDialog'), qs('#applySettingsBtn'), qs('#cancelSettingsBtn'), qs('#toggleAllPlacesBtn') matchar nya HTML-id:n exakt",
-    "event_handlers": "pass — settingsBtn click→openSettingsDialog, applySettingsBtn click, cancelSettingsBtn click, toggleAllPlacesBtn click, Escape→closeSettingsDialog, printListBtn→applySettingsBtn.click() — alla 6 bindings använder de nya variablerna",
-    "behavior_preservation": "pass — ingen logik ändrad. saveSettings() har samma localStorage-nycklar (vitaliseraPlaceFilter etc), öppna/stäng-flow identiskt, toggleAllPlaces har samma logik som tidigare clearFilter (togglar alla place-checkboxar)",
-    "version_sync": "pass — APP_VERSION=94 (app.js:9), CACHE='vitalisera-inv-v94' (sw.js:1), <script src=\"app.js?v=94\"> (index.html:163) — alla tre synkade per release-checklista",
-    "regression_risk": "minimal — pure rename, ingen kontrollflödesändring. Gamla service workers (v93) som cache:ar gamla filer hanteras av befintlig SW skipWaiting+claim",
-    "xss": "n/a — ingen ny innerHTML eller user-data-rendering",
-    "anonymous_access": "n/a — bara frontend-rename, ingen API-yta ändrad"
+    "syntax": "pass — node --check app.js exit 0",
+    "tests": "pass (49/49 — autocomplete 20/0, checksum 15/0, simplify 14/0)",
+    "logsingle_parity": "pass — alla 4 callsites bevarar exakt beteende: appendLog→show→logTag→assertOk→markAsDone→addUndoButton / markLogFail→setLocalMeta→recomputeMaxLast→renderLists. Callsites behåller eget ansvar för cooldown/busy/return/closeDialog/statusDefault. #confirmSingle behåller statusDefault() efter (2179), #registerSingleBtn behåller closeDialog() efter (2565), scan-callsites behåller cooldown+busy=false+return (3630, 3646). sheetName/rowNum ?? null är ofarligt: backend Code.js gör 'if (sheetName && rowNum)' där null OCH undefined båda är falsy → identisk gren. Scan-callsites (3629, 3645) skickar ingen sheetName/rowNum → blir null, originalen utelämnade dem (undefined) — funktionellt identiskt.",
+    "logsingle_cache_order": "pass — KRITISK kontroll: original lookup-singel (HEAD 3620-3621) körde tagCache.set(scanned,...) FÖRE setLocalMeta/recomputeMaxLast/renderLists. Refaktorn behåller exakt ordning: rad 3644 tagCache.set(scanned,...) körs FÖRE rad 3645 Save.logSingle(scanned,...), och renderLists() ligger inuti helpern → cachen är redan korrekt populerad när renderLists() körs. De andra 3 callsites hade ingen tagCache.set i mönstret. Inget dubbel-show: varje original hade exakt ett show('Uppdaterar…'); det flyttades in i helpern och togs bort från alla 4 callsites — verifierat att ingen callsite har kvar ett eget show före anropet.",
+    "flushupdates_sync_timing": "pass — _buildBatch_ anropas SYNKRONT på rad 1066 (ej i .then), sätter updateQueue.length=0 + updateTimer=null INNAN gasCall på rad 1069, exakt som HEAD (queue-töm rad 970-971 låg synkront före gasCall rad 975). Race där queueUpdate under flight hamnar i fel batch är därmed utesluten — nya jobb går till nästa batch. flushInFlight = gasCall(...) tilldelas synkront (rad 1069), waitForPendingSync (990) await:ar den. Den 1000ms-debounce-guarden (queueUpdate rad 986) opåverkad.",
+    "flushupdates_then_catch_order": "pass — then-ordning identisk med HEAD: _clearSyncBusyUI_ (clearBusy) → _applyBatchResults_ (applyResults) → console.log('Synk klar:') → renderLists() → _renderBatchOutcome_ → _revalidateCacheTs_. catch kör _clearSyncBusyUI_ först (samma busy/overlay-rensning som HEAD), sedan console.error + msgLine-warn + show — oförändrat. finally(() => flushInFlight = null) bit-identisk med HEAD. console.log-strängar oförändrade ('Skickar batch:', 'Synk klar:', 'Servercache uppdaterad, hämtar ny data...', 'batch fail'). setTimeout(5000) i _renderBatchOutcome_ stänger korrekt över failedTags (parameter) + msgLine (lokal const i samma funktion) — closuren är intakt, ingen stale-referens eftersom msgLine hämtas på nytt inuti helpern istället för att delas från then-scopet.",
+    "no_double_calls": "pass — inga dubbel-anrop av show, renderLists, gasCall eller setLocalMeta. logTag-anropet sker exakt en gång per callsite (grep visar 0 kvarvarande 'gasCall(\\'logTag\\'' utanför helpern bland de 4 ersatta). _clearSyncBusyUI_ körs en gång per promise-utfall (then ELLER catch, ej båda — promise-semantik). renderLists() körs en gång i then (1074) plus en gång inuti varje Save.logSingle — samma totala antal som originalen.",
+    "tdz_hoisting": "pass — Save.logSingle refererar setLocalMeta, recomputeMaxLast, renderLists, appendLog, markAsDone, addUndoButton, markLogFail som alla är 'function'-declarations (hoistade till modul-scope) och anropas först vid runtime (efter full parse), ej vid objekt-literal-evaluering. const Save evalueras vid modul-load men logSingle-kroppen exekveras aldrig då. flushUpdates + _-helpers är alla function-declarations → ömsesidiga referenser hoistade, ingen TDZ. _buildBatch_ används före sin lexikala position i koden inte aktuellt (definierad rad 995, anropad 1066).",
+    "regression_risk": "low — Rent mekanisk extraktion. flushUpdates-helpers är bit-för-bit identiska med pre-refaktor-blocken; enda skillnaden är funktionsgränser. logSingle introducerar ?? null för sheetName/rowNum vilket är backend-säkert (falsy-guard). Cache-ordning i lookup-callsiten bevarad. Inga nya innerHTML, ingen access-modelländring."
   },
   "issues": [
     {
       "severity": "suggestion",
-      "id": "S1",
-      "where": "style.css:469 + 477, app.js:941, 1024, 1071, 1091",
-      "msg": "CSS-klassen 'filterSectionTitle' (med 'filterSectionTitle--first' BEM-modifier) finns kvar och används i 4 JS-tilldelningar. Inkonsekvent med rename-temat — om 'filter' ska bort helt så bör denna också till 'settingsSectionTitle'. Inte ett buggfix, bara konsistens.",
+      "id": "logsingle-test-coverage",
+      "where": "tests/",
+      "msg": "Save.logSingle saknar enhetstest. Helpern är deterministisk och mockbar (gasCall/appendLog/setLocalMeta). Lägg till units: success-path (markAsDone+addUndoButton), fail-path (markLogFail), samt verifiering att setLocalMeta/recomputeMaxLast/renderLists körs synkront oavsett promise-utfall. Inga blockers — manuell iPhone-verifiering enligt projekt-konvention.",
       "blocking": false
     },
     {
       "severity": "suggestion",
-      "id": "S2",
-      "where": "app.js:1718-1722",
-      "msg": "Lokala variabeln 'filterText' i renderListsHeader (sätts till ' (Alla)' eller ' (Steg 2, ...)') beskriver vilka filter som är aktiva och rör listrubrikerna. Det är semantiskt 'filter' i klassisk mening (subset av items), inte 'settings'. OK att behålla — eller döp till 'placesText'/'activeFilterText'. Ingen åtgärd nödvändig.",
-      "blocking": false
-    },
-    {
-      "severity": "suggestion",
-      "id": "S3",
-      "where": "changelog.json",
-      "msg": "Ingen v94-entry i changelog.json (latest=93). Pure-rename utan beteendeändring → ingen användar-synlig effekt → ingen changelog-rad behövs i strikt mening. Men om APP_VERSION bumpas så kommer 'Vad är nytt?'-banner trigga utan content att visa. Verifiera att banner-logiken hanterar APP_VERSION > latest gracefully (ingen ny rad), eller lägg till en intern 'inga användarändringar'-entry.",
-      "blocking": false
-    },
-    {
-      "severity": "suggestion",
-      "id": "S4",
-      "where": "html/css — 'Filterdialog'-kommentar style.css:444",
-      "msg": "Kommentaren '/* Filterdialog */' på style.css:444 över de renamade selektorerna är nu missvisande. Borde uppdateras till '/* Inställningsdialog */' i samma commit.",
+      "id": "underscore-helper-naming",
+      "where": "app.js:995-1058",
+      "msg": "_buildBatch_/_clearSyncBusyUI_ etc använder leading+trailing underscore som privat-konvention. Konsekvent inom filen men avviker från Save.*-objektmönstret. Överväg att samla flush-internals i ett const Sync = {...}-objekt vid en framtida Nivå-3-iteration för symmetri med Save. Ej blockerande, ren stilfråga.",
       "blocking": false
     }
   ],
   "verified": [
-    "grep -nE 'filterDialog|applyFilterBtn|cancelFilterBtn|clearFilterBtn|loadPlaceFilter|savePlaceFilter|openFilterDialog|closeFilterDialog|help-filter|data-help=\"filter\"' returnerar 0 träffar i alla source-filer",
-    "Alla 4 qs()-uppslag på de renamade id:n matchar HTML-elementen 1:1",
-    "help-toggle-handlern (rad 3404-3412) bygger helpId från data-help-attributet utan hårdkodade strängar — fungerar transparent med rename:n",
-    "applySettingsBtn?.click() i printListBtn-handler (rad 1212) refererar till samma button som tidigare applyFilterBtn",
-    "Escape-tangenten stänger nu settingsDialog (rad 1855)",
-    "loadSettings() anropas vid init (rad 3296), saveSettings() anropas i applySettingsBtn-handlern (rad 1185) — laddnings/spar-flow intakt",
-    "toggleAllPlacesBtn-handlern (rad 1138-1146) implementerar samma toggle-logik som tidigare clearFilterBtn — beteende identiskt",
-    "Versionsstack synkad: APP_VERSION=94 + CACHE='vitalisera-inv-v94' + app.js?v=94"
+    "node --check app.js exit 0",
+    "49/49 tester pass (autocomplete 20/0, checksum 15/0, simplify 14/0)",
+    "git diff visar ENDAST Nivå 2 — Save.linkTag (c956b9a) ej i diffen, bekräftar att Nivå 1 redan committad",
+    "grep Save.logSingle = 4 callsites (2178, 2564, 3629, 3645) + 1 definition (962) — matchar spec",
+    "Lookup-callsite: rad 3644 tagCache.set(scanned,...) körs FÖRE rad 3645 Save.logSingle — cache-ordning identisk med HEAD 3620-3621",
+    "Pre-refaktor flushUpdates (git show HEAD:app.js 961-1040) jämförd rad-för-rad mot ny flushUpdates+helpers — queue-töm synkront före gasCall bevarad, then-ordning bevarad, catch+finally bit-identiska",
+    "show('Uppdaterar…') borttagen från alla 4 callsites, finns exakt en gång i helpern (rad 965) — inget dubbel/tappat anrop",
+    "backend-guard 'if (sheetName && rowNum)' gör null===undanfall identiskt med undefined — ?? null ofarligt",
+    "_renderBatchOutcome_ setTimeout(5000)-closure stänger över egen parameter failedTags + lokal msgLine — ingen stale closure från then-scopet"
   ],
-  "checklist_release": {
-    "app_version_bumped": true,
-    "sw_cache_bumped": true,
-    "script_src_v_bumped": true,
-    "changelog_entry": false
-  },
   "decision": "approved",
-  "notes": "Robert frågade specifikt om filterText/filterSectionTitle bör renames också. Min rekommendation: 'filterSectionTitle' (CSS-klass + 4 JS-användningar) bör renames för konsistens (S1) — det är inte en bugg utan en städ-uppföljning som kan göras i v95. 'filterText' (S2) är OK att behålla eftersom det semantiskt beskriver aktivt filter (subset av items), inte UI-dialogen. Inga blocking issues. Säker att committa och deploya."
+  "notes": "Nivå 2 är en exemplarisk beteende-bevarande extraktion. Synk-kärnan (flushUpdates) verifierad rad-för-rad mot HEAD: ingen timing- eller ordningsändring, ingen race introducerad. Save.logSingle bevarar paritet i alla 4 callsites inkl. den kritiska tagCache.set-före-renderLists-ordningen i lookup-flödet. Suggestions är icke-blockerande städ/test-noteringar för framtida iteration. Säker för lokal commit. INGEN PUSH/clasp/deploy — först efter Roberts iPhone-verifiering enligt projekt-konvention."
 }

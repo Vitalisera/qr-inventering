@@ -105,6 +105,7 @@
       <select id="manualCategory"></select>
       <input id="manualCategoryNew" type="text" placeholder="Ange ny kategori" autocomplete="off" style="display:none" />
       <input id="manualQty" type="text" inputmode="decimal" pattern="[0-9,.]*" placeholder="Mängd just nu (1 som standard)" autocomplete="off" />
+      <input id="manualMinQty" type="number" inputmode="decimal" placeholder="Antal som ska finnas under kurs" autocomplete="off" />
     </div>
     <div id="dialogInputWrap" class="qty-stepper hidden">
       <button type="button" id="qtyDec" class="stepper-btn" aria-label="Minska">−</button>
@@ -168,7 +169,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=118"></script>
+  <script src="app.js?v=119"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

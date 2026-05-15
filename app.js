@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 118;
+const APP_VERSION = 119;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -977,6 +977,73 @@ const Save = {
   }
 };
 
+/* ===== Gemensam artikel-sök (en källa, samma fuzzy överallt) =====
+   Search.articles kapslar EXAKT den fuzzy-logik som tidigare låg inline i
+   renderSearchResults: bygg en wordMap (namn + synonymer) av kandidat-
+   entries och kör Autocomplete.suggest med de kanoniska opts:na. TUNN —
+   ingen DOM, ingen dialog, ingen AI. Callsites gör sin egen filtrering
+   (activePlaces/onlyLow) FÖRE och äger sin egen UI/koppling EFTER.
+
+   entries: iterable av [tag, val]-par (samma form som tagCache.entries()).
+   opts.fuzzy=false → exakt samma Autocomplete-opts som findSimilarItems
+   (minPrefixHits:0, ingen fuzzyThreshold). Default = renderSearchResults-opts.
+   Returnerar [{ tag, label, syn?, source }] i Autocomplete-rankad ordning,
+   en post per tag (dedupe på tag, första träff vinner). */
+const Search = {
+  // Kanoniska opts — bit-identiska mot tidigare renderSearchResults-anrop.
+  SUGGEST_OPTS: { matchMode: 'substring', maxSuggestions: 200, minPrefixHits: 8, fuzzyThreshold: 2.5 },
+  _buildWordMap(entries) {
+    const wordMap = new Map();
+    for (const [tag, val] of entries) {
+      const name = val && val.name || ""; if (!name) continue;
+      const nameKey = name.toLocaleLowerCase('sv');
+      if (!wordMap.has(nameKey)) wordMap.set(nameKey, { tag, label: name });
+      if (Array.isArray(val.synonyms)) {
+        for (const s of val.synonyms) {
+          const sn = String(s || "").trim(); if (!sn) continue;
+          const sk = sn.toLocaleLowerCase('sv');
+          if (!wordMap.has(sk)) wordMap.set(sk, { tag, label: name, syn: sn });
+        }
+      }
+    }
+    return wordMap;
+  },
+  articles(query, entries, opts) {
+    if (typeof Autocomplete === 'undefined') return [];
+    const qn = (query || "").toLocaleLowerCase('sv').trim();
+    if (!qn) return [];
+    const wordMap = this._buildWordMap(entries);
+    const wordlist = [...wordMap.keys()];
+    const o = opts || {};
+    // queries: stöd per-ord-split (findSimilarItems-beteende) via opts.splitWords
+    let queries = [qn];
+    if (o.splitWords) {
+      const words = qn.split(/\s+/).filter(w => w.length >= 3);
+      queries = words.length ? [qn, ...words] : [qn];
+    }
+    const sopts = o.fuzzy === false
+      ? { matchMode: 'substring', maxSuggestions: o.maxSuggestions || 200, minPrefixHits: 0 }
+      : { ...this.SUGGEST_OPTS, ...(o.maxSuggestions ? { maxSuggestions: o.maxSuggestions } : {}) };
+    const out = [];
+    const seenTag = new Set();
+    const seenWord = new Set();
+    for (const q of queries) {
+      const suggestions = Autocomplete.suggest(q, wordlist, sopts);
+      for (const sug of suggestions) {
+        if (seenWord.has(sug.word)) continue;
+        seenWord.add(sug.word);
+        const info = wordMap.get(sug.word); if (!info) continue;
+        if (seenTag.has(info.tag)) continue;
+        seenTag.add(info.tag);
+        out.push({ tag: info.tag, label: info.label, syn: info.syn, source: sug.source });
+        if (o.maxSuggestions && out.length >= o.maxSuggestions) return out;
+      }
+      if (o.maxSuggestions && out.length >= o.maxSuggestions) break;
+    }
+    return out;
+  }
+};
+
 /* ===== Bundlad uppdateringskö ===== */
 const updateQueue = [];
 let updateTimer = null;
@@ -1562,10 +1629,12 @@ function renderSearchResults(q){
   if(_searchAiTimer){ clearTimeout(_searchAiTimer); _searchAiTimer=null; }
   if(!qn) return;
 
-  // Bygg ordlista (namn + synonymer) av filterpassade items.
-  // wordMap: norm(ord) → { tag, label, syn? }
-  const wordMap = new Map();
+  // Filterpassade entries (activePlaces/onlyLow) — filtreringen ÄGS av
+  // callsite, sökningen delegeras till Search.articles (en källa, samma
+  // fuzzy överallt). nameToTag = AI-resultat-namn → tag-lookup nedan.
+  const passing = [];
   const passingTags = [];
+  const nameToTag = new Map();
   for(const [tag, val] of tagCache.entries()){
     const name = val?.name||""; if(!name) continue;
     if(activePlaces && !activePlaces.has(val.place||"Okänd")) continue;
@@ -1575,31 +1644,21 @@ function renderSearchResults(q){
       if(!isLow) continue;
     }
     passingTags.push(tag);
+    passing.push([tag, val]);
     const nameKey = name.toLocaleLowerCase('sv');
-    if(!wordMap.has(nameKey)) wordMap.set(nameKey, { tag, label: name });
-    if(Array.isArray(val.synonyms)){
-      for(const s of val.synonyms){
-        const sn = String(s||"").trim(); if(!sn) continue;
-        const sk = sn.toLocaleLowerCase('sv');
-        if(!wordMap.has(sk)) wordMap.set(sk, { tag, label: name, syn: sn });
-      }
-    }
+    if(!nameToTag.has(nameKey)) nameToTag.set(nameKey, tag);
   }
 
-  const wordlist = [...wordMap.keys()];
-  const suggestions = (typeof Autocomplete !== 'undefined')
-    ? Autocomplete.suggest(qn, wordlist, { matchMode: 'substring', maxSuggestions: 200, minPrefixHits: 8, fuzzyThreshold: 2.5 })
-    : [];
+  const suggestions = Search.articles(qn, passing);
 
   const shownTags = new Set();
-  for(const sug of suggestions){
-    const info = wordMap.get(sug.word); if(!info) continue;
+  for(const info of suggestions){
     if(shownTags.has(info.tag)) continue;
     shownTags.add(info.tag);
     const btn = document.createElement('button');
     btn.type = "button"; btn.className = "statusRow";
     const synHint = info.syn ? ` <span class="sr-syn">(${esc(info.syn)})</span>` : '';
-    const fuzzyHint = sug.source === 'fuzzy' ? ` <span class="sr-syn">(liknande)</span>` : '';
+    const fuzzyHint = info.source === 'fuzzy' ? ` <span class="sr-syn">(liknande)</span>` : '';
     const m = metaCache.get(info.tag) || {};
     const saldo = m.qty != null && m.qty !== "" ? `${esc(m.qty)} ${esc(m.unit || "")}`.trim() : "";
     btn.innerHTML = `<span class="sr-name">${esc(info.label)}${synHint}${fuzzyHint}</span><span class="sr-saldo">${saldo}</span><span class="sr-date">${esc(m.lastStr||"")}</span>`;
@@ -1643,8 +1702,7 @@ function renderSearchResults(q){
       header.textContent = 'Liknande (AI)';
       searchResults.appendChild(header);
       for(const r of results){
-        const info = wordMap.get(String(r.name||"").toLocaleLowerCase('sv'));
-        const tag = info?.tag;
+        const tag = nameToTag.get(String(r.name||"").toLocaleLowerCase('sv'));
         if(!tag) continue;
         const btn = document.createElement('button');
         btn.type = 'button'; btn.className = 'statusRow aiResult';
@@ -2120,7 +2178,7 @@ function resetDialog(){
   try {
     if (dlg.contains(document.activeElement)) document.activeElement.blur?.();
   } catch {}
-  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip,.commentBlock').forEach(el=>el.remove());
+  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";{const _mq=qs('#manualMinQty');if(_mq)_mq.value="";}if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip,.commentBlock').forEach(el=>el.remove());
 }
 
 /* ===== Behållare-dialog ===== */
@@ -2908,40 +2966,20 @@ function cancelTagScan() {
 // — om OFF säger "Kaffe Lavazza" och vi har en "Kaffe Zoégas" är det
 // förmodligen samma kategori → erbjud koppla istället för skapa ny.
 function findSimilarItems(name, max = 3) {
-  if (!name || typeof Autocomplete === 'undefined') return [];
-  const wordMap = new Map();
-  for (const [tag, val] of tagCache.entries()) {
-    if (!val?.name) continue;
-    const k = val.name.toLocaleLowerCase('sv');
-    if (!wordMap.has(k)) {
-      wordMap.set(k, { tag, name: val.name, sheetName: val.sheetName, rowNum: val.rowNum });
-    }
-  }
-  if (!wordMap.size) return [];
-  const wordlist = [...wordMap.keys()];
-
-  // Per-ord-sökning: "Lasagne Plattor" söker både "lasagne" och "plattor"
-  // separat så det matchar "Lasagneplattor" (ihopskrivet) i tagCache.
-  // Skippa korta stoppord (<3 tecken) för att slippa brus.
-  const norm = name.toLocaleLowerCase('sv').trim();
-  const queryWords = norm.split(/\s+/).filter(w => w.length >= 3);
-  const queries = queryWords.length ? [norm, ...queryWords] : [norm];
-
-  const seen = new Set();
+  if (!name) return [];
+  // Lokal fuzzy via gemensam Search.articles (en källa). splitWords +
+  // fuzzy:false replikerar exakt det gamla per-ord/minPrefixHits:0-anropet:
+  // "Lasagne Plattor" söker både hela frasen och "lasagne"/"plattor" separat
+  // så det matchar ihopskrivna "Lasagneplattor". sheetName/rowNum (som
+  // Save.linkTag behöver) hämtas från tagCache eftersom Search.articles
+  // medvetet är tunn och bara returnerar tag/label.
+  const hits = Search.articles(name, tagCache.entries(), {
+    splitWords: true, fuzzy: false, maxSuggestions: max
+  });
   const results = [];
-  for (const q of queries) {
-    const suggestions = Autocomplete.suggest(q, wordlist, {
-      matchMode: 'substring',
-      maxSuggestions: max,
-      minPrefixHits: 0
-    });
-    for (const s of suggestions) {
-      if (seen.has(s.word)) continue;
-      seen.add(s.word);
-      const info = wordMap.get(s.word);
-      if (info) results.push(info);
-      if (results.length >= max) break;
-    }
+  for (const h of hits) {
+    const val = tagCache.get(h.tag);
+    results.push({ tag: h.tag, name: h.label, sheetName: val?.sheetName, rowNum: val?.rowNum });
     if (results.length >= max) break;
   }
   return results;
@@ -3028,19 +3066,43 @@ function showLinkTagDialog(scannedTag) {
     if (suggestion.brand) labelParts.push(suggestion.brand);
     if (suggestion.quantity) labelParts.push(suggestion.quantity);
     const label = labelParts.join(' • ');
-    // Sök befintliga artiklar som kan matcha (kanske redan finns en "Kaffe"-tag)
-    const similar = findSimilarItems(suggestion.name);
-    let similarHtml = '';
-    if (similar.length) {
-      similarHtml = `<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(0,0,0,.1)"><i style="font-size:0.85em;display:block;margin-bottom:4px">Du har redan liknande:</i>`;
-      for (const m of similar) {
-        similarHtml += `<button type="button" class="btn cancel offMatchBtn" data-tag="${esc(m.tag)}" data-sheet="${esc(m.sheetName||'')}" data-row="${esc(m.rowNum||'')}" data-name="${esc(m.name)}" style="display:block;margin-top:4px;font-size:0.9em;width:100%">Koppla till "${esc(m.name)}"</button>`;
+
+    // "Du har redan liknande" — namn → artikel-resolver. Bug C: när OFF bara
+    // ger ett engelskt namn ("Virgin Olive Oil") kan lokal Damerau-Levenshtein
+    // ALDRIG matcha svenska "Olivolja" (cross-language). Lös semantiskt via
+    // den befintliga, cachade backend-aiSearch (olive→oliv). Lokal fuzzy körs
+    // FÖRST (snabb, synkron) och AI-träffar slås in efteråt (dedupe på tag).
+    // Detta gäller BARA OFF-flödet — fritextsöket förblir lokal fuzzy.
+    const nameResolve = new Map(); // norm(name) → {tag,name,sheetName,rowNum}
+    const aiCandidates = [];
+    for (const [tag, val] of tagCache.entries()) {
+      const nm = val?.name; if (!nm) continue;
+      const k = nm.toLocaleLowerCase('sv');
+      if (!nameResolve.has(k)) {
+        nameResolve.set(k, { tag, name: nm, sheetName: val.sheetName, rowNum: val.rowNum });
+        aiCandidates.push(nm);
       }
-      similarHtml += `</div>`;
     }
-    target.innerHTML = `<b>OpenFoodFacts föreslår:</b><br>${esc(label)}<br><button type="button" id="useOffSuggestion" class="btn" style="margin-top:8px">Använd förslag</button>${similarHtml}`;
+
+    const renderSimilar = (matches) => {
+      const seen = new Set();
+      const uniq = [];
+      for (const m of matches) { if (m && !seen.has(m.tag)) { seen.add(m.tag); uniq.push(m); } }
+      let similarHtml = '';
+      if (uniq.length) {
+        similarHtml = `<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(0,0,0,.1)"><i style="font-size:0.85em;display:block;margin-bottom:4px">Du har redan liknande:</i>`;
+        for (const m of uniq) {
+          similarHtml += `<button type="button" class="btn cancel offMatchBtn" data-tag="${esc(m.tag)}" data-sheet="${esc(m.sheetName||'')}" data-row="${esc(m.rowNum||'')}" data-name="${esc(m.name)}" style="display:block;margin-top:4px;font-size:0.9em;width:100%">Koppla till "${esc(m.name)}"</button>`;
+        }
+        similarHtml += `</div>`;
+      }
+      target.innerHTML = `<b>OpenFoodFacts föreslår:</b><br>${esc(label)}<br><button type="button" id="useOffSuggestion" class="btn" style="margin-top:8px">Använd förslag</button>${similarHtml}`;
+      wireOffButtons();
+      wireUseOff();
+    };
 
     // Wire upp matches-knapparna: klick → addTag mot vald artikel
+    function wireOffButtons() {
     target.querySelectorAll('.offMatchBtn').forEach(btn => {
       btn.onclick = async () => {
         const sheetName = btn.dataset.sheet || null;
@@ -3067,12 +3129,15 @@ function showLinkTagDialog(scannedTag) {
         }
       };
     });
+    }
 
     // Pre-warm AI-förslag i bakgrunden direkt — när användaren klickar
     // "Använd förslag" är resultatet ofta redan klart, så vi slipper
-    // 600ms-debouncen och GAS cold-start-fördröjningen.
+    // 600ms-debouncen och GAS cold-start-fördröjningen. Startas EN gång
+    // (re-render av similar-listan ska inte trigga om).
     const aiPrewarm = aiSuggest(suggestion.name, '').catch(() => null);
 
+    function wireUseOff() {
     qs("#useOffSuggestion").onclick = async () => {
       prepareNewItemDialog(scannedTag);
       const nameInput = qs('#manualName');
@@ -3123,6 +3188,33 @@ function showLinkTagDialog(scannedTag) {
         aiChip.classList.add('hidden');
       };
     };
+    }
+
+    // 1) Lokal fuzzy direkt (snabb, täcker svenska OFF-namn omedelbart).
+    renderSimilar(findSimilarItems(suggestion.name));
+
+    // 2) Semantisk AI-sök (Bug C): rawName = OFF:s OförenkLade namn ("Virgin
+    //    Olive Oil") ger AI mest signal. aiSearch är cachad backend och löser
+    //    cross-language (olive→oliv) som lokal Damerau-Levenshtein inte kan.
+    //    Slå in AI-träffarna i samma "liknande"-lista (dedupe på tag).
+    const aiQuery = (suggestion.rawName || suggestion.name || '').trim();
+    if (aiQuery && aiCandidates.length) {
+      aiSearch(aiQuery, aiCandidates).then(aiRes => {
+        // Dialogen kan ha stängts/bytt tag medan AI körde.
+        if (!target.isConnected || target.dataset.tag !== scannedTag) return;
+        if (!Array.isArray(aiRes) || !aiRes.length) return;
+        const local = findSimilarItems(suggestion.name);
+        const aiMatches = [];
+        for (const r of aiRes) {
+          const hit = nameResolve.get(String(r.name || '').toLocaleLowerCase('sv'));
+          if (hit) aiMatches.push(hit);
+        }
+        if (!aiMatches.length) return;
+        // Lokala först (snabb/exakt), sedan AI-semantiska — renderSimilar
+        // dedupe:ar på tag så inget visas dubbelt.
+        renderSimilar([...local, ...aiMatches]);
+      }).catch(() => {});
+    }
   });
 }
 
@@ -3157,11 +3249,16 @@ function openLinkSearchDialog(tagToLink) {
     const qn = (e.target.value || "").toLocaleLowerCase('sv').trim();
     searchResults.innerHTML = "";
     if (!qn) return;
+    // Samma fuzzy-sök som fritextsöket (Search.articles) i stället för den
+    // gamla råa substring-loopen → "olivilja" träffar nu "Olivolja".
+    // Behåll syntetisk-vs-vanlig-gren + Save.linkTag-logiken oförändrad.
     let count = 0;
-    for (const [tag, val] of tagCache.entries()) {
+    for (const hit of Search.articles(qn, tagCache.entries(), { maxSuggestions: 50 })) {
       if (count >= 50) break;
+      const tag = hit.tag;
+      const val = tagCache.get(tag);
       const name = val?.name || "";
-      if (!name || !name.toLocaleLowerCase('sv').includes(qn)) continue;
+      if (!name) continue;
       const btn = document.createElement('button');
       btn.type = "button"; btn.className = "statusRow";
       const hasTag = !tag.startsWith("S");
@@ -3429,25 +3526,48 @@ function prepareNewItemDialog(scanned){
     const category = catRaw === '__new__'
       ? (qs('#manualCategoryNew')?.value||'').trim()
       : catRaw;
+    const minQty=parseFloat((qs('#manualMinQty')?.value||'0').replace(',','.'))||0;
     const le=appendLog(`${name} – tillagd (${qty})`,currentTag);
     show("Sparar…");
     // Optimistisk write FÖRE gasCall. pendingSync:true gör att initData preserverar posten
     // om preload-pollen råkar träffa innan logTag-svaret hunnit fram.
-    tagCache.set(currentTag,{name,type,place,sheetName:place,sheetPlace,category,minQty:0,comment:'',step:'',rowNum:null,altTags:[],pendingSync:true});
+    tagCache.set(currentTag,{name,type,place,sheetName:place,sheetPlace,category,minQty,comment:'',step:'',rowNum:null,altTags:[],pendingSync:true});
     setLocalMeta(currentTag,{qty,unit,lastMs:Date.now(),user:userName});
     recomputeMaxLast();renderLists();
-    gasCall('logTag', {tag: currentTag, name, type, qty, user: userName, sheetName: place||null})
+    // Skicka all metadata i SJÄLVA logTag-anropet. Tidigare gjordes unit/category/
+    // place i ett separat updateMeta efteråt — det misslyckades tyst eftersom
+    // currentTag ("M…") strippas av normalizeTag och raden ej hittades. Nu skriver
+    // backend metadata direkt i nya raden via cols-guards.
+    gasCall('logTag', {
+      tag: currentTag, name, type, qty, user: userName,
+      sheetName: place||null, unit, category, place: sheetPlace, minQty
+    })
       .then(assertOk)
       .then((res) => {
         markAsDone(le);
         const cur=tagCache.get(currentTag);
-        if(cur) tagCache.set(currentTag,{...cur,rowNum:res?.row||cur.rowNum,pendingSync:false});
+        if(cur){
+          // Manuell artikel skapas TAGGLÖS → vid nästa preload returnerar servern
+          // den under sin syntetiska nyckel "S<flik>R<rad>" (preloadTagsWithMeta).
+          // Behåller vi M-nyckeln re-applyar initData M-posten OVANPÅ S-posten →
+          // artikeln syns TVÅ gånger. Byt därför M→S med EXAKT samma formel som
+          // backend, rekonstruerad från res.sheetName + res.row (backend
+          // returnerar nu sheetName så vi slipper gissa fliknamnet).
+          const updated={...cur,rowNum:res?.row||cur.rowNum,pendingSync:false};
+          let newKey=currentTag;
+          if(res&&res.new&&res.row&&res.sheetName){
+            newKey="S"+String(res.sheetName).replace(/[^a-zA-Z0-9]/g,'')+"R"+res.row;
+          }
+          if(newKey!==currentTag&&!tagCache.has(newKey)){
+            tagCache.delete(currentTag);
+            tagCache.set(newKey,updated);
+            const m=metaCache.get(currentTag);
+            if(m){metaCache.delete(currentTag);metaCache.set(newKey,m);}
+          }else{
+            tagCache.set(currentTag,updated);
+          }
+        }
         renderLists();
-        const metaArgs = {userName};
-        if (unit) metaArgs.unit = unit;
-        if (category) metaArgs.category = category;
-        if (sheetPlace) metaArgs.place = sheetPlace;
-        if (unit || category || sheetPlace) gasCall('updateMeta', {tag: currentTag, args: metaArgs});
       })
       .catch(err => markLogFail(le, err));
     closeDialog();cooldown(currentTag);

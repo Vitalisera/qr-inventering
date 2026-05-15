@@ -1,6 +1,16 @@
 {
-  "latest": 118,
+  "latest": 119,
   "versions": [
+    {
+      "version": 119,
+      "date": "2026-05-15",
+      "notes": [
+        "Flera rättningar när du skapar en ny artikel: enhet, kategori, plats och 'antal som ska finnas under kurs' sparas nu korrekt (förut kunde de tyst försvinna). Ny artikel kunde också visas dubbelt i listan — fixat.",
+        "Sökningen 'Koppla till befintlig' förstår nu felstavningar precis som vanliga Sök (skriv 'olivilja' och hittar 'Olivolja').",
+        "Streckkods-förslag från OpenFoodFacts på engelska matchar nu rätt svensk artikel.",
+        "Rättning under huven som hindrar att en uppdatering av misstag hamnar på fel artikel, och att samma tagg läggs till två gånger."
+      ]
+    },
     {
       "version": 118,
       "date": "2026-05-15",

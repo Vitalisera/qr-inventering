@@ -1,6 +1,13 @@
 {
-  "latest": 117,
+  "latest": 118,
   "versions": [
+    {
+      "version": 118,
+      "date": "2026-05-15",
+      "notes": [
+        "Upprensning under huven av hur taggar kopplas och hur ändringar sparas mot Google Sheets. Inga nya funktioner och inget ändrat arbetssätt — men koden är enklare att underhålla och felmeddelanden vid misslyckad sparning är tydligare än förut."
+      ]
+    },
     {
       "version": 117,
       "date": "2026-05-14",

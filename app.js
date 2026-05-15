@@ -943,6 +943,37 @@ const Save = {
       : ((res && res.msg) || 'misslyckades');
     if (le) le.querySelector('.msg').textContent = `${name} – ${failMsg}`;
     return { ok: false, res, le, collision: !!(res && res.collision) };
+  },
+
+  /**
+   * Registrera en singel-artikel som inventerad (qty 1, dagens datum, ditt namn).
+   *
+   * Konsoliderar det identiska mönstret från 4 callsites:
+   * appendLog + show + logTag + assertOk + markAsDone + addUndoButton +
+   * markLogFail + optimistisk setLocalMeta + recomputeMaxLast + renderLists.
+   *
+   * Fire-and-then (ej await): UI uppdateras optimistiskt direkt, server-synk
+   * i bakgrunden — samma offline-first-mönster som resten av appen.
+   * Callern behåller eget ansvar för cooldown/busy/return/tagCache-prep.
+   *
+   * target: { name, sheetName?, rowNum? }
+   * returnerar: log-entry-elementet (för ev. vidare UI-bruk)
+   */
+  logSingle(tag, target) {
+    const { name, sheetName, rowNum } = target;
+    const le = appendLog(`${name} – uppdateras`, tag);
+    show("Uppdaterar…");
+    gasCall('logTag', {
+      tag, name, type: "singel", qty: 1, user: userName,
+      sheetName: sheetName ?? null, rowNum: rowNum ?? null
+    })
+      .then(assertOk)
+      .then(() => { markAsDone(le); addUndoButton(le, tag); })
+      .catch(err => markLogFail(le, err));
+    setLocalMeta(tag, { lastMs: Date.now(), user: userName });
+    recomputeMaxLast();
+    renderLists();
+    return le;
   }
 };
 
@@ -958,76 +989,94 @@ async function waitForPendingSync() {
   if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; flushUpdates(); }
   if (flushInFlight) { try { await flushInFlight; } catch (_) {} }
 }
+// Bygg batch-payload från updateQueue + töm kön synkront (måste ske före gasCall
+// så nya queueUpdate under flight hamnar i nästa batch, inte denna).
+// updateMeta-jobb får userName injicerat här (övriga skickar det själva).
+function _buildBatch_() {
+  const batch = updateQueue.map(job =>
+    job.fnName === "updateMeta"
+      ? { fnName: job.fnName, args: { ...job.args, userName } }
+      : job
+  );
+  updateQueue.length = 0;
+  updateTimer = null;
+  return batch;
+}
+
+// Rensa busy/overlay-state. Körs i BÅDE then och catch (synk klar oavsett utfall).
+function _clearSyncBusyUI_() {
+  busy = false;
+  overlay.classList.remove("blurred");
+  overlay.style.pointerEvents = "";
+}
+
+// Per-index-matchning: tag kan förekomma flera gånger i samma batch (två
+// updateMeta-jobb på samma rad). Rensar pendingSync på lyckade, returnerar fail-taggar.
+function _applyBatchResults_(batch, res) {
+  const results = Array.isArray(res?.results) ? res.results : [];
+  const failedTags = [];
+  for (let i = 0; i < batch.length; i++) {
+    const tag = batch[i].args.tag;
+    const r = results[i];
+    if (!r || r.ok === false) {
+      failedTags.push(tag);
+    } else {
+      const cur = tagCache.get(tag);
+      if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
+    }
+  }
+  return failedTags;
+}
+
+// msgLine + status-banner. Vid fail behålls meddelandet (med pendingSync-CSS
+// på raderna) tills nästa flush — annars försvinner felet tyst efter 5s.
+function _renderBatchOutcome_(failedTags) {
+  const msgLine = document.querySelector("#msgLine");
+  if (failedTags.length > 0) {
+    const label = `⚠️ ${failedTags.length} ${failedTags.length === 1 ? 'rad' : 'rader'} kunde inte sparas`;
+    if (msgLine) { msgLine.className = "msgLine warn"; msgLine.textContent = label; }
+    show(label, "warn", { autoreset: false });
+  } else {
+    if (msgLine) { msgLine.className = "msgLine ok"; msgLine.textContent = "☑️ Synkroniserad med Google Sheets"; }
+    show("☑️ Synkroniserad med Google Sheets", "ok", { autoreset: false });
+  }
+  setTimeout(() => {
+    if (msgLine) msgLine.textContent = "";
+    if (failedTags.length === 0) statusDefault();
+  }, 5000);
+}
+
+// Hämta server-cachens timestamp; om nyare än vår senaste → hämta färsk data.
+function _revalidateCacheTs_() {
+  gasCall('cacheTs').then(ts => {
+    if (ts > (window._lastCacheTs || 0)) {
+      window._lastCacheTs = ts;
+      console.log("Servercache uppdaterad, hämtar ny data...");
+      preloadShared().then(initData);
+    }
+  });
+}
+
+// Orkestrerar: bygg batch → skicka → applicera resultat → rendera utfall →
+// revalidera cache. Ansvaren är utbrutna i _-helpers ovan; ordning/timing
+// är identisk med pre-refaktor (synk-kärna, får ej ändra beteende).
 function flushUpdates() {
   if (updateQueue.length === 0) return;
 
-  const batch = updateQueue.map(job => {
-    if (job.fnName === "updateMeta") {
-      return { fnName: job.fnName, args: { ...job.args, userName } };
-    }
-    return job;
-  });
-
-  updateQueue.length = 0;
-  updateTimer = null;
-
+  const batch = _buildBatch_();
   console.log("Skickar batch:", batch.map(b => b.args.tag));
 
   flushInFlight = gasCall('batch', {batch})
     .then(res => {
-      busy = false;
-      overlay.classList.remove("blurred");
-      overlay.style.pointerEvents = "";
-
-      // Backend returnerar {ok, results:[{tag, ok, msg}]}. Matcha per index eftersom
-      // tag kan förekomma flera gånger i samma batch (två metaMetadata-jobb på samma rad).
-      const results = Array.isArray(res?.results) ? res.results : [];
-      const failedTags = [];
-      for (let i = 0; i < batch.length; i++) {
-        const tag = batch[i].args.tag;
-        const r = results[i];
-        if (!r || r.ok === false) {
-          failedTags.push(tag);
-        } else {
-          const cur = tagCache.get(tag);
-          if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
-        }
-      }
-
+      _clearSyncBusyUI_();
+      const failedTags = _applyBatchResults_(batch, res);
       console.log("Synk klar:", batch.length - failedTags.length, "ok,", failedTags.length, "fail");
-
       renderLists();
-
-      const msgLine = document.querySelector("#msgLine");
-      if (failedTags.length > 0) {
-        const label = `⚠️ ${failedTags.length} ${failedTags.length === 1 ? 'rad' : 'rader'} kunde inte sparas`;
-        if (msgLine) { msgLine.className = "msgLine warn"; msgLine.textContent = label; }
-        show(label, "warn", { autoreset: false });
-      } else {
-        if (msgLine) { msgLine.className = "msgLine ok"; msgLine.textContent = "☑️ Synkroniserad med Google Sheets"; }
-        show("☑️ Synkroniserad med Google Sheets", "ok", { autoreset: false });
-      }
-
-      setTimeout(() => {
-        if (msgLine) msgLine.textContent = "";
-        // Vid fail: behåll status-meddelandet (med pendingSync-CSS på listraderna)
-        // tills nästa flush rensar det. Annars försvinner felet tyst efter 5s.
-        if (failedTags.length === 0) statusDefault();
-      }, 5000);
-
-      gasCall('cacheTs').then(ts => {
-        if (ts > (window._lastCacheTs || 0)) {
-          window._lastCacheTs = ts;
-          console.log("Servercache uppdaterad, hämtar ny data...");
-          preloadShared().then(initData);
-        }
-      });
+      _renderBatchOutcome_(failedTags);
+      _revalidateCacheTs_();
     })
     .catch(err => {
-      busy = false;
-      overlay.classList.remove("blurred");
-      overlay.style.pointerEvents = "";
-
+      _clearSyncBusyUI_();
       console.error("batch fail", err);
       const msgLine = document.querySelector("#msgLine");
       if (msgLine) {
@@ -2126,15 +2175,7 @@ function prepareSingleDialog(item, tag) {
 
   qs("#confirmSingle").onclick = () => {
     dlg.classList.add("hidden");
-    const le = appendLog(`${item.name} – uppdateras`, tag);
-    show("Uppdaterar…");
-    gasCall('logTag', {tag, name: item.name, type: "singel", qty: 1, user: userName, sheetName: item.sheetName, rowNum: item.rowNum})
-      .then(assertOk)
-      .then(() => { markAsDone(le); addUndoButton(le, tag); })
-      .catch(err => markLogFail(le, err));
-    setLocalMeta(tag, { lastMs: Date.now(), user: userName });
-    recomputeMaxLast();
-    renderLists();
+    Save.logSingle(tag, { name: item.name, sheetName: item.sheetName, rowNum: item.rowNum });
     statusDefault();
   };
 
@@ -2520,15 +2561,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   if (registerSingleBtn) {
     registerSingleBtn.onclick = () => {
       commitName();
-      const le = appendLog(`${dialogItem.name} – uppdateras`, tag);
-      show("Uppdaterar…");
-      gasCall('logTag', {tag, name: dialogItem.name, type: "singel", qty: 1, user: userName, sheetName: _sn, rowNum: _rn})
-        .then(assertOk)
-        .then(() => { markAsDone(le); addUndoButton(le, tag); })
-        .catch(err => markLogFail(le, err));
-      setLocalMeta(tag, { lastMs: Date.now(), user: userName });
-      recomputeMaxLast();
-      renderLists();
+      Save.logSingle(tag, { name: dialogItem.name, sheetName: _sn, rowNum: _rn });
       closeDialog();
     };
   }
@@ -3593,12 +3626,8 @@ async function startCamera(){
       // Att då skriva över med scan-resultat ger "flicker" — dialog visas, byts/stängs.
       if (dialogOpen()) { busy=false; cooldown(primaryTag); return; }
       if(type==="singel"){
-        const le=appendLog(`${name} – uppdateras`,primaryTag); show("Uppdaterar…");
-        gasCall('logTag', {tag: primaryTag, name, type: "singel", qty: 1, user: userName})
-          .then(assertOk)
-          .then(() => {markAsDone(le);addUndoButton(le,primaryTag);})
-          .catch(err => markLogFail(le, err));
-        setLocalMeta(primaryTag,{lastMs:Date.now(),user:userName}); recomputeMaxLast(); renderLists(); cooldown(primaryTag); busy=false; return;
+        Save.logSingle(primaryTag, { name });
+        cooldown(primaryTag); busy=false; return;
       }
       const meta=metaCache.get(primaryTag)||{};
       const localItem={name:cached.name,type:cached.type,place:cached.place,sheetName:cached.sheetName,rowNum:cached.rowNum,qty:meta.qty||0,unit:meta.unit||"",user:meta.user||"",last:meta.lastMs,comment:cached.comment||"",minQty:cached.minQty||0,step:cached.step||""};
@@ -3612,13 +3641,9 @@ async function startCamera(){
       if(!item){busy=false;showLinkTagDialog(scanned);return;}
       const type=(item.type||"singel").toLowerCase();
       if(type==="singel"){
-        const le=appendLog(`${item.name} – uppdateras`,scanned); show("Uppdaterar…");
-        gasCall('logTag', {tag: scanned, name: item.name, type: "singel", qty: 1, user: userName})
-          .then(assertOk)
-          .then(() => {markAsDone(le);addUndoButton(le,scanned);})
-          .catch(err => markLogFail(le, err));
         tagCache.set(scanned,{name:item.name,type:"singel",place:normPlace(item.place)});
-        setLocalMeta(scanned,{lastMs:Date.now(),user:userName}); recomputeMaxLast(); renderLists(); cooldown(scanned); busy=false; return;
+        Save.logSingle(scanned, { name: item.name });
+        cooldown(scanned); busy=false; return;
       }
       setLocalMeta(scanned,{qty:item.qty,unit:item.unit,user:item.user,lastMs:item.last||Date.now()}); recomputeMaxLast(); renderLists(); prepareContainerDialog(item,scanned);
       tagCache.set(scanned, { name: item.name, type: "behållare", place: normPlace(item.place) });

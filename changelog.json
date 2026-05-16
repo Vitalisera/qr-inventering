@@ -1,6 +1,18 @@
 {
-  "latest": 120,
+  "latest": 121,
   "versions": [
+    {
+      "version": 121,
+      "date": "2026-05-16",
+      "notes": [
+        "Synkningen är nu pålitlig: appen säger inte längre 'sparat' när en ändring i själva verket inte gick fram. Misslyckas en sparning behålls ändringen gulmarkerad och försöks igen automatiskt när du är online igen.",
+        "Ny-artikel-dialogen kunde låsa sig (fält gråa) efter att man raderat en artikel — fixat.",
+        "Ändra flera artiklar snabbt i följd (swajpa mellan kort) tappar inte längre ändringar.",
+        "Koppla tagg utan nät: ändringen försvinner inte tyst längre utan sparas när uppkopplingen är tillbaka.",
+        "Tydlig grön bock när du skannat in en singel-artikel — men bara när den faktiskt sparats.",
+        "AI-förslag vid ny artikel är snabbare."
+      ]
+    },
     {
       "version": 120,
       "date": "2026-05-15",

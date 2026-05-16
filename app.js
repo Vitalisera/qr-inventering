@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 120;
+const APP_VERSION = 121;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -37,10 +37,14 @@ if ('serviceWorker' in navigator) {
   }).catch(() => {});
 
   if (!_isPrintTab) {
-    let _swReloading = false;
+    // _swReloading flyttat till sessionStorage: en funktionsscoped flagga
+    // nollställdes vid varje sidladdning och gav inget skydd mot dubbel-reload
+    // över laddningar (rotorsak #2: bränd controllerchange). sessionStorage
+    // överlever reload i samma tab men rensas vid äkta cold-start, så ingen
+    // permanent reload-loop kan uppstå.
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (_swReloading) return;
-      _swReloading = true;
+      if (sessionStorage.getItem('_swReloading') === '1') return;
+      sessionStorage.setItem('_swReloading', '1');
       location.reload();
     });
 
@@ -57,7 +61,12 @@ if ('serviceWorker' in navigator) {
     };
     setInterval(checkForUpdate, 60000);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') checkForUpdate();
+      if (document.visibilityState === 'visible') {
+        checkForUpdate();
+        // Bug 2.7: app åter i fokus → re-försök ev. ej-bekräftade tag-länkar.
+        // Idempotent (egen _resyncInFlight-guard) → krockar ej med online-listenern.
+        try { resyncPendingTagLinks(); } catch (_) {}
+      }
     });
   }
 }
@@ -86,6 +95,69 @@ async function forceUpdate() {
     }
   } catch {}
   location.reload();
+}
+
+// Ren, state-agnostisk beslutslogik för uppgraderingsknappen. Avgör åtgärd
+// utifrån FÄRSK SW-state vid klick (inte cachad `reg`). Rotorsak #1: tidigare
+// `if (reg?.waiting) postMessage else forceUpdate()` gav ALLTID forceUpdate()
+// för changelog-poll-bannern (reg=null) → unregister+cache-wipe race:ade
+// pågående install + iOS HTTP-cache gav samma gamla app.js → banner igen.
+// Nu: ingen registrering alls = forceUpdate som SISTA utväg; annars mjuk väg.
+function decideUpdateAction({ hasRegistration, hasWaiting }) {
+  if (!hasRegistration) return 'forceUpdateLastResort';
+  if (hasWaiting) return 'skipWaiting';
+  return 'updateAndWait';
+}
+// Stor singel-bekräftelse-overlay ska BARA visas när en singel-artikel
+// registreras direkt via SKANNING (det användaren bad om) — aldrig från
+// dialog-knappar (confirmSingle/registerSingleBtn), där en helskärms-✓ vore
+// malplacerad. Ren predikat-fn → testbar utan DOM; triggern hålls lokal till
+// skan-vägen (ej i Save.logSingle som delas av 4 callsites) → ingen
+// dubbelfyrning (jfr tidigare delad-fn+listener-regression).
+function shouldShowSingelConfirm({ via, type } = {}) {
+  return via === 'scan' && type === 'singel';
+}
+// Steg5: den STORA gröna bocken får INTE visas förrän serveroperationen är
+// VERIFIERAT lyckad — annars ger ett tyst logTag-fel (nät/lock/stale) en stark
+// falsk success (samma falsk-success-klass som linkTag/updateMeta/batch stängt).
+// Återanvänder EXAKT samma 'verified'-kriterium som steg4:s shouldShowLinkSuccess
+// (ingen parallell klassificerare): bocken visas BARA vid classifyLinkResult
+// === 'verified'. 'pending-retry' (offline/uttömt) och 'rejected' (server-
+// avvisning) → ingen bock; logSingle visar ⚠️/pending-status i historiken.
+function shouldShowSingelConfirmForResult(cls) { return cls === 'verified'; }
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { decideUpdateAction, shouldShowSingelConfirm, shouldShowSingelConfirmForResult };
+}
+
+// Vänta in en ny `waiting`-SW efter reg.update(). Pollar reg.waiting samt
+// lyssnar på updatefound/statechange. EN engångslyssnare per anrop som
+// städas direkt vid träff/timeout → ingen permanent eller stackad listener
+// (jfr v120-regression: delad funktion + permanent listener = dubbel-event).
+function waitForWaitingWorker(reg, timeoutMs) {
+  return new Promise(resolve => {
+    if (reg.waiting) { resolve(reg.waiting); return; }
+    let done = false;
+    const finish = (w) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reg.removeEventListener('updatefound', onUpdateFound);
+      resolve(w);
+    };
+    const onUpdateFound = () => {
+      const nw = reg.installing;
+      if (!nw) return;
+      const onState = () => {
+        if (nw.state === 'installed' || nw.state === 'activated') {
+          nw.removeEventListener('statechange', onState);
+          finish(reg.waiting || (nw.state === 'installed' ? nw : null));
+        }
+      };
+      nw.addEventListener('statechange', onState);
+    };
+    reg.addEventListener('updatefound', onUpdateFound);
+    const timer = setTimeout(() => finish(reg.waiting || null), timeoutMs);
+  });
 }
 
 async function fetchChangelogSince(currentVersion) {
@@ -134,17 +206,54 @@ async function showUpdateBanner(reg) {
   btn.type = 'button';
   btn.id = 'updateBtn';
   btn.textContent = 'Uppgradera version';
-  // Mjuk uppdatering om SW-flödet kunde detektera ny SW (reg.waiting finns).
-  // Annars (bannern triggades via changelog-poll) — hård reset: avregistrera
-  // SW, rensa caches, reload. Det kringgår iOS HTTP-cache-fastlåsning.
+  // State-agnostisk: ignorera den `reg` bannern skapades med (kan vara null
+  // från changelog-poll, eller stale). Hämta FÄRSK registrering vid klick och
+  // låt decideUpdateAction välja väg utifrån verklig SW-state just nu.
   btn.addEventListener('click', async () => {
     btn.disabled = true;
     // Vänta in pending Sheet-skrivningar innan reload — annars kan en ändring
     // som väntar på flush förloras vid SW-byte. Timeout 4s så banner inte hänger
     // om sync är trasigt.
     try { await Promise.race([waitForPendingSync(), new Promise(r => setTimeout(r, 4000))]); } catch {}
-    if (reg?.waiting) reg.waiting.postMessage('SKIP_WAITING');
-    else forceUpdate();
+
+    let freshReg = null;
+    try {
+      freshReg = ('serviceWorker' in navigator)
+        ? await navigator.serviceWorker.getRegistration()
+        : null;
+    } catch { freshReg = null; }
+
+    const action = decideUpdateAction({
+      hasRegistration: !!freshReg,
+      hasWaiting: !!(freshReg && freshReg.waiting),
+    });
+
+    if (action === 'forceUpdateLastResort') {
+      // Ingen SW registrerad alls — enda kvarvarande vägen.
+      forceUpdate();
+      return;
+    }
+
+    // Fallback-reload-timer: om controllerchange inte fyrar inom ~3s (rotorsak
+    // #2: SW redan claimad → SKIP_WAITING till en waiting som inte finns =
+    // no-op, ingen ny controllerchange) reloadar vi ändå. sessionStorage-
+    // guarden delas med controllerchange-lyssnaren → ingen dubbel-reload.
+    const fallbackReload = () => {
+      if (sessionStorage.getItem('_swReloading') === '1') return;
+      sessionStorage.setItem('_swReloading', '1');
+      location.reload();
+    };
+    setTimeout(fallbackReload, 3000);
+
+    if (action === 'skipWaiting') {
+      freshReg.waiting.postMessage('SKIP_WAITING');
+      return;
+    }
+    // action === 'updateAndWait': trigga update, vänta in ny waiting (max 5s),
+    // posta SKIP_WAITING. Uteblir waiting tar fallback-timern hand om reload.
+    try { await freshReg.update(); } catch {}
+    const waiting = await waitForWaitingWorker(freshReg, 5000);
+    if (waiting) waiting.postMessage('SKIP_WAITING');
   });
   banner.append(title, btn);
   document.body.appendChild(banner);
@@ -275,6 +384,40 @@ async function gasCallWithRetry(fn, params = {}, opts = {}) {
 function assertOk(r) {
   if (r && r.ok === false) throw new Error(r.msg || r.error || 'Okänt serverfel');
   return r;
+}
+
+// Bug 2.7: skilj "nätfel/uttömt → ej bekräftat" från "servern avvisade → äkta fel".
+// gasCallWithRetry returnerar {ok:false,exhausted:true} när alla försök misslyckats
+// (offline kastar TypeError, fångas i dess catch → kastar ALDRIG vidare). Tidigare
+// rullade linkTag tillbaka även detta → felet doldes helt (ingen gul, ingen ⚠️,
+// success-banner redan visad). Nu: exhausted/nätfel → 'pending-retry' (behåll
+// pendingSync, ⚠️, online-resync). Endast ÄKTA server-avvisning (collision /
+// staleRow / valideringsfel UTAN exhausted) → 'rejected' (rollback som förr).
+// Ren funktion — testbar utan DOM/nät.
+function classifyLinkResult(r) {
+  if (r && r.ok === true) return 'verified';
+  if (r && (r.collision === true || r.staleRow === true)) return 'rejected';
+  if (r && r.exhausted === true) return 'pending-retry';
+  if (!r) return 'pending-retry';            // ingen res = nätfel innan svar
+  // ok:false UTAN exhausted = servern svarade och avvisade (validering m.m.)
+  return 'rejected';
+}
+// Success-bannern får INTE påstå framgång förrän verifierat. Callsites använder
+// detta för att välja slut-UI: bara 'verified' → "Tag kopplad".
+function shouldShowLinkSuccess(cls) { return cls === 'verified'; }
+
+// Pending tag-länkar som väntar på bekräftelse (ej bekräftade pga nätfel/uttömt).
+// Nyckel = scannedTag. Värde = { scannedTag, sheetName, rowNum, currentTag, name }.
+// Töms när online-resync lyckas (verified) eller servern äkta-avvisar (rejected).
+const _pendingTagLinks = new Map();
+// Ren urvalsfunktion: vilka pending-länkar ska re-försökas vid online-event?
+// Idempotent — returnerar bara poster som inte redan har ett aktivt re-försök.
+function selectPendingResync(map) {
+  const out = [];
+  for (const [k, v] of (map instanceof Map ? map : new Map())) {
+    if (v && !v._inflight) out.push({ key: k, job: v });
+  }
+  return out;
 }
 
 /* ===== AI-assistenter =====
@@ -779,6 +922,23 @@ function beep() {
   } catch { return false; }
 }
 async function flashFeedback(txt){try{ensureAudioCtx();if(!beep()){blip.currentTime=0;await blip.play();}}catch{}show(txt);const laser=qs('#scanLaser');if(laser)laser.style.animationPlayState="paused";try{v.pause();}catch{}overlay.classList.add('flashOverlay');await new Promise(r=>setTimeout(r,900));overlay.classList.remove('flashOverlay');try{v.play();}catch{}if(laser)laser.style.animationPlayState="running";}
+// Stor, animerad ✓-bekräftelse vid singel-skan. Transient element i #overlay
+// (samma infrastruktur som scanBox/flashOverlay), pointer-events:none → blockerar
+// inte nästa skan. CSS-animationen tar bort den visuellt efter ~1.2s; vi rensar
+// DOM-noden efter 1400ms. Idempotent: ev. tidigare nod tas bort först.
+function showSingelConfirm(name){
+  try{
+    if(!overlay) return;
+    const prev=overlay.querySelector('.singelConfirm'); if(prev) prev.remove();
+    const el=document.createElement('div');
+    el.className='singelConfirm';
+    el.innerHTML='<div class="scCheck"><svg viewBox="0 0 100 100" aria-hidden="true">'
+      +'<path d="M22 52 L42 72 L78 30"/></svg></div>'
+      +'<div class="scLabel">'+esc(name||'Artikel')+' inventerad</div>';
+    overlay.appendChild(el);
+    setTimeout(()=>{ try{ el.remove(); }catch{} },1400);
+  }catch{}
+}
 const cooldown=t=>{lastCode=t;setTimeout(()=>lastCode="",COOLDOWN_MS);};
 const dialogOpen=()=>!dlg.classList.contains('hidden')||!nameDialog.classList.contains('hidden')||!settingsDialog.classList.contains('hidden')||!searchDialog.classList.contains('hidden');
 
@@ -884,6 +1044,29 @@ const Save = {
       });
     }
 
+    // Hjälpare: registrera EJ-bekräftad länk för online-resync + behåll pending.
+    // Återanvänds av både catch (oväntat throw) och exhausted-fail-pathen.
+    const _markPendingRetry = (msgTail) => {
+      // BEHÅLL pendingSync:true + scannedTag i altTags (optimistiskt, men pending).
+      // Ingen rollback → renderLists gulmarkerar raden (pendingSync-CSS).
+      if (!isSynthetic) {
+        const cur = tagCache.get(currentTag);
+        if (cur) tagCache.set(currentTag, {
+          ...cur,
+          altTags: (cur.altTags || []).includes(scannedTag)
+            ? (cur.altTags || [])
+            : [...(cur.altTags || []), scannedTag],
+          pendingSync: true
+        });
+      }
+      _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name });
+      if (le) {
+        const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
+        const m = le.querySelector('.msg');
+        if (m) m.textContent = `${name} – ej bekräftat – försöker igen${msgTail ? ' (' + msgTail + ')' : ''}`;
+      }
+    };
+
     let res;
     try {
       res = await gasCallWithRetry('addTag',
@@ -894,16 +1077,10 @@ const Save = {
           } }
       );
     } catch (err) {
-      if (!isSynthetic) {
-        const cur = tagCache.get(currentTag);
-        if (cur) tagCache.set(currentTag, {
-          ...cur,
-          altTags: (cur.altTags || []).filter(t => t !== scannedTag),
-          pendingSync: false
-        });
-      }
-      if (le) le.querySelector('.msg').textContent = `${name} – fel: ${err.message || err}`;
-      return { ok: false, err, le };
+      // gasCallWithRetry kastar normalt INTE (returnerar {exhausted}). Ett throw
+      // här = oväntat (ej server-avvisning) → behandla som ej-bekräftat, ej rollback.
+      _markPendingRetry();
+      return { ok: false, pending: true, err, le };
     }
 
     if (res && res.ok) {
@@ -925,11 +1102,23 @@ const Save = {
         const cur = tagCache.get(currentTag);
         if (cur) tagCache.set(currentTag, { ...cur, pendingSync: false });
       }
+      _pendingTagLinks.delete(scannedTag); // bekräftat → ej längre pending
       markAsDone(le);
       return { ok: true, tag: res.tag, alreadyPresent: !!res.alreadyPresent, le };
     }
 
-    // Fail-path: res.ok === false (eller exhausted)
+    // Fail-path: skilj "ej bekräftat (nätfel/uttömt)" från "äkta avvisat".
+    const cls = classifyLinkResult(res);
+    if (cls === 'pending-retry') {
+      // Offline/uttömt: BEHÅLL pending, ⚠️, registrera för online-resync.
+      // Ingen rollback → felet döljs INTE (gul rad + ⚠️ + ingen success-banner).
+      _markPendingRetry();
+      return { ok: false, pending: true, res, le };
+    }
+
+    // Äkta server-avvisning (collision / staleRow / valideringsfel UTAN exhausted)
+    // → rollback exakt som förr. scannedTag tillhör inte denna rad.
+    _pendingTagLinks.delete(scannedTag);
     if (!isSynthetic) {
       const cur = tagCache.get(currentTag);
       if (cur) tagCache.set(currentTag, {
@@ -941,7 +1130,10 @@ const Save = {
     const failMsg = res && res.collision
       ? `redan kopplad till "${res.existingName}"`
       : ((res && res.msg) || 'misslyckades');
-    if (le) le.querySelector('.msg').textContent = `${name} – ${failMsg}`;
+    if (le) {
+      const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
+      le.querySelector('.msg').textContent = `${name} – ${failMsg}`;
+    }
     return { ok: false, res, le, collision: !!(res && res.collision) };
   },
 
@@ -956,20 +1148,55 @@ const Save = {
    * i bakgrunden — samma offline-first-mönster som resten av appen.
    * Callern behåller eget ansvar för cooldown/busy/return/tagCache-prep.
    *
-   * target: { name, sheetName?, rowNum? }
+   * Steg5: skan-callsites kan villkora den STORA gröna bocken på ett VERIFIERAT
+   * utfall genom att skicka target.onResult(cls). cls klassificeras med samma
+   * classifyLinkResult som steg4:s linkTag (verified | pending-retry | rejected)
+   * — ingen parallell klassificerare. gasCallWithRetry används (i st.f. bare
+   * gasCall) så exhausted/nätfel kan skiljas från äkta server-avvisning. De TVÅ
+   * dialog-baserade callsites:na skickar INGEN onResult → exakt oförändrat
+   * optimistiskt beteende (ingen bock visas där ändå).
+   *
+   * target: { name, sheetName?, rowNum?, onResult? }
    * returnerar: log-entry-elementet (för ev. vidare UI-bruk)
    */
   logSingle(tag, target) {
-    const { name, sheetName, rowNum } = target;
+    const { name, sheetName, rowNum, onResult } = target;
     const le = appendLog(`${name} – uppdateras`, tag);
-    show("Uppdaterar…");
-    gasCall('logTag', {
+    show("Sparar…");
+    gasCallWithRetry('logTag', {
       tag, name, type: "singel", qty: 1, user: userName,
       sheetName: sheetName ?? null, rowNum: rowNum ?? null
     })
-      .then(assertOk)
-      .then(() => { markAsDone(le); addUndoButton(le, tag); })
-      .catch(err => markLogFail(le, err));
+      .then(res => {
+        // gasCallWithRetry kastar normalt INTE — den returnerar
+        // {ok:false,exhausted:true} vid uttömt/nätfel. classifyLinkResult
+        // mappar: ok:true → verified; exhausted/inget svar → pending-retry;
+        // ok:false utan exhausted (validering m.m.) → rejected.
+        const cls = classifyLinkResult(res);
+        if (cls === 'verified') {
+          markAsDone(le); addUndoButton(le, tag);
+        } else if (cls === 'pending-retry') {
+          // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
+          // status — optimistisk lokal write står kvar (gul rad via
+          // pendingSync-mönstret i renderLists), synkas vid återkomst.
+          if (le) {
+            const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
+            const m = le.querySelector('.msg');
+            if (m) m.textContent = `${name} – sparas när du är online igen`;
+          }
+          show("Ingen kontakt — sparas när du är online igen", "warn");
+        } else {
+          // Äkta server-avvisning → ingen bock, ⚠️ + felmeddelande.
+          markLogFail(le, new Error((res && res.msg) || 'serverfel'));
+        }
+        if (typeof onResult === 'function') { try { onResult(cls); } catch (_) {} }
+      })
+      .catch(err => {
+        // gasCallWithRetry kastar bara vid oväntat fel (ej server-avvisning) →
+        // behandla som ej bekräftat (pending-retry), ingen falsk bock.
+        markLogFail(le, err);
+        if (typeof onResult === 'function') { try { onResult('pending-retry'); } catch (_) {} }
+      });
     setLocalMeta(tag, { lastMs: Date.now(), user: userName });
     recomputeMaxLast();
     renderLists();
@@ -1044,6 +1271,46 @@ const Search = {
   }
 };
 
+/* ===== Online-resync av ej-bekräftade tag-länkar (bug 2.7) =====
+ * När nätet kommer tillbaka: re-försök varje pending tag-länk via samma
+ * Save.linkTag-väg (idempotent — backend addTag är idempotent: redan kopplad
+ * tag → alreadyPresent, ej dubblett). EN listener, idempotent guard (_inflight)
+ * så ett pågående re-försök inte dubbelfyrar (v120-lärdom: undvik dubbel-event).
+ */
+let _resyncInFlight = false;
+async function resyncPendingTagLinks() {
+  if (_resyncInFlight) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  const jobs = selectPendingResync(_pendingTagLinks);
+  if (!jobs.length) return;
+  _resyncInFlight = true;
+  try {
+    for (const { key, job } of jobs) {
+      job._inflight = true;
+      try {
+        const r = await Save.linkTag(job.scannedTag, {
+          name: job.name,
+          sheetName: job.sheetName,
+          rowNum: job.rowNum,
+          currentTag: job.currentTag
+        });
+        // verified/rejected → Save.linkTag har redan _pendingTagLinks.delete:at.
+        // pending igen (fortf. offline) → posten finns kvar, _inflight nollas.
+        if (r && r.pending) { job._inflight = false; }
+      } catch (_) {
+        job._inflight = false; // oväntat → låt nästa online-event försöka igen
+      }
+    }
+    if (typeof renderLists === 'function') renderLists();
+  } finally {
+    _resyncInFlight = false;
+  }
+}
+if (typeof window !== 'undefined' && window.addEventListener) {
+  // EN enda online-listener (idempotent via _resyncInFlight + _inflight-guard).
+  window.addEventListener('online', resyncPendingTagLinks);
+}
+
 /* ===== Bundlad uppdateringskö ===== */
 const updateQueue = [];
 let updateTimer = null;
@@ -1077,15 +1344,43 @@ function _clearSyncBusyUI_() {
   overlay.style.pointerEvents = "";
 }
 
+// Stale-detektering: ett jobb räknas som ÄKTA lyckat BARA om servern svarade
+// ok:true UTAN staleRow OCH (om backend ekade writtenTag) writtenTag matchar
+// förväntad tag. writtenTag kan saknas (äldre/ej-deployad backend) → då litar
+// vi på ok:true som förr (bakåtkompat: ny frontend mot gammal backend
+// degraderar exakt till tidigare beteende). Normalisering = samma som
+// backend normalizeTag/_zk (icke-siffror bort + leading-zero-strippad nyckel).
+function _normTagFE_(x) { return String(x == null ? '' : x).trim().replace(/[^\d]/g, ''); }
+function _isJobVerifiedOk_(expectedTag, r) {
+  if (!r || r.ok === false) return false;
+  if (r.staleRow === true) return false;
+  // Syntetisk förväntad tag (S..R..): backend skippar tag-verifiering (samma
+  // /^S[A-Za-z]/-mönster som resolveItem/_verifyTagInRow_). _normTagFE_ skulle
+  // strippa bokstäver och ge en falsk pseudo-tag ("SStegR5" → "5") → felaktig
+  // mismatch. Hoppa över jämförelsen → lita på ok:true (bakåtkompat).
+  if (r.writtenTag != null && r.writtenTag !== '' &&
+      !/^S[A-Za-z]/.test(String(expectedTag == null ? '' : expectedTag))) {
+    const exp = _normTagFE_(expectedTag);
+    const got = _normTagFE_(r.writtenTag);
+    if (exp) {
+      const zk = s => (s.replace(/^0+/, '') || '0');
+      if (exp !== got && zk(exp) !== zk(got)) return false;
+    }
+  }
+  return true;
+}
+
 // Per-index-matchning: tag kan förekomma flera gånger i samma batch (två
-// updateMeta-jobb på samma rad). Rensar pendingSync på lyckade, returnerar fail-taggar.
+// updateMeta-jobb på samma rad). Rensar pendingSync på ÄKTA verifierat
+// lyckade (ok + ej stale + writtenTag matchar); allt annat → fail-tag,
+// pendingSync behålls (gul + ⚠️ i historik via _renderBatchOutcome_).
 function _applyBatchResults_(batch, res) {
   const results = Array.isArray(res?.results) ? res.results : [];
   const failedTags = [];
   for (let i = 0; i < batch.length; i++) {
     const tag = batch[i].args.tag;
     const r = results[i];
-    if (!r || r.ok === false) {
+    if (!_isJobVerifiedOk_(tag, r)) {
       failedTags.push(tag);
     } else {
       const cur = tagCache.get(tag);
@@ -2182,14 +2477,72 @@ function closeDialog(){
     cooldown(lastCode || "__dlg__");
   });
 }
+// Ren delmängds-logik för delete-frysningen. Returnerar en array av
+// form-noder som SKA frysas under radering: extra-divens (.extraFields)
+// egna fält + de aktiva action-knapparna i dlgBtns. Sveper medvetet INTE
+// hela dlg — de permanenta #newItemFields-noderna återanvänds av andra
+// dialoger och får aldrig frysas (bug 3.1: missad thaw → låst ny-artikel).
+function computeFreezeSet(extra, dlgBtns){
+  const set = [];
+  const sel = "button, input, textarea, select";
+  if (extra) extra.querySelectorAll(sel).forEach(el => set.push(el));
+  if (dlgBtns) dlgBtns.querySelectorAll(sel).forEach(el => { if (!set.includes(el)) set.push(el); });
+  return set;
+}
+// Idempotent säkerhetsnät: re-enabla varje nod under root som bär kvar
+// dataset._wasDisabled (läckt fruset state från en delete-väg som missade
+// thaw) och rensa flaggan. Dubbel-anrop är ofarligt — efter första passet
+// finns inga _wasDisabled kvar, så andra passet är en no-op.
+function unfreezeStale(root){
+  if (!root) return;
+  root.querySelectorAll('[data-_was-disabled]').forEach(el => {
+    el.disabled = el.dataset._wasDisabled === "1";
+    delete el.dataset._wasDisabled;
+  });
+}
 let _aiSuggestTimer = null;
+// Bug 5.2: behållardialogens autosave-debounce (_autoSaveTimer/autoSaveExtra)
+// är closure-lokal i prepareContainerDialog och kan ALDRIG nås av resetDialog.
+// Swipe mellan kort river .extraFields + bygger nästa kort (~200 ms) INNAN
+// debouncen (300 ms) fyrar → den orphanade autoSaveExtra läser NÄSTA kortets
+// DOM men har STALE closure-tag/_sn/_rn → backend skriver fel/0 till fel rad
+// och returnerar ok → falsk "Synkroniserad", tappad edit. Fixen: varje aktiv
+// behållardialog registrerar sin egen flush här. resetDialog kör den SYNKRONT
+// innan DOM rivs (closure-tag + rätt DOM fortfarande giltiga) och nollar den,
+// så ingen orphanad debounce kan fyra mot fel kort.
+let _pendingAutoSaveFlush = null;
+// Ren beslutslogik (testbar utan DOM): ska en schemalagd autosave committas
+// nu, och i så fall mot vilken tag? Anropas med closure-tag (artikeln fältet
+// hör till) + aktuell live-dialog-tag + om detta är en explicit flush.
+//  - flush=true  → committa ALLTID mot closure-tag (DOM+closure giltiga, körs
+//    från resetDialog innan teardown; currentDialogTag kan redan vara null).
+//  - flush=false → debounce-vägen: committa BARA om live-dialogen fortfarande
+//    visar samma tag. Annars har vi navigerat bort → skippa (orphan-skydd).
+function autoSaveCommitDecision(closureTag, liveDialogTag, isFlush){
+  if (isFlush) return { commit: true, tag: closureTag };
+  if (liveDialogTag !== closureTag) return { commit: false, tag: null };
+  return { commit: true, tag: closureTag };
+}
 function resetDialog(){
+  // Bug 5.2: flush:a pending behållar-autosave SYNKRONT innan DOM rivs nedan.
+  // Här är .extraFields/#minQtyEdit + closure-tag/_sn/_rn fortfarande giltiga
+  // (resetDialog körs först i både closeDialog-RAF och nästa
+  // prepareContainerDialog, före .extraFields-removal). Garanterar att en
+  // edit aldrig förloras p.g.a. att kortet revs före debounce.
+  if (_pendingAutoSaveFlush) {
+    const f = _pendingAutoSaveFlush; _pendingAutoSaveFlush = null;
+    try { f(); } catch {}
+  }
   // Bort med stale fokus innan vi bygger nytt innehåll. Begränsa till element INOM dlg —
   // annars blur:as t.ex. searchInput när Koppla-till-befintlig öppnar sökdialogen parallellt
   // med att den föregående dialogen stängs (closeDialog kör resetDialog i RAF).
   try {
     if (dlg.contains(document.activeElement)) document.activeElement.blur?.();
   } catch {}
+  // Säkerhetsnät mot bug 3.1: om någon delete-väg missade thaw bär noder
+  // kvar dataset._wasDisabled och är fortfarande disablade. Återställ dem
+  // vid varje dialog-uppbyggnad så ett läckt fruset state aldrig överlever.
+  unfreezeStale(dlg);
   dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";{const _mq=qs('#manualMinQty');if(_mq)_mq.value="";}if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip,.commentBlock').forEach(el=>el.remove());
 }
 
@@ -2569,6 +2922,11 @@ function prepareContainerDialog(item, tag, opts = {}) {
           tagDisplay.style.opacity = "1";
           setMsg("Tag kopplad!", "ok");
           renderLists();
+        } else if (result.pending) {
+          // Bug 2.7: ej bekräftat (offline/uttömt) — ingen falsk "kopplad",
+          // raden står kvar gul + ⚠️, online-resync försöker igen.
+          setMsg("Ingen kontakt — sparas när du är online igen", "warn");
+          renderLists();
         } else if (result.collision) {
           setMsg(`Taggen är redan kopplad till "${result.res.existingName}"`, "warn");
         } else if (result.err) {
@@ -2671,7 +3029,14 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // mode-konflikt mot Öka/Ny total. Debounce 300ms så snabb-tabbing genom
   // flera fält bara skickar en save.
   let _autoSaveTimer = null;
-  const autoSaveExtra = () => {
+  // isFlush=true: anropas synkront från resetDialog (via _pendingAutoSaveFlush)
+  // INNAN .extraFields rivs — closure-tag/_sn/_rn + DOM giltiga, committa alltid.
+  // isFlush=false: debounce-timern fyrade. Om live-dialogen inte längre visar
+  // closure-tag har vi navigerat bort (orphan efter swipe) → skippa helt så vi
+  // aldrig bygger en payload mot nästa korts DOM med STALE tag/_sn/_rn (5.2).
+  const autoSaveExtra = (isFlush) => {
+    const decision = autoSaveCommitDecision(tag, currentDialogTag, isFlush === true);
+    if (!decision.commit) return;
     setMsg("", "");
     const commentEl = qs("#commentEdit");
     const unitEl = qs("#unitEdit");
@@ -2723,9 +3088,21 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (date) payload.lastYMD = date;
     queueUpdate("updateMeta", payload);
   };
+  // Synkron flush som resetDialog kör innan kortet rivs: avbryt den pending
+  // debouncen (annars kan den orphanas och fyra mot nästa kort) och committa
+  // omedelbart mot DENNA closures tag/_sn/_rn medan DOM ännu är giltig.
+  const flushAutoSave = () => {
+    if (_autoSaveTimer) { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; }
+    autoSaveExtra(true);
+  };
   const scheduleAutoSave = () => {
     clearTimeout(_autoSaveTimer);
-    _autoSaveTimer = setTimeout(autoSaveExtra, 300);
+    // Registrera DENNA dialogs flush globalt så resetDialog (utan closure-
+    // åtkomst) kan committa den synkront före teardown/kortbyte. Ingen ny
+    // permanent listener — flushen lever i samma closure som debouncen och
+    // konsumeras av resetDialog (nollar handtaget) eller av timern själv.
+    _pendingAutoSaveFlush = flushAutoSave;
+    _autoSaveTimer = setTimeout(() => { _pendingAutoSaveFlush = null; autoSaveExtra(false); }, 300);
   };
 
   // Selects → change-event. Text/textarea/number → blur-event.
@@ -2775,9 +3152,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
         return;
       }
       clearTimeout(armTimer);
-      // Frys hela dialogen under radering — annars kan Spara-klick lägga till updateMeta
+      // Frys dialogen under radering — annars kan Spara-klick lägga till updateMeta
       // i kön EFTER att raden raderats, och raderar i princip vad som nu ligger på samma row.
-      const frozen = dlg.querySelectorAll("button, input, textarea, select");
+      // OBS: bara extra-divens (.extraFields) fält + de aktiva dlgBtns-knapparna fryses.
+      // De permanenta #newItemFields-noderna (#manual*) ligger också i dlg men återanvänds
+      // av ny-artikel-dialogen — fryser vi dem och missar thaw låser sig nästa dialog.
+      const frozen = computeFreezeSet(extra, dlgBtns);
       frozen.forEach(el => { el.dataset._wasDisabled = el.disabled ? "1" : "0"; el.disabled = true; });
       setBtnBusy(deleteBtn, true);
       setMsg("Raderar…", "");
@@ -2806,6 +3186,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
         metaCache.delete(tag);
         recomputeMaxLast();
         renderLists();
+        // Tina ALLTID innan vi stänger — symmetriskt med error/catch-vägarna.
+        // closeDialog→resetDialog städar inte godtyckliga frysta noder, så
+        // utan detta läcker fruset state till nästa dialog (bug 3.1).
+        thawDialog();
         // Stäng bara dialogen om samma artikel fortfarande är öppen.
         if (currentDialogTag === tagAtClick) closeDialog();
         show(`"${item.name || tag}" raderad`, "ok");
@@ -3123,14 +3507,20 @@ function showLinkTagDialog(scannedTag) {
         const matchName = btn.dataset.name;
         closeDialog();
         cooldown(scannedTag);
-        show(`Tag kopplad till "${matchName}"`, 'ok');
+        // Bug 2.7: visa INTE "Tag kopplad" före svar — banner får ej ljuga
+        // offline. Neutral progress; definitivt utfall efter await.
+        show('Kopplar tag…');
         const result = await Save.linkTag(scannedTag, {
           name: matchName,
           sheetName,
           rowNum,
           currentTag: matchTag
         });
-        if (!result.ok) {
+        if (result.ok) {
+          show(`Tag kopplad till "${matchName}"`, 'ok');
+        } else if (result.pending) {
+          show('Ingen kontakt — sparas när du är online igen', 'warn');
+        } else {
           if (result.collision) {
             show(`Redan kopplad till "${result.res.existingName}"`, 'warn');
           } else if (result.err) {
@@ -3305,20 +3695,24 @@ function openLinkSearchDialog(tagToLink) {
           currentTag: tag
         };
         if (!isSynthetic) {
-          // Mönster A: optimistisk UI-respons innan server-svaret
-          show(`Tag kopplad till "${name}"`, "ok");
+          // Mönster A: optimistisk UI-respons (gul/pending-rad) innan svar.
+          // Bug 2.7: banner får INTE påstå "kopplad" före await — neutral
+          // progress; definitivt utfall (inkl pending) efter await.
+          show("Kopplar tag…");
           renderLists();
           cooldown(tagToLink);
           const result = await Save.linkTag(tagToLink, target);
-          if (!result.ok) {
-            renderLists();
-            if (result.collision) {
-              show(`Redan kopplad till "${result.res.existingName}"`, "warn");
-            } else if (result.err) {
-              show("Oväntat fel — rullade tillbaka: " + (result.err.message || result.err), "warn");
-            } else {
-              show(result.res?.msg || "Kunde inte koppla — rullade tillbaka", "warn");
-            }
+          renderLists();
+          if (result.ok) {
+            show(`Tag kopplad till "${name}"`, "ok");
+          } else if (result.pending) {
+            show("Ingen kontakt — sparas när du är online igen", "warn");
+          } else if (result.collision) {
+            show(`Redan kopplad till "${result.res.existingName}"`, "warn");
+          } else if (result.err) {
+            show("Oväntat fel — rullade tillbaka: " + (result.err.message || result.err), "warn");
+          } else {
+            show(result.res?.msg || "Kunde inte koppla — rullade tillbaka", "warn");
           }
           return;
         }
@@ -3327,6 +3721,9 @@ function openLinkSearchDialog(tagToLink) {
         const result = await Save.linkTag(tagToLink, target);
         if (result.ok) {
           show(`Tag kopplad till "${name}"`, "ok");
+          renderLists();
+        } else if (result.pending) {
+          show("Ingen kontakt — sparas när du är online igen", "warn");
           renderLists();
         } else if (result.collision) {
           show(`Taggen är redan kopplad till "${result.res.existingName}"`, "warn");
@@ -3778,7 +4175,14 @@ async function startCamera(){
       // Att då skriva över med scan-resultat ger "flicker" — dialog visas, byts/stängs.
       if (dialogOpen()) { busy=false; cooldown(primaryTag); return; }
       if(type==="singel"){
-        Save.logSingle(primaryTag, { name });
+        // Steg5: visa STORA bocken BARA när logTag är verifierat lyckat.
+        // shouldShowSingelConfirm gatar via/type (skan-singel); onResult-cls
+        // gatar att servern faktiskt bekräftade. pending/rejected → ingen bock
+        // (logSingle visar ⚠️/pending-status i historiken).
+        const allowConfirm = shouldShowSingelConfirm({ via: 'scan', type });
+        Save.logSingle(primaryTag, { name, onResult: cls => {
+          if (allowConfirm && shouldShowSingelConfirmForResult(cls)) showSingelConfirm(name);
+        } });
         cooldown(primaryTag); busy=false; return;
       }
       const meta=metaCache.get(primaryTag)||{};
@@ -3794,7 +4198,11 @@ async function startCamera(){
       const type=(item.type||"singel").toLowerCase();
       if(type==="singel"){
         tagCache.set(scanned,{name:item.name,type:"singel",place:normPlace(item.place)});
-        Save.logSingle(scanned, { name: item.name });
+        // Steg5: bocken endast vid verifierat utfall (se cache-hit-grenen ovan).
+        const allowConfirm = shouldShowSingelConfirm({ via: 'scan', type });
+        Save.logSingle(scanned, { name: item.name, onResult: cls => {
+          if (allowConfirm && shouldShowSingelConfirmForResult(cls)) showSingelConfirm(item.name);
+        } });
         cooldown(scanned); busy=false; return;
       }
       setLocalMeta(scanned,{qty:item.qty,unit:item.unit,user:item.user,lastMs:item.last||Date.now()}); recomputeMaxLast(); renderLists(); prepareContainerDialog(item,scanned);

@@ -1,6 +1,16 @@
 {
-  "latest": 121,
+  "latest": 122,
   "versions": [
+    {
+      "version": 122,
+      "date": "2026-05-16",
+      "notes": [
+        "Behållare: ändra bara datum (utan att röra saldot) sparas nu korrekt och syns i historiken — förut försvann det tyst.",
+        "Skanna en singel offline: ändringen sparas nu automatiskt när du är online igen (förut stod det 'sparas när du är online' men det skedde aldrig).",
+        "Fler skydd mot att en uppdatering hamnar på fel rad eller att fel tyst sväljs (namnbyte, ångra).",
+        "Mätning tillagd för att hitta varför AI-förslag är långsamt — ingen synlig ändring än."
+      ]
+    },
     {
       "version": 121,
       "date": "2026-05-16",

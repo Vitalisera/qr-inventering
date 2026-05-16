@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 121;
+const APP_VERSION = 122;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -406,10 +406,40 @@ function classifyLinkResult(r) {
 // detta för att välja slut-UI: bara 'verified' → "Tag kopplad".
 function shouldShowLinkSuccess(cls) { return cls === 'verified'; }
 
+// #34: behållar-dialogens datumändring sparades tidigare ENDAST via en
+// fire-and-forget change-handler (iOS-`change` opålitlig, closeDialog rev
+// fältet, ingen appendLog, ingen verifiering). saveBtn hoppade dessutom helt
+// förbi datum vid oförändrat saldo (`if (newCount === oldCount) return`).
+// Ren beslutsfunktion: jämför aktuellt datumfält mot ORIGINALvärdet OCH mot
+// senast committade värdet (no-double-commit om change-handlern redan sparat
+// exakt samma värde). Returnerar vad som ska göras — DOM/nät-fritt, testbart.
+//   origYMD          = artikelns datum när dialogen öppnades ("" om inget)
+//   currentYMD       = vad fältet visar nu ("" = rensat → avinventera)
+//   lastCommittedYMD = senaste värde vi FAKTISKT skickat (init = origYMD)
+// → { action:'none' }                inget att göra (oförändrat ELLER redan committat)
+// → { action:'set',   ymd }          datum ändrat → updateMeta lastYMD
+// → { action:'clear' }               fältet rensat → clearTimestamp/avinventera
+function decideDateCommit(origYMD, currentYMD, lastCommittedYMD) {
+  const cur = String(currentYMD == null ? '' : currentYMD);
+  const last = String(lastCommittedYMD == null ? '' : lastCommittedYMD);
+  // Redan committat exakt detta värde (change-handlern hann före) → no-op.
+  if (cur === last) return { action: 'none' };
+  if (cur === '') return { action: 'clear' };
+  return { action: 'set', ymd: cur };
+}
+
 // Pending tag-länkar som väntar på bekräftelse (ej bekräftade pga nätfel/uttömt).
 // Nyckel = scannedTag. Värde = { scannedTag, sheetName, rowNum, currentTag, name }.
 // Töms när online-resync lyckas (verified) eller servern äkta-avvisar (rejected).
 const _pendingTagLinks = new Map();
+// 9.6: pending logSingle-jobb (singel-registrering som inte bekräftades pga
+// nätfel/uttömt). Tidigare visade logSingle "sparas när du är online igen"
+// MEN registrerade jobbet ingenstans → resync:ades ALDRIG → meddelandet ljög.
+// Samma resync-mekanism som _pendingTagLinks (selectPendingResync + EN online-
+// /visibilitychange-listener + _inflight-guard) drar nu BÅDE map:arna. Nyckel
+// = tag. Värde = { tag, name, sheetName, rowNum }. Self-delete vid
+// verified/rejected; behålls om fortf. offline.
+const _pendingLogSingle = new Map();
 // Ren urvalsfunktion: vilka pending-länkar ska re-försökas vid online-event?
 // Idempotent — returnerar bara poster som inte redan har ett aktivt re-försök.
 function selectPendingResync(map) {
@@ -997,7 +1027,12 @@ function addUndoButton(logEntry, tag) {
     } else {
       payload.clearTimestamp = true;
     }
-    gasCall('updateMeta', {tag, args: payload});
+    // D (samma klass): tidigare fire-and-forget — svaret observerades ALDRIG.
+    // Anropsformen {tag,args:payload} ÄR korrekt (doPost: updateMeta(body.tag,
+    // body.args), identiskt med övriga 7 callsites — promptens "fel form"-
+    // premiss stämde ej). Den ÄKTA defekten: ångra kunde tyst misslyckas men
+    // visa "Ångrad". Nu verifierat via classifyLinkResult (samma sanningskälla
+    // som linkTag/logSingle): ej-verifierat → ⚠️ på raden, ingen falsk success.
     const icon = logEntry.querySelector(".icon");
     if (icon) icon.textContent = "↩️";
     const msg = logEntry.querySelector(".msg");
@@ -1005,6 +1040,19 @@ function addUndoButton(logEntry, tag) {
     undoBtn.remove();
     undoData.delete(tag);
     show("Ångrad", "warn");
+    gasCallWithRetry('updateMeta', {tag, args: payload})
+      .then(res => {
+        if (classifyLinkResult(res) !== 'verified') {
+          if (icon) icon.textContent = '⚠️';
+          if (msg) msg.textContent += ' – ångra ej bekräftad';
+          show("Ångra kunde inte bekräftas", "warn");
+        }
+      })
+      .catch(err => {
+        if (icon) icon.textContent = '⚠️';
+        if (msg) msg.textContent += ' – ' + (err?.message || 'fel');
+        show("Ångra kunde inte bekräftas", "warn");
+      });
   };
   logEntry.appendChild(undoBtn);
   setTimeout(() => {
@@ -1161,7 +1209,10 @@ const Save = {
    */
   logSingle(tag, target) {
     const { name, sheetName, rowNum, onResult } = target;
-    const le = appendLog(`${name} – uppdateras`, tag);
+    // 9.6: _resyncLe (när satt) = återanvänd befintlig historik-rad vid
+    // online-resync istället för att appenda en ny ⏳-rad varje försök
+    // (annars log-spam vid upprepade resync-event).
+    const le = target._resyncLe || appendLog(`${name} – uppdateras`, tag);
     show("Sparar…");
     gasCallWithRetry('logTag', {
       tag, name, type: "singel", qty: 1, user: userName,
@@ -1171,14 +1222,23 @@ const Save = {
         // gasCallWithRetry kastar normalt INTE — den returnerar
         // {ok:false,exhausted:true} vid uttömt/nätfel. classifyLinkResult
         // mappar: ok:true → verified; exhausted/inget svar → pending-retry;
-        // ok:false utan exhausted (validering m.m.) → rejected.
+        // ok:false utan exhausted (validering m.m.) → rejected. C/#33:
+        // {ok:false,staleRow:true} (logTag UPDATE-grenen genom _staleRowGuard_)
+        // → rejected → markLogFail (ingen falsk bock på fel rad).
         const cls = classifyLinkResult(res);
         if (cls === 'verified') {
+          _pendingLogSingle.delete(tag);          // bekräftat → ej längre pending
           markAsDone(le); addUndoButton(le, tag);
         } else if (cls === 'pending-retry') {
           // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
           // status — optimistisk lokal write står kvar (gul rad via
-          // pendingSync-mönstret i renderLists), synkas vid återkomst.
+          // pendingSync-mönstret i renderLists). 9.6: REGISTRERA jobbet så
+          // resyncPendingTagLinks faktiskt re-försöker det vid online —
+          // meddelandet blir SANT. _inflight nollas så nästa event kan ta det.
+          const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum };
+          job._inflight = false;
+          job._le = le;                 // återanvänd samma rad vid resync
+          _pendingLogSingle.set(tag, job);
           if (le) {
             const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
             const m = le.querySelector('.msg');
@@ -1186,7 +1246,9 @@ const Save = {
           }
           show("Ingen kontakt — sparas när du är online igen", "warn");
         } else {
-          // Äkta server-avvisning → ingen bock, ⚠️ + felmeddelande.
+          // Äkta server-avvisning (validering / staleRow) → ingen bock,
+          // ⚠️ + felmeddelande. Avregistrera — re-försök är meningslöst.
+          _pendingLogSingle.delete(tag);
           markLogFail(le, new Error((res && res.msg) || 'serverfel'));
         }
         if (typeof onResult === 'function') { try { onResult(cls); } catch (_) {} }
@@ -1194,6 +1256,10 @@ const Save = {
       .catch(err => {
         // gasCallWithRetry kastar bara vid oväntat fel (ej server-avvisning) →
         // behandla som ej bekräftat (pending-retry), ingen falsk bock.
+        const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum };
+        job._inflight = false;
+        job._le = le;                   // återanvänd samma rad vid resync
+        _pendingLogSingle.set(tag, job);
         markLogFail(le, err);
         if (typeof onResult === 'function') { try { onResult('pending-retry'); } catch (_) {} }
       });
@@ -1281,11 +1347,15 @@ let _resyncInFlight = false;
 async function resyncPendingTagLinks() {
   if (_resyncInFlight) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-  const jobs = selectPendingResync(_pendingTagLinks);
-  if (!jobs.length) return;
+  const linkJobs = selectPendingResync(_pendingTagLinks);
+  // 9.6: samma idempotenta urval (selectPendingResync) för logSingle-jobb —
+  // INGEN parallell mekanism, INGEN ny listener: en och samma sweep drar
+  // båda map:arna under samma _resyncInFlight-guard.
+  const singleJobs = selectPendingResync(_pendingLogSingle);
+  if (!linkJobs.length && !singleJobs.length) return;
   _resyncInFlight = true;
   try {
-    for (const { key, job } of jobs) {
+    for (const { key, job } of linkJobs) {
       job._inflight = true;
       try {
         const r = await Save.linkTag(job.scannedTag, {
@@ -1299,6 +1369,23 @@ async function resyncPendingTagLinks() {
         if (r && r.pending) { job._inflight = false; }
       } catch (_) {
         job._inflight = false; // oväntat → låt nästa online-event försöka igen
+      }
+    }
+    for (const { key, job } of singleJobs) {
+      job._inflight = true;   // markera FÖRE (selectPendingResync hoppar då över)
+      try {
+        // Re-kör EXAKT samma Save.logSingle-väg (ingen separat gasCall-path).
+        // logSingle:s .then self-delete:ar _pendingLogSingle vid verified/
+        // rejected och nollar _inflight + behåller posten vid pending-retry.
+        // _resyncLe återanvänder samma historik-rad (ingen ny ⏳ per försök).
+        // logTag UPDATE-grenen är idempotent (skriver om qty=1/datum/user på
+        // befintlig rad); appendRow sker bara om ingen rad finns ännu.
+        Save.logSingle(job.tag, {
+          name: job.name, sheetName: job.sheetName, rowNum: job.rowNum,
+          _resyncLe: job._le || null
+        });
+      } catch (_) {
+        job._inflight = false; // oväntat → nästa event försöker igen
       }
     }
     if (typeof renderLists === 'function') renderLists();
@@ -2660,7 +2747,17 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (n && n !== dialogItem.name) {
       dialogItem.name = n;
       tagCache.set(tag, { ...tagCache.get(tag), name: n });
-      gasCall('updateName', {tag, newName: n, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum}).catch(console.log);
+      // D (samma klass): .catch(console.log) svalde fel TYST — användaren såg
+      // det nya namnet i UI:t men det kunde aldrig ha sparats. Verifierat via
+      // classifyLinkResult; ej-bekräftat → ⚠️-banner (ingen tyst förlust).
+      // gasCallWithRetry → exhausted/nätfel skiljs från äkta server-avvisning.
+      gasCallWithRetry('updateName', {tag, newName: n, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum})
+        .then(res => {
+          if (classifyLinkResult(res) !== 'verified') {
+            show("Namnbyte kunde inte bekräftas — försök igen", "warn");
+          }
+        })
+        .catch(() => show("Namnbyte kunde inte bekräftas — försök igen", "warn"));
       renderLists();
     }
   };
@@ -2719,21 +2816,62 @@ function prepareContainerDialog(item, tag, opts = {}) {
         cancelBtn = qs("#cancelUpdate"), msgLine = qs("#msgLine");
   const primaryBtn = saveBtn || registerSingleBtn;
 
+  // #34: EN verifierad datum-commit-väg. Anropas av BÅDE change-handlern
+  // (iOS-opålitlig men snabb när den fyrar) OCH saveBtn (säker fallback även
+  // vid oförändrat saldo). decideDateCommit garanterar att samma värde inte
+  // dubbel-committas — _lastCommittedDate börjar = oldDate (originalvärdet)
+  // och uppdateras synkront FÖRE gasCall så en efterföljande saveBtn ser att
+  // change-handlern redan tagit hand om det. Resultatet verifieras via
+  // classifyLinkResult (samma sanningskälla som linkTag/logSingle):
+  //   verified    → ✅ + markAsDone
+  //   pending-retry → ⚠️ "sparas när du är online igen" (optimistisk lokal
+  //                    write står kvar; gul rad via pendingSync-mönstret)
+  //   rejected    → ⚠️ markLogFail (t.ex. staleRow från _staleRowGuard_)
+  let _lastCommittedDate = oldDate;            // init = artikelns datum vid öppning
+  const commitContainerDate = (newVal) => {
+    const dec = decideDateCommit(oldDate, newVal, _lastCommittedDate);
+    if (dec.action === 'none') return false;
+    // Markera committat FÖRE async så samtidig saveBtn ser no-op (ingen dubbel).
+    _lastCommittedDate = dec.action === 'clear' ? '' : dec.ymd;
+    const isClear = dec.action === 'clear';
+    const le = appendLog(
+      isClear ? `${dialogItem.name} – datum rensat (avinventerad)`
+              : `${dialogItem.name} – datum ${dec.ymd}`, tag);
+    if (isClear) {
+      setLocalMeta(tag, { lastMs: 0, user: '' });
+    } else {
+      const ms = new Date(dec.ymd + 'T12:00:00').getTime();
+      setLocalMeta(tag, { lastMs: ms, user: userName });
+    }
+    recomputeMaxLast(); renderLists();
+    const args = isClear
+      ? { clearTimestamp: true, clearUser: true, userName: '' }
+      : { lastYMD: dec.ymd, userName };
+    gasCallWithRetry('updateMeta', { tag, args })
+      .then(res => {
+        const cls = classifyLinkResult(res);
+        if (cls === 'verified') {
+          markAsDone(le);
+        } else if (cls === 'pending-retry') {
+          if (le) {
+            const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
+            const m = le.querySelector('.msg');
+            if (m) m.textContent += ' – sparas när du är online igen';
+          }
+        } else {
+          markLogFail(le, new Error((res && res.msg) || 'serverfel'));
+        }
+      })
+      .catch(err => markLogFail(le, err));
+    return true;
+  };
+
   const containerDateInput = qs("#containerDateEdit");
   if (containerDateInput) {
     containerDateInput.addEventListener('change', () => {
-      const newVal = containerDateInput.value;
-      if (!newVal) {
-        gasCall('updateMeta', {tag, args: {clearTimestamp: true, clearUser: true, userName: ''}});
-        setLocalMeta(tag, { lastMs: 0, user: '' });
-        recomputeMaxLast(); renderLists();
-        setMsg('Datum rensat — artikeln avinventerad', 'ok');
-      } else {
-        const ms = new Date(newVal + 'T12:00:00').getTime();
-        gasCall('updateMeta', {tag, args: {lastYMD: newVal, userName}});
-        setLocalMeta(tag, { lastMs: ms, user: userName });
-        recomputeMaxLast(); renderLists();
-        setMsg('Datum uppdaterat', 'ok');
+      if (commitContainerDate(containerDateInput.value)) {
+        setMsg(containerDateInput.value
+          ? 'Datum uppdaterat' : 'Datum rensat — artikeln avinventerad', 'ok');
       }
     });
   }
@@ -3001,7 +3139,19 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (!validNumber(val)) { markError(dlgInput, true); setMsg("Ogiltigt tal i fältet.", "warn"); return; }
     const newCount = val;
     const oldCount = Number(dialogItem.qty) || 0;
-    if (newCount === oldCount) { closeDialog(); return; }
+    // #34: hantera ALLA fyra kombinationer av (saldo ändrat × datum ändrat).
+    // commitContainerDate är idempotent via decideDateCommit/_lastCommittedDate
+    // → om change-handlern redan sparade exakt samma datum blir detta no-op
+    // (ingen dubbel-commit). Vid oförändrat saldo MEN ändrat datum sparas nu
+    // datumet verifierat (förut: tyst förlust — `return` hoppade förbi det).
+    if (newCount === oldCount) {
+      const dc = containerDateInput ? containerDateInput.value : undefined;
+      if (containerDateInput) commitContainerDate(dc);
+      closeDialog();
+      return;
+    }
+    // Saldo ÄNDRAT: spara ev. även datum-ändring (no-op om redan committat).
+    if (containerDateInput) commitContainerDate(containerDateInput.value);
 
     // Logg-text speglar vad användaren gjorde — delta för stepper-justering,
     // total för manuell omskrivning. Heuristik: hopp > 5 i ett enda ändringssteg

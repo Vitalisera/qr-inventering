@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 122;
+const APP_VERSION = 123;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -458,6 +458,39 @@ const _aiSuggestCache = new Map(); // 'name|place' → {category,unit,type}
 const _aiSearchCache = new Map();  // query.lowercase → [{name,reason}]
 function _aiGetSecret() { try { return localStorage.getItem('vitaliseraAiSecret') || ''; } catch (_) { return ''; } }
 
+/* LATENSFIX: bygg distinkta kategorier-per-flik + cross-sheet-enheter ur den
+ * data klienten REDAN har (tagCache.category + metaCache.unit, samma rådata som
+ * preloadTags-payloaden backend annars loopar ~50+ Sheet-läsningar för).
+ * Returnerar EXAKT samma struktur/sortering som backendens
+ * _deriveCatsUnitsFromPreload_ (perSheet i första-sedd-ordning, kategorier &
+ * enheter trim:ade, tomma bort, .sort() default-lexikografiskt = som
+ * _distinctCol_). Skickas till aiSuggest så no-place-grenen kan HOPPA loopen.
+ * Tom (cold cache före preload) → returnera null → backend kör sin fallback. */
+function _collectAiDistinct() {
+  if (!tagCache.size) return null;
+  const catBySheet = {};      // sheet -> Set(kategori)
+  const sheetOrder = [];      // bevara första-sedd-ordning
+  const unitSet = new Set();
+  for (const v of tagCache.values()) {
+    const sheet = String(v?.sheetName || v?.place || '');
+    if (!(sheet in catBySheet)) { catBySheet[sheet] = new Set(); sheetOrder.push(sheet); }
+    const cat = String(v?.category || '').trim();
+    if (cat) catBySheet[sheet].add(cat);
+  }
+  for (const m of metaCache.values()) {
+    const u = String(m?.unit || '').trim();
+    if (u) unitSet.add(u);
+  }
+  // .sort() utan komparator = samma ordning som backendens [...set].sort()
+  const perSheet = sheetOrder.map(s => ({
+    sheet: s,
+    categories: [...catBySheet[s]].sort()
+  }));
+  const allUnits = [...unitSet].sort();
+  if (!perSheet.length && !allUnits.length) return null;
+  return { perSheet, allUnits };
+}
+
 async function aiSuggest(name, place) {
   const n = (name || '').trim();
   const p = (place || '').trim();
@@ -465,7 +498,14 @@ async function aiSuggest(name, place) {
   const key = n.toLowerCase() + '|' + p.toLowerCase();
   if (_aiSuggestCache.has(key)) return _aiSuggestCache.get(key);
   try {
-    const res = await gasCall('aiSuggest', { name: n, place: p, secret: _aiGetSecret() });
+    const params = { name: n, place: p, secret: _aiGetSecret() };
+    // Bara relevant för no-place-grenen (cross-sheet). Skicka ändå alltid när
+    // vi har data — backend ignorerar fältet i place-grenen.
+    if (!p) {
+      const d = _collectAiDistinct();
+      if (d) { params.categories = d.perSheet; params.units = d.allUnits; }
+    }
+    const res = await gasCall('aiSuggest', params);
     if (res && res.ok) { _aiSuggestCache.set(key, res); return res; }
   } catch (_) {}
   return null;
@@ -1006,10 +1046,15 @@ function markAsDone(e) {
   icon.textContent = "✅";
   msg.textContent = msg.textContent.replace("uppdateras", "uppdaterad");
 }
-function addUndoButton(logEntry, tag) {
+function addUndoButton(logEntry, tag, prevOverride) {
   const cached = tagCache.get(tag);
-  const meta = metaCache.get(tag) || {};
-  const prev = { lastMs: meta.lastMs, user: meta.user, sheetName: cached?.sheetName, rowNum: cached?.rowNum };
+  // prevOverride = FÖREGÅENDE meta-snapshot taget SYNKRONT av callern
+  // FÖRE den optimistiska setLocalMeta (logSingle:_undoPrev). Krävs för
+  // att undo ska återställa artikelns FAKTISKA tidigare tidsstämpel —
+  // metaCache här innehåller redan det NYSS satta (dagens) värdet.
+  // Fallback till metaCache bara om ingen snapshot skickades (bakåtkompat).
+  const meta = prevOverride || metaCache.get(tag) || {};
+  const prev = { lastMs: meta.lastMs ?? null, user: meta.user || "", sheetName: cached?.sheetName, rowNum: cached?.rowNum };
   undoData.set(tag, prev);
 
   const undoBtn = document.createElement("span");
@@ -1209,6 +1254,14 @@ const Save = {
    */
   logSingle(tag, target) {
     const { name, sheetName, rowNum, onResult } = target;
+    // Undo-fix: fånga FÖREGÅENDE meta-tillstånd SYNKRONT, FÖRE den
+    // optimistiska setLocalMeta nedan klobbrar metaCache med Date.now().
+    // addUndoButton anropas i .then() (efter server-svar) — då har
+    // metaCache redan dagens värde. Utan denna snapshot återställde
+    // "Ångra" alltid till idag (→ parseYMD_ kl 12:00). null lastMs =
+    // artikeln var aldrig inventerad → undo ska clearTimestamp.
+    const _prevMeta = metaCache.get(tag) || {};
+    const _undoPrev = { lastMs: _prevMeta.lastMs ?? null, user: _prevMeta.user || "" };
     // 9.6: _resyncLe (när satt) = återanvänd befintlig historik-rad vid
     // online-resync istället för att appenda en ny ⏳-rad varje försök
     // (annars log-spam vid upprepade resync-event).
@@ -1228,7 +1281,7 @@ const Save = {
         const cls = classifyLinkResult(res);
         if (cls === 'verified') {
           _pendingLogSingle.delete(tag);          // bekräftat → ej längre pending
-          markAsDone(le); addUndoButton(le, tag);
+          markAsDone(le); addUndoButton(le, tag, _undoPrev);
         } else if (cls === 'pending-retry') {
           // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
           // status — optimistisk lokal write står kvar (gul rad via

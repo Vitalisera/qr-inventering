@@ -1,6 +1,14 @@
 {
-  "latest": 122,
+  "latest": 123,
   "versions": [
+    {
+      "version": 123,
+      "date": "2026-05-17",
+      "notes": [
+        "AI-förslag vid ny artikel är nu snabbt (var 10–15 s — appen behövde läsa alla flikar; nu skickas listan med direkt).",
+        "Ångra en registrering återställer nu artikelns FÖREGÅENDE datum — förut sattes alltid dagens datum kl 12:00 av misstag."
+      ]
+    },
     {
       "version": 122,
       "date": "2026-05-16",

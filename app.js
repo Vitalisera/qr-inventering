@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 123;
+const APP_VERSION = 124;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2897,9 +2897,11 @@ function prepareContainerDialog(item, tag, opts = {}) {
       setLocalMeta(tag, { lastMs: ms, user: userName });
     }
     recomputeMaxLast(); renderLists();
+    // sheetName/rowNum krävs: tagglösa rader har syntetisk S-tag som backend
+    // resolveItem ej kan slå upp utan koordinater (→ "tagg ej hittad" → falsk pending).
     const args = isClear
-      ? { clearTimestamp: true, clearUser: true, userName: '' }
-      : { lastYMD: dec.ymd, userName };
+      ? { clearTimestamp: true, clearUser: true, userName: '', sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum }
+      : { lastYMD: dec.ymd, userName, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum };
     gasCallWithRetry('updateMeta', { tag, args })
       .then(res => {
         const cls = classifyLinkResult(res);

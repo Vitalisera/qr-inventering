@@ -1,6 +1,13 @@
 {
-  "latest": 123,
+  "latest": 124,
   "versions": [
+    {
+      "version": 124,
+      "date": "2026-05-17",
+      "notes": [
+        "Gosedjur och andra artiklar utan QR-etikett: när du bara ändrar datumet (utan att röra antalet) sparas det nu på riktigt — förut såg det ut att sparas men datumet låg kvar oförändrat i listan."
+      ]
+    },
     {
       "version": 123,
       "date": "2026-05-17",

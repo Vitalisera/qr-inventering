@@ -1,6 +1,13 @@
 {
-  "latest": 124,
+  "latest": 125,
   "versions": [
+    {
+      "version": 125,
+      "date": "2026-05-17",
+      "notes": [
+        "Gosedjur och andra artiklar utan QR-etikett: när du ändrat datum visas de nu direkt som inventerade i listan — förut hoppade de tillbaka till \"Ej inventerat\" tills nästa synkronisering."
+      ]
+    },
     {
       "version": 124,
       "date": "2026-05-17",

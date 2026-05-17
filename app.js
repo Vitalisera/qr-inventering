@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 124;
+const APP_VERSION = 125;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -2887,6 +2887,9 @@ function prepareContainerDialog(item, tag, opts = {}) {
     // Markera committat FÖRE async så samtidig saveBtn ser no-op (ingen dubbel).
     _lastCommittedDate = dec.action === 'clear' ? '' : dec.ymd;
     const isClear = dec.action === 'clear';
+    // Snapshot FÖRE optimistisk overwrite — exakt återställning vid server-avvisning.
+    const _prevMeta = { ...(metaCache.get(tag) || {}) };
+    const _prevItem = { ...(tagCache.get(tag) || {}) };
     const le = appendLog(
       isClear ? `${dialogItem.name} – datum rensat (avinventerad)`
               : `${dialogItem.name} – datum ${dec.ymd}`, tag);
@@ -2896,6 +2899,11 @@ function prepareContainerDialog(item, tag, opts = {}) {
       const ms = new Date(dec.ymd + 'T12:00:00').getTime();
       setLocalMeta(tag, { lastMs: ms, user: userName });
     }
+    // pendingSync skyddar den optimistiska writen mot poll-rebuild: initData
+    // snapshotar BARA pendingSync-poster, annars klobbras lastMs av stale
+    // server-preload (CacheService TTL 600s) inom ~15 s → artikeln hoppar
+    // tillbaka till "Ej inventerat" tills nästa synk.
+    tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: true });
     recomputeMaxLast(); renderLists();
     // sheetName/rowNum krävs: tagglösa rader har syntetisk S-tag som backend
     // resolveItem ej kan slå upp utan koordinater (→ "tagg ej hittad" → falsk pending).
@@ -2906,14 +2914,23 @@ function prepareContainerDialog(item, tag, opts = {}) {
       .then(res => {
         const cls = classifyLinkResult(res);
         if (cls === 'verified') {
+          // Server bekräftad → släpp pendingSync så server blir sanningskälla
+          // igen vid nästa poll; rensa gul markering direkt.
+          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+          recomputeMaxLast(); renderLists();
           markAsDone(le);
         } else if (cls === 'pending-retry') {
+          // Offline: behåll pendingSync — optimistisk write överlever poll.
           if (le) {
             const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
             const m = le.querySelector('.msg');
             if (m) m.textContent += ' – sparas när du är online igen';
           }
         } else {
+          // Server AVVISADE (t.ex. staleRow) → rulla tillbaka optimistisk write.
+          metaCache.set(tag, _prevMeta);
+          tagCache.set(tag, { ..._prevItem, pendingSync: false });
+          recomputeMaxLast(); renderLists();
           markLogFail(le, new Error((res && res.msg) || 'serverfel'));
         }
       })

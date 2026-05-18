@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 126;
+const APP_VERSION = 127;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -444,6 +444,14 @@ const _pendingTagLinks = new Map();
 // = tag. Värde = { tag, name, sheetName, rowNum }. Self-delete vid
 // verified/rejected; behålls om fortf. offline.
 const _pendingLogSingle = new Map();
+// Date-only pending: tagglösa/behållar-artiklar inventeras "datum=idag, saldo
+// oförändrat" via updateMeta(lastYMD) (commitContainerDate / bulk-läget). Detta
+// får ALDRIG resync:as via _pendingLogSingle (det skulle re-skicka logTag qty:1
+// = saldo sätts till 1). Egen map + egen resync via updateMeta(lastYMD). Nyckel
+// = tag. Värde (persisterat): { tag, ymd, sheetName, rowNum, name }. ymd='' =
+// clear (avinventering → clearTimestamp). Runtime-fält (_le/_inflight/
+// _prevMeta/_prevItem) EXKLUDERAS ur persistens (DOM-nod/snapshot).
+const _pendingDateOnly = new Map();
 // Ren urvalsfunktion: vilka pending-länkar ska re-försökas vid online-event?
 // Idempotent — returnerar bara poster som inte redan har ett aktivt re-försök.
 function selectPendingResync(map) {
@@ -474,8 +482,15 @@ function _persistPending_() {
         tag: v.tag, name: v.name ?? '', sheetName: v.sheetName ?? null, rowNum: v.rowNum ?? null
       });
     }
-    if (!tagLinks.length && !logSingle.length) { localStorage.removeItem(_PENDING_LS_KEY); return; }
-    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle }));
+    const dateOnly = [];
+    for (const v of _pendingDateOnly.values()) {
+      if (v && v.tag) dateOnly.push({
+        tag: v.tag, ymd: v.ymd ?? '', sheetName: v.sheetName ?? null,
+        rowNum: v.rowNum ?? null, name: v.name ?? ''
+      });
+    }
+    if (!tagLinks.length && !logSingle.length && !dateOnly.length) { localStorage.removeItem(_PENDING_LS_KEY); return; }
+    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle, dateOnly }));
   } catch (_) {}
 }
 function _rehydratePending_() {
@@ -488,6 +503,9 @@ function _rehydratePending_() {
     }
     if (d && Array.isArray(d.logSingle)) for (const j of d.logSingle) {
       if (j && j.tag && !_pendingLogSingle.has(j.tag)) _pendingLogSingle.set(j.tag, j);
+    }
+    if (d && Array.isArray(d.dateOnly)) for (const j of d.dateOnly) {
+      if (j && j.tag && !_pendingDateOnly.has(j.tag)) _pendingDateOnly.set(j.tag, j);
     }
   } catch (_) {}
 }
@@ -762,6 +780,11 @@ let extraFieldsExpanded = false;
 let invertGroups = localStorage.getItem('vitaliseraInvertGroups') === '1';
 let groupByCategory = localStorage.getItem('vitaliseraGroupByCategory') === '1';
 let groupByPlace = localStorage.getItem('vitaliseraGroupByPlace') === '1';
+// Bulk-läge: bocka av flera "Ej inventerade" som inventerade idag i ett svep.
+let bulkMode = false;
+const bulkSelected = new Set();
+// Senaste bulk-utlösningen (för EN samlad ångra-toast). [{tag,_prevMeta,_prevItem,_le}]
+let lastBulk = [];
 
 /* ===== Status ===== */
 function statusDefault(){
@@ -1440,6 +1463,67 @@ const Search = {
   }
 };
 
+/* ===== Date-only commit (datum=idag, saldo oförändrat) =====
+ * Återanvändbar väg som speglar commitContainerDate:s non-clear-gren +
+ * v125/126-robusthet (snapshot + pendingSync + pending-resync-registrering).
+ * Anropas av bulk-bekräfta (många tags). commitContainerDate förblir orörd
+ * förutom en additiv resync-registrering i pending-retry/catch-grenarna.
+ * opts: { sheetName, rowNum, name, le }. Returnerar Promise<cls>.
+ */
+function commitDateOnly(tag, ymd, opts = {}) {
+  const _prevMeta = { ...(metaCache.get(tag) || {}) };
+  const _prevItem = { ...(tagCache.get(tag) || {}) };
+  const le = opts.le || null;
+  // Optimistisk lokal write — identiskt mönster som commitContainerDate non-clear.
+  setLocalMeta(tag, { lastMs: new Date(ymd + 'T12:00:00').getTime(), user: userName });
+  tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: true });
+  recomputeMaxLast(); renderLists();
+  return gasCallWithRetry('updateMeta', {
+    tag, args: { lastYMD: ymd, userName, sheetName: opts.sheetName, rowNum: opts.rowNum }
+  })
+    .then(res => {
+      const cls = classifyLinkResult(res);
+      if (cls === 'verified') {
+        tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+        _pendingDateOnly.delete(tag); _persistPending_();
+        if (le) markAsDone(le);
+        recomputeMaxLast(); renderLists();
+      } else if (cls === 'pending-retry') {
+        // Offline/uttömt: BEHÅLL pendingSync, ⚠️, registrera för online-resync
+        // (samma robusthet commitContainerDate fick i den additiva fixen nedan).
+        _pendingDateOnly.set(tag, {
+          tag, ymd, sheetName: opts.sheetName, rowNum: opts.rowNum,
+          name: opts.name, _le: le, _prevMeta, _prevItem
+        });
+        _persistPending_();
+        if (le) {
+          const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
+          const m = le.querySelector('.msg');
+          if (m) m.textContent += ' – sparas när du är online igen';
+        }
+      } else {
+        // Äkta server-avvisning → rulla tillbaka optimistisk write.
+        metaCache.set(tag, _prevMeta);
+        tagCache.set(tag, { ..._prevItem, pendingSync: false });
+        _pendingDateOnly.delete(tag); _persistPending_();
+        recomputeMaxLast(); renderLists();
+        if (le) markLogFail(le, new Error((res && res.msg) || 'serverfel'));
+      }
+      return cls;
+    })
+    .catch(err => {
+      // Oväntat throw → behåll som pending (samma som commitContainerDate-
+      // mönstret: ingen rollback, registrera för resync).
+      _pendingDateOnly.set(tag, {
+        tag, ymd, sheetName: opts.sheetName, rowNum: opts.rowNum,
+        name: opts.name, _le: le, _prevMeta, _prevItem
+      });
+      _persistPending_();
+      if (le) markLogFail(le, err);
+      return 'pending-retry';
+    });
+}
+
 /* ===== Online-resync av ej-bekräftade tag-länkar (bug 2.7) =====
  * När nätet kommer tillbaka: re-försök varje pending tag-länk via samma
  * Save.linkTag-väg (idempotent — backend addTag är idempotent: redan kopplad
@@ -1455,7 +1539,10 @@ async function resyncPendingTagLinks() {
   // INGEN parallell mekanism, INGEN ny listener: en och samma sweep drar
   // båda map:arna under samma _resyncInFlight-guard.
   const singleJobs = selectPendingResync(_pendingLogSingle);
-  if (!linkJobs.length && !singleJobs.length) return;
+  // Date-only-jobb (datum=idag, saldo oförändrat) — egen resync via
+  // updateMeta(lastYMD). FÅR EJ gå via singleJobs (skulle sätta saldo=1).
+  const dateJobs = selectPendingResync(_pendingDateOnly);
+  if (!linkJobs.length && !singleJobs.length && !dateJobs.length) return;
   _resyncInFlight = true;
   try {
     for (const { key, job } of linkJobs) {
@@ -1487,6 +1574,44 @@ async function resyncPendingTagLinks() {
           name: job.name, sheetName: job.sheetName, rowNum: job.rowNum,
           _resyncLe: job._le || null
         });
+      } catch (_) {
+        job._inflight = false; // oväntat → nästa event försöker igen
+      }
+    }
+    for (const { key, job } of dateJobs) {
+      job._inflight = true;   // markera FÖRE (selectPendingResync hoppar då över)
+      // _resyncLe-mönstret: efter rehydrering saknas DOM-noden _le → appenda
+      // EN ny historik-rad (annars är resync osynlig i UI:t). ymd==='' = clear
+      // (avinventering) → spegla commitContainerDate:s clear-args.
+      const isClear = !job.ymd;
+      if (!job._le) {
+        job._le = appendLog(
+          isClear ? `${job.name || ''} – datum rensat (avinventerad)`
+                  : `${job.name || ''} – datum ${job.ymd}`, job.tag);
+      }
+      const args = isClear
+        ? { clearTimestamp: true, clearUser: true, userName: '', sheetName: job.sheetName, rowNum: job.rowNum }
+        : { lastYMD: job.ymd, userName, sheetName: job.sheetName, rowNum: job.rowNum };
+      try {
+        const res = await gasCallWithRetry('updateMeta', { tag: job.tag, args });
+        const cls = classifyLinkResult(res);
+        if (cls === 'verified') {
+          const cur = tagCache.get(job.tag);
+          if (cur) tagCache.set(job.tag, { ...cur, pendingSync: false });
+          _pendingDateOnly.delete(job.tag); _persistPending_();
+          if (job._le) markAsDone(job._le);
+          recomputeMaxLast();
+        } else if (cls === 'pending-retry') {
+          job._inflight = false; // fortf. offline → nästa event tar det
+        } else {
+          // Äkta server-avvisning → rollback till snapshot (om kvar) + avregistrera.
+          if (job._prevMeta) metaCache.set(job.tag, job._prevMeta);
+          if (job._prevItem) tagCache.set(job.tag, { ...job._prevItem, pendingSync: false });
+          else { const c = tagCache.get(job.tag); if (c) tagCache.set(job.tag, { ...c, pendingSync: false }); }
+          _pendingDateOnly.delete(job.tag); _persistPending_();
+          recomputeMaxLast();
+          if (job._le) markLogFail(job._le, new Error((res && res.msg) || 'serverfel'));
+        }
       } catch (_) {
         job._inflight = false; // oväntat → nästa event försöker igen
       }
@@ -2419,31 +2544,53 @@ function renderLists() {
 
     const hasComment = !!(item.comment || "").trim();
 
+    // isInv beräknas FÖRE row-wiringen så bulk-tappen vet om raden hör hemma
+    // i "Ej inventerat" (enda gruppen som får kryssrutor/bulk-toggle).
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const windowStart = now - INVENTORY_WINDOW_DAYS * DAY_MS;
+    const windowEnd   = now + INVENTORY_WINDOW_DAYS * DAY_MS;
+    const isInv =
+      meta.lastMs &&
+      meta.lastMs >= windowStart &&
+      meta.lastMs <= windowEnd;
+    const bulkable = bulkMode && !isInv;   // bara Ej-inventerat-rader i bulk-läge
+
     const row = document.createElement("button");
     row.type = "button";
     let rowClass = "statusRow clickable";
     if (isLow) rowClass += " low";
     if (item.pendingSync) rowClass += " pendingSync";
+    if (bulkable) rowClass += " bulkRow";
     row.className = rowClass;
     row.dataset.tag = t;
 
+    // Bulk-kryssruta: samma native checkbox-primitiv som inställningarnas
+    // placeRow (#settingsDialog input[type=checkbox]) — ingen ny stil.
+    const chkHTML = bulkable
+      ? `<input type="checkbox" class="bulkChk" tabindex="-1" aria-hidden="true"${bulkSelected.has(t) ? " checked" : ""}>`
+      : "";
     row.innerHTML = `
+      ${chkHTML}
       <span class="sr-name">${esc(name)}${renderRowIcons(t, item, hasComment)}</span>
       ${hideMin ? "" : `<span class="sr-min">${esc(item.minQty ?? "")}</span>`}
       <span class="sr-lastcount">${esc(meta.qty ?? "")}</span>
       <span class="sr-date">${esc(showUnit ? (meta.unit || "") : (meta.lastStr || ""))}</span>`;
 
-    addSafeTap(row, (e) => { if (!e.target.closest('.infoIcon')) openContainerForTag(t); });
-
-    const DAY_MS = 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    const windowStart = now - INVENTORY_WINDOW_DAYS * DAY_MS;
-    const windowEnd   = now + INVENTORY_WINDOW_DAYS * DAY_MS;
-
-    const isInv =
-      meta.lastMs &&
-      meta.lastMs >= windowStart &&
-      meta.lastMs <= windowEnd;
+    addSafeTap(row, (e) => {
+      if (e.target.closest('.infoIcon')) return;
+      if (bulkable) {
+        // Toggla i urvalet + kryssrutans checked + sticky-räknaren.
+        if (bulkSelected.has(t)) bulkSelected.delete(t); else bulkSelected.add(t);
+        const cb = row.querySelector('.bulkChk');
+        if (cb) cb.checked = bulkSelected.has(t);
+        row.classList.toggle('bulkSel', bulkSelected.has(t));
+        _updateBulkBar();
+        return;
+      }
+      openContainerForTag(t);
+    });
+    if (bulkable && bulkSelected.has(t)) row.classList.add('bulkSel');
 
     (isInv ? invItems : ejItems).push({
       row,
@@ -2507,6 +2654,23 @@ function renderLists() {
   listEj.innerHTML = "";
   listInv.appendChild(makeHeader());
   listEj.appendChild(makeHeader());
+  // "Markera alla i Ej inventerat" — överst i listEj, bara i bulk-läge.
+  if (bulkMode && ejItems.length) {
+    const ejTags = ejItems.map(e => e.row.dataset.tag).filter(Boolean);
+    const allSel = ejTags.length > 0 && ejTags.every(t => bulkSelected.has(t));
+    const selAll = document.createElement("button");
+    selAll.type = "button";
+    selAll.className = "statusRow clickable bulkSelectAll";
+    selAll.innerHTML =
+      `<input type="checkbox" class="bulkChk" tabindex="-1" aria-hidden="true"${allSel ? " checked" : ""}>` +
+      `<span class="sr-name">${allSel ? "Avmarkera alla" : "Markera alla i Ej inventerat"}</span>`;
+    addSafeTap(selAll, () => {
+      const turnOn = !(ejTags.length > 0 && ejTags.every(t => bulkSelected.has(t)));
+      for (const t of ejTags) { if (turnOn) bulkSelected.add(t); else bulkSelected.delete(t); }
+      renderLists();
+    });
+    listEj.appendChild(selAll);
+  }
   appendGrouped(listInv, invItems);
   appendGrouped(listEj, ejItems);
   visibleTags = _visible;
@@ -2518,6 +2682,28 @@ function renderLists() {
   else if (activePlaces.size > 0) filterText = " (" + Array.from(activePlaces).join(", ") + ")";
   if (headerInv) headerInv.textContent = `Inventerat senaste ${INVENTORY_WINDOW_DAYS} dagarna` + filterText;
   if (headerEj)  headerEj.textContent  = "Ej inventerat" + filterText;
+
+  // "Bocka av flera"-knapp i Ej-rubriken. SEPARAT element så den inte krockar
+  // med groupHeader-tappen (byt grupp-ordning) — stopPropagation på klicket.
+  const gEjHeaderEl = listEj.closest('.group')?.querySelector('.groupHeader');
+  if (gEjHeaderEl) {
+    let bulkToggle = gEjHeaderEl.querySelector('#bulkToggleBtn');
+    if (!bulkToggle) {
+      bulkToggle = document.createElement('button');
+      bulkToggle.id = 'bulkToggleBtn';
+      bulkToggle.type = 'button';
+      bulkToggle.className = 'bulkToggleBtn';
+      bulkToggle.addEventListener('click', (e) => {
+        e.stopPropagation();              // rör EJ rubrik-tappen (ordning)
+        if (bulkMode) { bulkMode = false; bulkSelected.clear(); }
+        else { bulkMode = true; bulkSelected.clear(); }
+        renderLists();
+      });
+      gEjHeaderEl.appendChild(bulkToggle);
+    }
+    bulkToggle.textContent = bulkMode ? 'Klar' : 'Bocka av flera';
+  }
+  _updateBulkBar();
 
   applyGroupOrder();
 
@@ -2533,6 +2719,92 @@ function renderLists() {
     else window.addEventListener('load', triggerPrint, { once: true });
   }
 }
+
+/* ===== Bulk-bekräfta: sticky bottenrad + samlad ångra-toast ===== */
+function _bulkTodayYMD() {
+  // Spegel av prepareContainerDialog/commitContainerDate:s YMD-format
+  // (lokalt datum, nollpaddat) — samma sträng updateMeta(lastYMD) väntar.
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function _updateBulkBar() {
+  const bar = qs('#bulkBar');
+  if (!bar) return;
+  if (!bulkMode) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  const n = bulkSelected.size;
+  const btn = qs('#bulkConfirmBtn');
+  if (btn) {
+    btn.textContent = `Bekräfta ${n} som inventerade idag`;
+    btn.disabled = n === 0;
+  }
+}
+function _exitBulkMode() {
+  bulkMode = false; bulkSelected.clear(); renderLists();
+}
+function bulkConfirmSelected() {
+  const tags = [...bulkSelected];
+  if (!tags.length) return;
+  const todayYMD = _bulkTodayYMD();
+  lastBulk = [];
+  for (const tag of tags) {
+    const item = tagCache.get(tag) || {};
+    const _prevMeta = { ...(metaCache.get(tag) || {}) };
+    const _prevItem = { ...(tagCache.get(tag) || {}) };
+    const name = item.name || tag;
+    const le = appendLog(`${name} – datum ${todayYMD}`, tag);
+    // Återanvänder EXAKT commitDateOnly (= commitContainerDate-mönstret):
+    // optimistisk write + pendingSync + verified/pending-resync/rejected.
+    commitDateOnly(tag, todayYMD, {
+      sheetName: item.sheetName, rowNum: item.rowNum, name, le
+    });
+    lastBulk.push({ tag, _prevMeta, _prevItem, _le: le });
+  }
+  _exitBulkMode();                       // samma som "Klar"-beteendet
+  _showBulkUndoToast(tags.length);
+}
+let _bulkToastTimer = null;
+function _showBulkUndoToast(n) {
+  const toast = qs('#bulkToast'), msg = qs('#bulkToastMsg');
+  if (!toast || !msg) return;
+  msg.textContent = `${n} ${n === 1 ? 'artikel' : 'artiklar'} inventerade`;
+  toast.classList.remove('hidden');
+  // Force reflow så .show-transition triggas även vid snabb återvisning.
+  void toast.offsetWidth;
+  toast.classList.add('show');
+  if (_bulkToastTimer) clearTimeout(_bulkToastTimer);
+  _bulkToastTimer = setTimeout(_hideBulkToast, 6000);
+}
+function _hideBulkToast() {
+  const toast = qs('#bulkToast');
+  if (!toast) return;
+  toast.classList.remove('show');
+  setTimeout(() => toast.classList.add('hidden'), 250);
+  if (_bulkToastTimer) { clearTimeout(_bulkToastTimer); _bulkToastTimer = null; }
+}
+function _undoLastBulk() {
+  // Rulla tillbaka oavsett om servern hann bekräfta (v125 rejected-rollback-
+  // semantik). Skrev servern redan → nästa poll blir auktoritativ (acceptabelt).
+  for (const { tag, _prevMeta, _prevItem, _le } of lastBulk) {
+    metaCache.set(tag, _prevMeta);
+    tagCache.set(tag, { ..._prevItem, pendingSync: false });
+    _pendingDateOnly.delete(tag);
+    if (_le) {
+      const ic = _le.querySelector('.icon'); if (ic) ic.textContent = '↩️';
+      const m = _le.querySelector('.msg');
+      if (m && !/ångrad/.test(m.textContent)) m.textContent += ' – ångrad';
+    }
+  }
+  _persistPending_();
+  lastBulk = [];
+  recomputeMaxLast(); renderLists();
+  _hideBulkToast();
+}
+(function _wireBulkBar(){
+  qs('#bulkConfirmBtn')?.addEventListener('click', bulkConfirmSelected);
+  qs('#bulkDoneBtn')?.addEventListener('click', _exitBulkMode);
+  qs('#bulkToastUndo')?.addEventListener('click', _undoLastBulk);
+})();
 
 /* Växla ordning Inventerat/Ej inventerat */
 function applyGroupOrder(){
@@ -2976,6 +3248,15 @@ function prepareContainerDialog(item, tag, opts = {}) {
             const m = le.querySelector('.msg');
             if (m) m.textContent += ' – sparas när du är online igen';
           }
+          // v124-residual stängd: registrera för online-resync (förr fastnade
+          // ej-bekräftad datumändring permanent). isClear → ymd='' så resync
+          // skickar clearTimestamp (spegel av args-grenarna ovan).
+          _pendingDateOnly.set(tag, {
+            tag, ymd: isClear ? '' : dec.ymd,
+            sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum,
+            name: dialogItem.name, _le: le, _prevMeta, _prevItem
+          });
+          _persistPending_();
         } else {
           // Server AVVISADE (t.ex. staleRow) → rulla tillbaka optimistisk write.
           metaCache.set(tag, _prevMeta);
@@ -2984,7 +3265,17 @@ function prepareContainerDialog(item, tag, opts = {}) {
           markLogFail(le, new Error((res && res.msg) || 'serverfel'));
         }
       })
-      .catch(err => markLogFail(le, err));
+      .catch(err => {
+        // v124-residual: oväntat throw förlorade tidigare ändringen permanent.
+        // Registrera för online-resync (samma mönster som pending-retry-grenen).
+        _pendingDateOnly.set(tag, {
+          tag, ymd: isClear ? '' : dec.ymd,
+          sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum,
+          name: dialogItem.name, _le: le, _prevMeta, _prevItem
+        });
+        _persistPending_();
+        markLogFail(le, err);
+      });
     return true;
   };
 

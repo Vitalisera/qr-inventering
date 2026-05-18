@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 128;
+const APP_VERSION = 129;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -53,15 +53,22 @@ if ('serviceWorker' in navigator) {
     // av iOS Safari HTTP-cache som ibland fastnar i flera dagar, (2) en
     // ren fetch av changelog.json som kringgår SW-cachen helt och visar
     // banner direkt om latest > APP_VERSION. Backup till SW-flödet.
-    const checkForUpdate = () => {
+    const checkForUpdate = async () => {
+      // §11.1-fix: kör pending-skrivnings-resyncen FÖRST vid reconnect. Dess
+      // BILLIGA logTag-anrop måste in i GAS-serialiseringskön FÖRE en ev.
+      // tung preload-full-scan (cacheTs-pollern kan trigga preloadShared i
+      // samma tick). await:as så resyncens snabba skrivningar hinner postas
+      // innan SW-update/changelog-poll (de hämtar Pages, ej GAS — ingen
+      // GAS-kö-konkurrens, men ordningen håller reconnect-handleraren ren).
+      // Idempotent (_resyncInFlight + _inflight-guard).
+      // 9.6: tidsdriven resync. 'online'-eventet fyrar ALDRIG vid flaky nät
+      // med appen i förgrunden (navigator.onLine stannar true) → köade
+      // offline-jobb skickades aldrig.
+      try { await resyncPendingTagLinks(); } catch (_) {}
       navigator.serviceWorker.getRegistration().then(reg => {
         reg?.update().catch(() => {});
       }).catch(() => {});
       pollVersionViaChangelog();
-      // 9.6: tidsdriven resync. 'online'-eventet fyrar ALDRIG vid flaky nät
-      // med appen i förgrunden (navigator.onLine stannar true) → köade
-      // offline-jobb skickades aldrig. Idempotent (_resyncInFlight-guard).
-      try { resyncPendingTagLinks(); } catch (_) {}
     };
     setInterval(checkForUpdate, 60000);
     document.addEventListener('visibilitychange', () => {
@@ -326,11 +333,15 @@ maybeShowWhatsNew();
 /* ===== GAS API wrapper ===== */
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
 
-async function gasCall(fn, params = {}) {
-  // 30s timeout: GAS cold-start kan ta ~10s, mobilnät-tap kan tappa förbindelsen
-  // helt utan native error. Utan timeout hänger UI:n i evighet.
+async function gasCall(fn, params = {}, timeoutMs = 30000) {
+  // Per-anrop-timeout (default 30s, oförändrat för alla anropare som inte
+  // skickar timeoutMs): GAS cold-start kan ta ~10s, mobilnät-tap kan tappa
+  // förbindelsen helt utan native error. Utan timeout hänger UI:n i evighet.
+  // preload tål längre (full-scan 7-13s, ska SLUTFÖRAS ej abort:a+retry-storma)
+  // → callsiten skickar 60000. Snabba skriv-anrop (logTag/updateMeta/cacheTs/
+  // resync) behåller defaulten så de inte svälts av en långsam preload.
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 30000);
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetch(GAS_URL, {
       method: 'POST',
@@ -346,7 +357,7 @@ async function gasCall(fn, params = {}) {
       throw new Error('Ogiltigt svar från servern');
     }
   } catch (err) {
-    if (err.name === 'AbortError') throw new Error('Timeout — servern svarade inte inom 30s');
+    if (err.name === 'AbortError') throw new Error('Timeout — servern svarade inte inom ' + Math.round(timeoutMs / 1000) + 's');
     throw err;
   } finally {
     clearTimeout(timer);
@@ -361,11 +372,14 @@ async function gasCallWithRetry(fn, params = {}, opts = {}) {
   const retries = opts.retries ?? 3;
   const backoff = opts.backoff ?? [800, 2000, 5000];
   const onAttempt = opts.onAttempt || (() => {});
+  // Vidarebefordra ev. per-anrop-timeout; utelämnad → gasCall behåller sin
+  // 30s-default (oförändrat beteende för alla nuvarande retry-anropare).
+  const timeoutMs = opts.timeoutMs;
   let lastErr = '';
   for (let i = 0; i <= retries; i++) {
     onAttempt(i + 1, retries + 1);
     try {
-      const res = await gasCall(fn, params);
+      const res = timeoutMs == null ? await gasCall(fn, params) : await gasCall(fn, params, timeoutMs);
       // Success
       if (res?.ok) return res;
       // Specifika permanent-fel: returnera direkt utan retry
@@ -2225,7 +2239,13 @@ const PRELOAD_CACHE_KEY = 'vitaliseraPreloadCache_v2';
 let _preloadInflight = null;
 function preloadShared() {
   if (_preloadInflight) return _preloadInflight;
-  _preloadInflight = gasCall('preload').finally(() => { _preloadInflight = null; });
+  // 60s timeout: preload full-scannar 9-17 flikar (7-13s) och _bumpCacheTs vid
+  // varje write tömmer cachen → ofta full-scan. Den ska SLUTFÖRAS, inte abort:a
+  // vid 30s och retry-storma. Snabba skriv-anrop behåller 30s-defaulten (de
+  // delar inte längre samma timeout-värde). Den delade in-flight-promisen
+  // koalescerar samtidiga preloads (bootstrap/cacheTs-poll/_revalidateCacheTs_)
+  // till EN full-scan i stället för parallella.
+  _preloadInflight = gasCall('preload', {}, 60000).finally(() => { _preloadInflight = null; });
   return _preloadInflight;
 }
 function preloadData() {
@@ -4528,7 +4548,9 @@ async function preloadWithRetry(){
       if (!hadCachedPreload) show(`Försöker igen (${i+1}/${delays.length})…`, null, { autoreset: false });
       await new Promise(r => setTimeout(r, delays[i]));
     }
-    try { return await gasCall('preload'); }
+    // Via preloadShared → koalescera med cacheTs-poll/_revalidateCacheTs_
+    // (samma in-flight-promise = ingen parallell full-scan) + 60s-timeout.
+    try { return await preloadShared(); }
     catch (err) { lastErr = err; console.warn(`Preload-försök ${i+1} misslyckades:`, err?.message); }
   }
   throw lastErr;

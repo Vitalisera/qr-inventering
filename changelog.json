@@ -1,6 +1,13 @@
 {
-  "latest": 128,
+  "latest": 129,
   "versions": [
+    {
+      "version": 129,
+      "date": "2026-05-18",
+      "notes": [
+        "Snabbare synk när du kommer online igen: en artikel du registrerade utan nät skickas nu före appens tunga datauppdatering, så den sparas på sekunder i stället för minuter. Appen gör inte heller flera tunga uppdateringar samtidigt längre."
+      ]
+    },
     {
       "version": 128,
       "date": "2026-05-18",

@@ -254,63 +254,6 @@ header h1 {
 .statusRow.pendingSync { background-color: #fff4ce; border-left: 4px solid #f9a825; }
 .statusRow.pendingSync .sr-name::after { content: " \27F3"; color: #f57c00; font-weight: 600; }
 
-/* === Bulk-läge (bocka av flera Ej-inventerade) === */
-/* Kryssruta: samma native-checkbox-mått som #settingsDialog input[type=checkbox]. */
-.statusRow .bulkChk {
-  flex-shrink: 0; width: 22px; height: 22px;
-  margin: 0 10px 0 0; padding: 0; border: 0;
-  accent-color: var(--primary);
-  appearance: auto; -webkit-appearance: auto;
-  pointer-events: none;          /* raden äger tappen (addSafeTap), ej rutan */
-}
-.statusRow.bulkSel { background-color: #e3f2ec; }
-@media (prefers-color-scheme: dark) { .statusRow.bulkSel { background-color: #1f3b33; } }
-.statusRow.bulkSelectAll { font-weight: 700; }
-/* "Bocka av flera"/"Klar"-knapp i Ej-rubriken — separat från rubrik-tappen. */
-.bulkToggleBtn {
-  flex-shrink: 0;
-  background: var(--primary); color: #fff;
-  border: none; border-radius: 14px;
-  padding: 5px 12px; font-size: 0.78rem; font-weight: 600;
-  cursor: pointer;
-}
-/* Sticky bottenrad — återanvänder FAB-färg/skugga, full bredd. */
-.bulkBar {
-  position: fixed; left: 0; right: 0;
-  bottom: 0;
-  display: flex; gap: 10px; align-items: center;
-  padding: 12px calc(env(safe-area-inset-right,0px) + 16px)
-           calc(env(safe-area-inset-bottom,0px) + 12px)
-           calc(env(safe-area-inset-left,0px) + 16px);
-  background: var(--white);
-  box-shadow: 0 -4px 12px rgba(0,0,0,.18);
-  z-index: 1100;
-}
-.bulkBar .btn { flex: 1 1 auto; }
-.bulkBar .btn.cancel { flex: 0 0 auto; }
-/* Samlad ångra-toast (transient, 1 element, fixed, fade). */
-.bulkToast {
-  position: fixed; left: 50%;
-  bottom: calc(env(safe-area-inset-bottom,0px) + 80px);
-  transform: translate(-50%, 12px);
-  display: flex; align-items: center; gap: 14px;
-  max-width: calc(100vw - 32px);
-  padding: 12px 18px;
-  background: #323232; color: #fff;
-  border-radius: 26px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.35);
-  font-size: 0.9rem;
-  opacity: 0; pointer-events: none;
-  transition: opacity .25s ease, transform .25s ease;
-  z-index: 1200;
-}
-.bulkToast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
-.bulkToastUndo {
-  background: none; border: none;
-  color: #ffd54f; font-weight: 700; font-size: 0.9rem;
-  text-decoration: underline; cursor: pointer; padding: 4px 6px;
-}
-
 /* Info-ikon */
 .infoIcon {
   display: inline-block; font-size: 0.85em; opacity: 0.7;

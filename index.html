@@ -56,8 +56,7 @@
         <b>Ej inventerat</b> = övriga artiklar.<br>
         <b>Röd bakgrund</b> = mängden understiger "ska finnas under kurs".<br>
         <b>Gul markering</b> = ändring väntar på synk mot Sheetet.<br>
-        Tryck på en rad för att öppna artikeln. Tryck på rubrikerna för att byta ordning.<br>
-        <b>Bocka av flera</b> (knappen vid "Ej inventerat"): kryssa i flera artiklar och bekräfta dem alla som inventerade idag i ett svep. En ångra-knapp visas direkt efteråt.
+        Tryck på en rad för att öppna artikeln. Tryck på rubrikerna för att byta ordning.
       </div>
       <div id="listInventerat" class="list"></div>
     </div>
@@ -162,18 +161,6 @@
   <button id="searchFab" class="btn fab">Sök</button>
   <button id="settingsBtn" class="btn fab" aria-label="Inställningar" title="Inställningar">⚙️</button>
 
-  <!-- BULK-LÄGE: sticky bottenrad (visas bara i bulk-läge) -->
-  <div id="bulkBar" class="bulkBar hidden">
-    <button id="bulkConfirmBtn" class="btn" type="button" disabled>Bekräfta 0 som inventerade idag</button>
-    <button id="bulkDoneBtn" class="btn cancel" type="button">Klar</button>
-  </div>
-
-  <!-- Samlad ångra-toast efter bulk-bekräfta -->
-  <div id="bulkToast" class="bulkToast hidden" role="status" aria-live="polite">
-    <span id="bulkToastMsg"></span>
-    <button id="bulkToastUndo" class="bulkToastUndo" type="button">Ångra</button>
-  </div>
-
   <audio id="successSound" preload="auto">
     <source src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg" type="audio/ogg" />
   </audio>
@@ -182,7 +169,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=127"></script>
+  <script src="app.js?v=128"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

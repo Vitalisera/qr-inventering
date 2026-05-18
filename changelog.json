@@ -1,12 +1,11 @@
 {
-  "latest": 127,
+  "latest": 128,
   "versions": [
     {
-      "version": 127,
+      "version": 128,
       "date": "2026-05-18",
       "notes": [
-        "Nytt: \"Bocka av flera\" vid Ej inventerat — kryssa i flera artiklar och bekräfta dem alla som inventerade idag i ett svep, utan att öppna varje artikel. En samlad Ångra-knapp visas direkt efteråt.",
-        "Datumändringar som görs utan nätverk skickas nu automatiskt när kontakten är tillbaka (förut kunde de fastna)."
+        "\"Bocka av flera\" är tillfälligt borttagen — Ångra-knappen återställde inte på riktigt (sa \"Ångrad\" men datumet låg kvar). Funktionen kommer tillbaka när ångra fungerar ordentligt. All annan funktion oförändrad."
       ]
     },
     {

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 125;
+const APP_VERSION = 126;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -58,6 +58,10 @@ if ('serviceWorker' in navigator) {
         reg?.update().catch(() => {});
       }).catch(() => {});
       pollVersionViaChangelog();
+      // 9.6: tidsdriven resync. 'online'-eventet fyrar ALDRIG vid flaky nät
+      // med appen i förgrunden (navigator.onLine stannar true) → köade
+      // offline-jobb skickades aldrig. Idempotent (_resyncInFlight-guard).
+      try { resyncPendingTagLinks(); } catch (_) {}
     };
     setInterval(checkForUpdate, 60000);
     document.addEventListener('visibilitychange', () => {
@@ -449,6 +453,45 @@ function selectPendingResync(map) {
   }
   return out;
 }
+
+// 9.6: pending-jobben var enbart in-memory → iPhone dödar PWA i bakgrund =
+// permanent tyst dataförlust av offline-skannade artiklar. Persistera bara
+// data-fälten (EXKL _le DOM-nod / _inflight runtime) till localStorage;
+// rehydrera vid init så en tidsdriven/visibilitychange-resync kan skicka dem.
+const _PENDING_LS_KEY = 'vitaliseraPendingSync';
+function _persistPending_() {
+  try {
+    const tagLinks = [];
+    for (const v of _pendingTagLinks.values()) {
+      if (v && v.scannedTag) tagLinks.push({
+        scannedTag: v.scannedTag, sheetName: v.sheetName ?? null,
+        rowNum: v.rowNum ?? null, currentTag: v.currentTag ?? null, name: v.name ?? ''
+      });
+    }
+    const logSingle = [];
+    for (const v of _pendingLogSingle.values()) {
+      if (v && v.tag) logSingle.push({
+        tag: v.tag, name: v.name ?? '', sheetName: v.sheetName ?? null, rowNum: v.rowNum ?? null
+      });
+    }
+    if (!tagLinks.length && !logSingle.length) { localStorage.removeItem(_PENDING_LS_KEY); return; }
+    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle }));
+  } catch (_) {}
+}
+function _rehydratePending_() {
+  try {
+    const raw = localStorage.getItem(_PENDING_LS_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (d && Array.isArray(d.tagLinks)) for (const j of d.tagLinks) {
+      if (j && j.scannedTag && !_pendingTagLinks.has(j.scannedTag)) _pendingTagLinks.set(j.scannedTag, j);
+    }
+    if (d && Array.isArray(d.logSingle)) for (const j of d.logSingle) {
+      if (j && j.tag && !_pendingLogSingle.has(j.tag)) _pendingLogSingle.set(j.tag, j);
+    }
+  } catch (_) {}
+}
+_rehydratePending_();
 
 /* ===== AI-assistenter =====
  * Backend tolererar att secret saknas (om AI_SHARED_SECRET inte satt i Script Properties).
@@ -1153,6 +1196,7 @@ const Save = {
         });
       }
       _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name });
+      _persistPending_();
       if (le) {
         const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
         const m = le.querySelector('.msg');
@@ -1196,6 +1240,7 @@ const Save = {
         if (cur) tagCache.set(currentTag, { ...cur, pendingSync: false });
       }
       _pendingTagLinks.delete(scannedTag); // bekräftat → ej längre pending
+      _persistPending_();
       markAsDone(le);
       return { ok: true, tag: res.tag, alreadyPresent: !!res.alreadyPresent, le };
     }
@@ -1212,6 +1257,7 @@ const Save = {
     // Äkta server-avvisning (collision / staleRow / valideringsfel UTAN exhausted)
     // → rollback exakt som förr. scannedTag tillhör inte denna rad.
     _pendingTagLinks.delete(scannedTag);
+    _persistPending_();
     if (!isSynthetic) {
       const cur = tagCache.get(currentTag);
       if (cur) tagCache.set(currentTag, {
@@ -1281,6 +1327,7 @@ const Save = {
         const cls = classifyLinkResult(res);
         if (cls === 'verified') {
           _pendingLogSingle.delete(tag);          // bekräftat → ej längre pending
+          _persistPending_();
           markAsDone(le); addUndoButton(le, tag, _undoPrev);
         } else if (cls === 'pending-retry') {
           // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
@@ -1292,6 +1339,7 @@ const Save = {
           job._inflight = false;
           job._le = le;                 // återanvänd samma rad vid resync
           _pendingLogSingle.set(tag, job);
+          _persistPending_();
           if (le) {
             const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
             const m = le.querySelector('.msg');
@@ -1302,6 +1350,7 @@ const Save = {
           // Äkta server-avvisning (validering / staleRow) → ingen bock,
           // ⚠️ + felmeddelande. Avregistrera — re-försök är meningslöst.
           _pendingLogSingle.delete(tag);
+          _persistPending_();
           markLogFail(le, new Error((res && res.msg) || 'serverfel'));
         }
         if (typeof onResult === 'function') { try { onResult(cls); } catch (_) {} }
@@ -1313,6 +1362,7 @@ const Save = {
         job._inflight = false;
         job._le = le;                   // återanvänd samma rad vid resync
         _pendingLogSingle.set(tag, job);
+        _persistPending_();
         markLogFail(le, err);
         if (typeof onResult === 'function') { try { onResult('pending-retry'); } catch (_) {} }
       });

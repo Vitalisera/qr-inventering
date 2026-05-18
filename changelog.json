@@ -1,6 +1,13 @@
 {
-  "latest": 125,
+  "latest": 126,
   "versions": [
+    {
+      "version": 126,
+      "date": "2026-05-18",
+      "notes": [
+        "Artiklar du registrerar utan nätverk skickas nu automatiskt så snart appen får kontakt igen — förut kunde de fastna osynligt och aldrig sparas. Köade registreringar överlever även om appen stängs och öppnas på nytt."
+      ]
+    },
     {
       "version": 125,
       "date": "2026-05-17",

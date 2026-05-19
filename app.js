@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 133;
+const APP_VERSION = 134;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -3475,6 +3475,15 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // debounce/orphan-skydd (scheduleAutoSave är clearTimeout-idempotent).
   extra.querySelector('#minQtyEdit')?.addEventListener('input', scheduleAutoSave);
   qs('#commentEdit')?.addEventListener('blur', scheduleAutoSave);
+  // P4 (samma 5.2-klass som P1 #minQtyEdit): #placeNew/#categoryNew/#unitNew/
+  // #commentEdit sparade ENBART på blur → tyst förlorade vid snabb navigering
+  // utan att fältet blur:ar. 'input' registrerar flushen direkt så resetDialog
+  // committar den synkront mot rätt closure-tag vid teardown. Samma debounce/
+  // orphan-skydd (scheduleAutoSave är clearTimeout-idempotent).
+  ['#placeNew', '#categoryNew', '#unitNew'].forEach(sel => {
+    extra.querySelector(sel)?.addEventListener('input', scheduleAutoSave);
+  });
+  qs('#commentEdit')?.addEventListener('input', scheduleAutoSave);
 
   // pointerup + click-dedupe så Stäng funkar även när tangentbordet är uppe
   // (iOS slukar ibland click-eventet efter input-blur).

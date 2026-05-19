@@ -1,6 +1,13 @@
 {
-  "latest": 133,
+  "latest": 134,
   "versions": [
+    {
+      "version": 134,
+      "date": "2026-05-19",
+      "notes": [
+        "Rättning: ändringar av kommentar, ny enhet, ny kategori och ny plats sparas nu även om du går vidare snabbt utan att först trycka utanför fältet — förut kunde de tyst försvinna (samma typ av fel som tidigare rättades för \"antal som ska finnas\")."
+      ]
+    },
     {
       "version": 133,
       "date": "2026-05-19",

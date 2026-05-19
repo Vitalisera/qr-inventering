@@ -1,6 +1,13 @@
 {
-  "latest": 132,
+  "latest": 133,
   "versions": [
+    {
+      "version": 133,
+      "date": "2026-05-19",
+      "notes": [
+        "Rättning: efter att du raderat en artikel och skannar igen blir fälten i \"Ny artikel\"-rutan inte längre låsta — förut kunde de fastna gråa om synken mot servern drog ut på tiden."
+      ]
+    },
     {
       "version": 132,
       "date": "2026-05-19",

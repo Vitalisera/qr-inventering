@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 132;
+const APP_VERSION = 133;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -3283,7 +3283,13 @@ function prepareContainerDialog(item, tag, opts = {}) {
     loader.innerHTML = `<div class="spinner"></div>`;
     dlg.appendChild(loader);
     dlg.classList.add("loading");
-    dlg.querySelectorAll("button, input, textarea").forEach(e => e.disabled = true);
+    // 3.1/3.2-fix: tagga _wasDisabled (spegel av delete-freeze ~3516) så
+    // resetDialogs unfreezeStale ALLTID kan återställa korrekt disabled-state
+    // även om updateDialogWithFreshData (enda re-enable, rad ~3571) aldrig
+    // körs (fresh-fetch failar/avbryts vid långsam backend). Utan markören
+    // läckte blanket-disable → permanenta #manual*-noder fast disabled i
+    // nästa "Ny artikel"-dialog (Malins 3.1/3.2 "BUG!").
+    dlg.querySelectorAll("button, input, textarea").forEach(e => { e.dataset._wasDisabled = e.disabled ? "1" : "0"; e.disabled = true; });
   }
 
   const markError = (el, on=true) => el && el.classList[on ? "add" : "remove"]("input-error");

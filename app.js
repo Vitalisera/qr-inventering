@@ -6,7 +6,20 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 130;
+const APP_VERSION = 131;
+// QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
+// Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
+// en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
+// __qaRefresh kör initData-rebuilden deterministiskt (simulerar 15s-pollen);
+// __qaState läser tagCache/metaCache + logSingle-räknare. INGA prod-vägar rör
+// QA utom dessa gated definitioner (ingen scan-/synk-logik ändrad).
+const QA_MODE=(()=>{try{return new URLSearchParams(location.search).has('qa')||localStorage.getItem('qaMode')==='1';}catch{return false;}})();
+let _qaLogSingleCount=0;
+if(QA_MODE){
+  window.__qaRefresh=()=>preloadShared().then(initData);
+  window.__qaState=(t)=>{const nt=normTag(String(t));return{tag:nt,item:tagCache.get(nt)||null,meta:metaCache.get(nt)||null,logSingleCount:_qaLogSingleCount};};
+  window.__qaReset=()=>{_qaLogSingleCount=0;};
+}
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -1341,6 +1354,7 @@ const Save = {
    * returnerar: log-entry-elementet (för ev. vidare UI-bruk)
    */
   logSingle(tag, target) {
+    if(QA_MODE)_qaLogSingleCount++;
     const { name, sheetName, rowNum, onResult } = target;
     // Undo-fix: fånga FÖREGÅENDE meta-tillstånd SYNKRONT, FÖRE den
     // optimistiska setLocalMeta nedan klobbrar metaCache med Date.now().
@@ -3433,6 +3447,14 @@ function prepareContainerDialog(item, tag, opts = {}) {
   ['#minQtyEdit', '#placeNew', '#categoryNew', '#unitNew'].forEach(sel => {
     extra.querySelector(sel)?.addEventListener('blur', scheduleAutoSave);
   });
+  // 5.2-fix: #minQtyEdit sparade ENBART på blur. Ändras "antal som ska finnas"
+  // och man navigerar vidare snabbt (flera artiklar i rad) UTAN att fältet
+  // blur:ar → scheduleAutoSave kördes aldrig → _pendingAutoSaveFlush förblev
+  // null → resetDialogs synkrona flush blev no-op → editen tyst förlorad i
+  // BÅDE PWA och Sheet. 'input' registrerar flushen direkt; resetDialog
+  // committar den då synkront mot rätt closure-tag vid teardown. Samma
+  // debounce/orphan-skydd (scheduleAutoSave är clearTimeout-idempotent).
+  extra.querySelector('#minQtyEdit')?.addEventListener('input', scheduleAutoSave);
   qs('#commentEdit')?.addEventListener('blur', scheduleAutoSave);
 
   // pointerup + click-dedupe så Stäng funkar även när tangentbordet är uppe
@@ -4532,6 +4554,10 @@ async function startCamera(){
   reader.decodeFromVideoDevice(cam.deviceId, v, onScanResult);
   // Parallell crop-decode för bättre detection på små streckkoder
   startCropDecode(onScanResult);
+  // QA: injicera en avkodad tagg i EXAKT samma pipeline som en riktig skan.
+  // resultPoints:[] → passerar res-guarden (~rad 4470) och hoppar geometri-
+  // blocket precis som crop-decode redan gör. busy/dialogOpen gatar normalt.
+  if(QA_MODE){window.__qaScan=(txt)=>{const t=String(txt);return onScanResult({text:t,getText:()=>t,resultPoints:[],__qa:true});};}
   // Hint:a iOS att fokusera mitten av bilden (där scanBox visas) — annars fokuserar
   // iOS auto-focus på mittpunkten av HELA video-frame:n, vilket inte är scanBox.
   setTimeout(() => {

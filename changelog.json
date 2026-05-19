@@ -1,6 +1,13 @@
 {
-  "latest": 130,
+  "latest": 131,
   "versions": [
+    {
+      "version": 131,
+      "date": "2026-05-19",
+      "notes": [
+        "Rättning: när du ändrar \"antal som ska finnas under kurs\" och går vidare snabbt till nästa artikel sparas ändringen nu — förut kunde den tyst försvinna om du inte först tryckte utanför fältet."
+      ]
+    },
     {
       "version": 130,
       "date": "2026-05-19",

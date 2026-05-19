@@ -1,6 +1,13 @@
 {
-  "latest": 129,
+  "latest": 130,
   "versions": [
+    {
+      "version": 130,
+      "date": "2026-05-19",
+      "notes": [
+        "Tydligare kvitto när du skannar en singel-artikel: bilden fryser ett ögonblick och artikelnamnet visas stort med \"✓ Registrerad\" direkt — du ser med en gång att skanningen gick fram. Samma artikel registreras inte längre flera gånger om du råkar låta etiketten ligga kvar framför kameran."
+      ]
+    },
     {
       "version": 129,
       "date": "2026-05-18",

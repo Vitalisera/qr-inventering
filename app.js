@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 129;
+const APP_VERSION = 130;
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
 // update-flow (banner, controllerchange, polling, what's new). Annars
@@ -1066,7 +1066,35 @@ function showSingelConfirm(name){
     setTimeout(()=>{ try{ el.remove(); }catch{} },1400);
   }catch{}
 }
-const cooldown=t=>{lastCode=t;setTimeout(()=>lastCode="",COOLDOWN_MS);};
+// Stark OMEDELBAR "fångad"-signal vid skan-singel-autoregister. Visas direkt
+// (ej på server-svar) → användaren ser tydligt att skanningen registrerats utan
+// att skanna 15 ggr. Fryser kameran ~2500ms (kvarliggande tagg kan ej re-fyra
+// under frysen) och visar artikelnamnet stort. "Registrerad – sparas" är ärligt:
+// optimistisk + köad write (v126/v129-pipelinen levererar); genuint serverfel
+// syns ändå via Save.logSingle:s ⚠️/historik. Visuellt skild från showSingelConfirm
+// (egen klass .singelCaptured). pointer-events:none → blockerar ej tap.
+async function showSingelCaptured(name){
+  const laser=qs('#scanLaser');
+  try{
+    if(overlay){
+      const prev=overlay.querySelector('.singelCaptured'); if(prev) prev.remove();
+      const el=document.createElement('div');
+      el.className='singelCaptured';
+      el.innerHTML='<div class="sgcName">'+esc(name||'Artikel')+'</div>'
+        +'<div class="sgcSub">✓ Registrerad – sparas</div>';
+      overlay.appendChild(el);
+    }
+    if(laser)laser.style.animationPlayState="paused";
+    try{v.pause();}catch{}
+    await new Promise(r=>setTimeout(r,2500));
+  }catch{}
+  finally{
+    try{v.play();}catch{}
+    if(laser)laser.style.animationPlayState="running";
+    try{ const el=overlay&&overlay.querySelector('.singelCaptured'); if(el) el.remove(); }catch{}
+  }
+}
+const cooldown=(t,ms=COOLDOWN_MS)=>{lastCode=t;setTimeout(()=>{ if(lastCode===t) lastCode=""; },ms);};
 const dialogOpen=()=>!dlg.classList.contains('hidden')||!nameDialog.classList.contains('hidden')||!settingsDialog.classList.contains('hidden')||!searchDialog.classList.contains('hidden');
 
 /* ===== Logg ===== */
@@ -4467,15 +4495,15 @@ async function startCamera(){
       // Att då skriva över med scan-resultat ger "flicker" — dialog visas, byts/stängs.
       if (dialogOpen()) { busy=false; cooldown(primaryTag); return; }
       if(type==="singel"){
-        // Steg5: visa STORA bocken BARA när logTag är verifierat lyckat.
-        // shouldShowSingelConfirm gatar via/type (skan-singel); onResult-cls
-        // gatar att servern faktiskt bekräftade. pending/rejected → ingen bock
-        // (logSingle visar ⚠️/pending-status i historiken).
-        const allowConfirm = shouldShowSingelConfirm({ via: 'scan', type });
-        Save.logSingle(primaryTag, { name, onResult: cls => {
-          if (allowConfirm && shouldShowSingelConfirmForResult(cls)) showSingelConfirm(name);
-        } });
-        cooldown(primaryTag); busy=false; return;
+        // Stark OMEDELBAR "fångad"-signal (ej på server-svar) ersätter den
+        // fördröjda showSingelConfirm-bocken som skan-feedback. Server-confirm
+        // blir ambient via Save.logSingle:s pendingSync/historik (⚠️ vid
+        // genuint fel). cooldown 8000ms → kvarliggande tagg re-fyrar ej; en
+        // ANNAN tagg har scanned!==lastCode → skannar fritt direkt.
+        Save.logSingle(primaryTag, { name });
+        cooldown(primaryTag, 8000); busy=false;
+        showSingelCaptured(name);
+        return;
       }
       const meta=metaCache.get(primaryTag)||{};
       const localItem={name:cached.name,type:cached.type,place:cached.place,sheetName:cached.sheetName,rowNum:cached.rowNum,qty:meta.qty||0,unit:meta.unit||"",user:meta.user||"",last:meta.lastMs,comment:cached.comment||"",minQty:cached.minQty||0,step:cached.step||""};
@@ -4490,12 +4518,12 @@ async function startCamera(){
       const type=(item.type||"singel").toLowerCase();
       if(type==="singel"){
         tagCache.set(scanned,{name:item.name,type:"singel",place:normPlace(item.place)});
-        // Steg5: bocken endast vid verifierat utfall (se cache-hit-grenen ovan).
-        const allowConfirm = shouldShowSingelConfirm({ via: 'scan', type });
-        Save.logSingle(scanned, { name: item.name, onResult: cls => {
-          if (allowConfirm && shouldShowSingelConfirmForResult(cls)) showSingelConfirm(item.name);
-        } });
-        cooldown(scanned); busy=false; return;
+        // Stark OMEDELBAR "fångad"-signal ersätter fördröjd bock (se
+        // cache-hit-grenen ovan). Server-confirm ambient via Save.logSingle.
+        Save.logSingle(scanned, { name: item.name });
+        cooldown(scanned, 8000); busy=false;
+        showSingelCaptured(item.name);
+        return;
       }
       setLocalMeta(scanned,{qty:item.qty,unit:item.unit,user:item.user,lastMs:item.last||Date.now()}); recomputeMaxLast(); renderLists(); prepareContainerDialog(item,scanned);
       tagCache.set(scanned, { name: item.name, type: "behållare", place: normPlace(item.place) });

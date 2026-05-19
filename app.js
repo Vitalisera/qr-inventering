@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 131;
+const APP_VERSION = 132;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -1384,6 +1384,9 @@ const Save = {
         if (cls === 'verified') {
           _pendingLogSingle.delete(tag);          // bekräftat → ej längre pending
           _persistPending_();
+          // Server bekräftad → släpp pendingSync så server blir sanningskälla
+          // igen vid nästa poll (spegel av v125 commitContainerDate verified).
+          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
           markAsDone(le); addUndoButton(le, tag, _undoPrev);
         } else if (cls === 'pending-retry') {
           // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
@@ -1405,8 +1408,13 @@ const Save = {
         } else {
           // Äkta server-avvisning (validering / staleRow) → ingen bock,
           // ⚠️ + felmeddelande. Avregistrera — re-försök är meningslöst.
+          // P2: rulla tillbaka optimistisk write + släpp pendingSync så listan
+          // inte falskt visar "inventerad idag" (spegel av v125 rejected).
           _pendingLogSingle.delete(tag);
           _persistPending_();
+          metaCache.set(tag, _prevMeta);
+          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+          recomputeMaxLast(); renderLists();
           markLogFail(le, new Error((res && res.msg) || 'serverfel'));
         }
         if (typeof onResult === 'function') { try { onResult(cls); } catch (_) {} }
@@ -1423,6 +1431,11 @@ const Save = {
         if (typeof onResult === 'function') { try { onResult('pending-retry'); } catch (_) {} }
       });
     setLocalMeta(tag, { lastMs: Date.now(), user: userName });
+    // P2-fix: skydda den optimistiska writen mot 15s-pollens initData-rebuild
+    // (snapshotar BARA pendingSync-poster, ~app.js:2306). Utan detta klobbas
+    // lastMs tillbaka → singeln "ligger kvar i Ej inventerat" tills server-
+    // preload färskats (server→klient-stale). Spegel av v125 commitContainerDate.
+    tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: true });
     recomputeMaxLast();
     renderLists();
     return le;

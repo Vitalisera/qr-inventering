@@ -1,6 +1,13 @@
 {
-  "latest": 131,
+  "latest": 132,
   "versions": [
+    {
+      "version": 132,
+      "date": "2026-05-19",
+      "notes": [
+        "Rättning: när du skannar en singel-artikel stannar den nu kvar som inventerad i listan — förut kunde den hoppa tillbaka till \"Ej inventerat\" efter en stund innan synken hunnit klart."
+      ]
+    },
     {
       "version": 131,
       "date": "2026-05-19",

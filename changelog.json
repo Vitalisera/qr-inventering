@@ -1,6 +1,13 @@
 {
-  "latest": 143,
+  "latest": 144,
   "versions": [
+    {
+      "version": 144,
+      "date": "2026-05-20",
+      "notes": [
+        "Nytt: \"Inventera vid koppling\" i Inställningar. När du slår på den faller flödet direkt in i inventering efter att du kopplat en ny tagg — singel-artikel registreras direkt, behållare öppnar antal-dialogen. Slagen av i grunden så befintligt arbetssätt funkar precis som förut."
+      ]
+    },
     {
       "version": 143,
       "date": "2026-05-20",

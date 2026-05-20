@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 143;
+const APP_VERSION = 144;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -577,6 +577,10 @@ if (QA_MODE) {
   window.__qaLinkTag = (scannedTag, target) => Save.linkTag(scannedTag, target);
   window.__qaGetCache = (t) => tagCache.get(t) || null;
   window.__qaLookup = (t) => lookupByTag(t);
+  // P5: direkt-test av _maybeInventOnLink utan att gå via search-dialog-callback.
+  window.__qaSetInventOnLink = (v) => { inventOnLink = !!v; };
+  window.__qaGetInventOnLink = () => inventOnLink;
+  window.__qaMaybeInventOnLink = (finalTag, name) => _maybeInventOnLink(finalTag, name);
   // 5.3: queueUpdate + flushUpdates + updateQueue inspektion för batch-synk-
   // tester (catch-grenen tappar data eller ej, online-resync triggas eller ej).
   window.__qaQueueUpdate = (fnName, args) => queueUpdate(fnName, args);
@@ -856,6 +860,10 @@ let currentDialogTag = null;
 let extraFieldsExpanded = false;
 let invertGroups = localStorage.getItem('vitaliseraInvertGroups') === '1';
 let groupByCategory = localStorage.getItem('vitaliseraGroupByCategory') === '1';
+// P5: "Inventera vid koppling" — när PÅ faller koppla→befintlig genom till
+// post-skan-flödet (singel logSingle / behållare antal-dialog) direkt efter
+// "Tag kopplad". Default AV (befintlig UX bevarad om toggle ej aktiverats).
+let inventOnLink = localStorage.getItem('vitaliseraInventOnLink') === '1';
 let groupByPlace = localStorage.getItem('vitaliseraGroupByPlace') === '1';
 
 /* ===== Status ===== */
@@ -2089,6 +2097,26 @@ function openSettingsDialog() {
     }
   }
 
+  // P5: "Inventera vid koppling" — sticky toggle (default AV)
+  const titleLink = document.createElement('div');
+  titleLink.className = 'filterSectionTitle';
+  titleLink.textContent = 'Skanning';
+  placeList.appendChild(titleLink);
+  {
+    const row = document.createElement('div');
+    row.className = 'placeRow';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.dataset.inventonlink = '1';
+    chk.checked = inventOnLink;
+    const txt = document.createElement('div');
+    txt.className = 'placeTxt';
+    txt.textContent = 'Inventera vid koppling';
+    row.append(chk, txt);
+    row.addEventListener('click', e => { if (e.target !== chk) chk.checked = !chk.checked; });
+    placeList.appendChild(row);
+  }
+
   const titleIcons = document.createElement('div');
   titleIcons.className = 'filterSectionTitle';
   titleIcons.textContent = 'Visa ikoner';
@@ -2165,6 +2193,11 @@ applySettingsBtn?.addEventListener('click', () => {
 
   const hideMinBox = placeList.querySelector('input[data-hidemin="1"]');
   hideMin = !!hideMinBox?.checked;
+
+  // P5: läs och persistera "Inventera vid koppling"
+  const inventOnLinkBox = placeList.querySelector('input[data-inventonlink="1"]');
+  inventOnLink = !!inventOnLinkBox?.checked;
+  localStorage.setItem('vitaliseraInventOnLink', inventOnLink ? '1' : '0');
 
   const boxes = placeList.querySelectorAll('input[type="checkbox"][data-place]');
   const selPlaces = new Set();
@@ -3950,6 +3983,40 @@ async function fetchOpenFoodFacts(barcode) {
   finally { clearTimeout(timer); }
 }
 
+// P5: efter "Tag kopplad" — om inventOnLink-toggle PÅ, fall igenom till
+// post-skan-flödet (singel: logga direkt; behållare: öppna antal-dialog).
+// finalTag = primärtag i tagCache efter linkTag-success: för non-synth = currentTag,
+// för synth = result.tag (key-swap S* → res.tag har redan skett).
+function _maybeInventOnLink(finalTag, name) {
+  if (!inventOnLink) return;
+  const cached = tagCache.get(finalTag);
+  if (!cached) return;
+  if (cached.type === 'singel') {
+    Save.logSingle(finalTag, { name: cached.name || name });
+    return;
+  }
+  if (cached.type === 'behållare') {
+    const meta = metaCache.get(finalTag) || {};
+    const localItem = {
+      name: cached.name || name,
+      type: cached.type,
+      place: cached.place,
+      sheetName: cached.sheetName,
+      rowNum: cached.rowNum,
+      qty: meta.qty || 0,
+      unit: meta.unit || '',
+      user: meta.user || '',
+      last: meta.lastMs,
+      comment: cached.comment || '',
+      minQty: cached.minQty || 0,
+      step: cached.step || '',
+      sheetPlace: cached.sheetPlace,
+      category: cached.category
+    };
+    prepareContainerDialog(localItem, finalTag);
+  }
+}
+
 function showLinkTagDialog(scannedTag) {
   resetDialog();
   dlgTitle.textContent = "Okänd tag";
@@ -4234,6 +4301,7 @@ function openLinkSearchDialog(tagToLink) {
           renderLists();
           if (result.ok) {
             show(`Tag kopplad till "${name}"`, "ok");
+            _maybeInventOnLink(tag, name);
           } else if (result.pending) {
             show("Ingen kontakt — sparas när du är online igen", "warn");
           } else if (result.collision) {
@@ -4251,6 +4319,7 @@ function openLinkSearchDialog(tagToLink) {
         if (result.ok) {
           show(`Tag kopplad till "${name}"`, "ok");
           renderLists();
+          _maybeInventOnLink(result.tag, name);
         } else if (result.pending) {
           show("Ingen kontakt — sparas när du är online igen", "warn");
           renderLists();

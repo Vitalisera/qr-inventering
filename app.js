@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 136;
+const APP_VERSION = 137;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -528,12 +528,22 @@ if (QA_MODE) window.__qaPending = () => ({
 // så scan-pipeline-tester (1D-varianter, samma-tagg-spärr) kan köras i ren
 // desktop-Chrome. Sätter preloadDone så onScanResult passerar guarden (4523).
 if (QA_MODE) window.__qaSeedTag = (tag, itemPatch, metaPatch) => {
-  const t = normTag(String(tag));
+  // Respektera EXAKT tag-input — normalisera ej, så test kan seed:a både
+  // syntetiska S-prefix-taggar och raw primärtaggar (numeriska EAN-13 m.m.)
+  // utan att normTag mutar dem (normTag används av onScanResult-pipelinen
+  // för INKOMMANDE skanningar, ej för cache-seed).
+  const t = String(tag);
   tagCache.set(t, { name: 'QA', type: 'singel', place: 'Test', sheetName: 'Test', rowNum: 1, ...itemPatch });
   setLocalMeta(t, { qty: 1, unit: 'st', user: 'QA', lastMs: null, ...metaPatch });
   preloadDone = true;
   return { tag: t, cached: tagCache.get(t), meta: metaCache.get(t) };
 };
+// Direkt access till Save.linkTag + tagCache.get för 2.7-tester (pendingSync
+// state för syntetiska, _pendingTagLinks-population, resync-triggers).
+if (QA_MODE) {
+  window.__qaLinkTag = (scannedTag, target) => Save.linkTag(scannedTag, target);
+  window.__qaGetCache = (t) => tagCache.get(t) || null;
+}
 
 /* ===== AI-assistenter =====
  * Backend tolererar att secret saknas (om AI_SHARED_SECRET inte satt i Script Properties).
@@ -1248,6 +1258,14 @@ const Save = {
         altTags: [...(oldData.altTags || []), scannedTag],
         pendingSync: true
       });
+    } else {
+      // 2.7: syntetiska (S-prefix) har inget altTags-att-uppdatera optimistiskt
+      // (key-swap S* → res.tag sker först vid server-success), MEN pendingSync
+      // måste sätts ändå så raden gulmarkeras vid offline + skyddas av
+      // initData-snapshotens pendingSync-filter (rad 2334). Annars förlorar
+      // användaren visuell feedback att kopplingen väntar på server.
+      const oldData = tagCache.get(currentTag);
+      if (oldData) tagCache.set(currentTag, { ...oldData, pendingSync: true });
     }
 
     // Hjälpare: registrera EJ-bekräftad länk för online-resync + behåll pending.
@@ -1264,6 +1282,10 @@ const Save = {
             : [...(cur.altTags || []), scannedTag],
           pendingSync: true
         });
+      } else {
+        // 2.7: idempotent (om optimistiska pre-await redan satt pendingSync, ok).
+        const cur = tagCache.get(currentTag);
+        if (cur) tagCache.set(currentTag, { ...cur, pendingSync: true });
       }
       _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name });
       _persistPending_();
@@ -1332,9 +1354,15 @@ const Save = {
       const cur = tagCache.get(currentTag);
       if (cur) tagCache.set(currentTag, {
         ...cur,
-        altTags: (cur.altTags || []).filter(t => t !== scannedTag),
-        pendingSync: false
+        pendingSync: false,
+        altTags: (cur.altTags || []).filter(t => t !== scannedTag)
       });
+    } else {
+      // 2.7: rensa pendingSync vi optimistiskt satt vid pre-await — annars
+      // stannar synth-raden gulmarkerad förevigt efter en collision (server
+      // sa "redan kopplad till X" eller staleRow). Ingen altTags att rensa.
+      const cur = tagCache.get(currentTag);
+      if (cur) tagCache.set(currentTag, { ...cur, pendingSync: false });
     }
     const failMsg = res && res.collision
       ? `redan kopplad till "${res.existingName}"`

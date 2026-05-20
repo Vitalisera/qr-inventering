@@ -1,6 +1,13 @@
 {
-  "latest": 136,
+  "latest": 137,
   "versions": [
+    {
+      "version": 137,
+      "date": "2026-05-20",
+      "notes": [
+        "Rättning: när du kopplar en ny tagg till en artikel som tidigare saknat tagg och nätet ligger nere mitt i blir raden nu gulmarkerad så du ser att kopplingen väntar — förut blev det inte synligt, vilket gjorde att man trodde inget hände trots att appen försökte igen vid nästa uppkoppling."
+      ]
+    },
     {
       "version": 136,
       "date": "2026-05-20",

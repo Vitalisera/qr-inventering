@@ -1,6 +1,13 @@
 {
-  "latest": 144,
+  "latest": 145,
   "versions": [
+    {
+      "version": 145,
+      "date": "2026-05-20",
+      "notes": [
+        "Nytt: artikel-dialogen visar nu en rad med plats och kategori under artikelnamnet (formatet \"Storkök | Mat\"). Saknas båda göms raden helt."
+      ]
+    },
     {
       "version": 144,
       "date": "2026-05-20",

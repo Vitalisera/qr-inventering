@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 144;
+const APP_VERSION = 145;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -3140,7 +3140,18 @@ function prepareContainerDialog(item, tag, opts = {}) {
 
   const oldDate = toYMD(dialogItem.lastMs);
   const unitSuffix = (dialogItem.unit || "").trim();
+  // P7: plats|kategori-rad mellan namn och meta-rad. Icke-redigerbar.
+  // Samma stil som "Linda A"-raden (.metaBy). Saknas båda → dölj raden.
+  const _p7Place = (dialogItem.sheetPlace || "").trim();
+  const _p7Cat = (dialogItem.category || "").trim();
+  const _p7Parts = [];
+  if (_p7Place) _p7Parts.push(esc(_p7Place));
+  if (_p7Cat) _p7Parts.push(esc(_p7Cat));
+  const _p7Line = _p7Parts.length
+    ? `<div class="metaBy" style="margin-bottom:4px">${_p7Parts.join(' | ')}</div>`
+    : '';
   dlgInfo.innerHTML = `
+    ${_p7Line}
     <div class="metaTop">
       <span class="metaQty">${esc(dialogItem.qty)} ${esc(dialogItem.unit)}</span>
       ${dialogItem.user ? `<span class="metaBy"> • ${esc(dialogItem.user)}</span>` : ""}

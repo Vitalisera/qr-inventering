@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 134;
+const APP_VERSION = 135;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -66,31 +66,27 @@ if ('serviceWorker' in navigator) {
     // av iOS Safari HTTP-cache som ibland fastnar i flera dagar, (2) en
     // ren fetch av changelog.json som kringgår SW-cachen helt och visar
     // banner direkt om latest > APP_VERSION. Backup till SW-flödet.
-    const checkForUpdate = async () => {
-      // §11.1-fix: kör pending-skrivnings-resyncen FÖRST vid reconnect. Dess
-      // BILLIGA logTag-anrop måste in i GAS-serialiseringskön FÖRE en ev.
-      // tung preload-full-scan (cacheTs-pollern kan trigga preloadShared i
-      // samma tick). await:as så resyncens snabba skrivningar hinner postas
-      // innan SW-update/changelog-poll (de hämtar Pages, ej GAS — ingen
-      // GAS-kö-konkurrens, men ordningen håller reconnect-handleraren ren).
-      // Idempotent (_resyncInFlight + _inflight-guard).
-      // 9.6: tidsdriven resync. 'online'-eventet fyrar ALDRIG vid flaky nät
-      // med appen i förgrunden (navigator.onLine stannar true) → köade
-      // offline-jobb skickades aldrig.
-      try { await resyncPendingTagLinks(); } catch (_) {}
+    const checkForUpdate = () => {
+      // P3.5(b): update-detektering FÖRST/oberoende. Tidigare `await
+      // resyncPendingTagLinks()` blockerade pollVersionViaChangelog när GAS
+      // var otillgängligt (resyncens Save.linkTag-anrop hänger på timeout)
+      // → banner visades ALDRIG för redan öppen PWA → installerad app kunde
+      // inte uppgraderas utan manuell swipe-kill (cold-start-vägen på rad
+      // 35-49 är inte checkForUpdate-gated och fungerade alltid).
+      // Resync triggas separat fire-and-forget nedan — behåller §11.1-/9.6-
+      // intent (skicka köade pending-skrivningar) utan att svälta detektering.
       navigator.serviceWorker.getRegistration().then(reg => {
         reg?.update().catch(() => {});
       }).catch(() => {});
       pollVersionViaChangelog();
+      // Idempotent (_resyncInFlight + _inflight-guard) → krockar ej med
+      // online-listenern eller visibilitychange-handlern nedan.
+      try { resyncPendingTagLinks(); } catch (_) {}
     };
+    if (QA_MODE) window.__qaCheckForUpdate = checkForUpdate;
     setInterval(checkForUpdate, 60000);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        checkForUpdate();
-        // Bug 2.7: app åter i fokus → re-försök ev. ej-bekräftade tag-länkar.
-        // Idempotent (egen _resyncInFlight-guard) → krockar ej med online-listenern.
-        try { resyncPendingTagLinks(); } catch (_) {}
-      }
+      if (document.visibilityState === 'visible') checkForUpdate();
     });
   }
 }
@@ -519,6 +515,12 @@ function _rehydratePending_() {
   } catch (_) {}
 }
 _rehydratePending_();
+if (QA_MODE) window.__qaPending = () => ({
+  tagLinks: _pendingTagLinks.size,
+  logSingle: _pendingLogSingle.size,
+  tagLinksData: [..._pendingTagLinks.values()],
+  logSingleData: [..._pendingLogSingle.values()]
+});
 
 /* ===== AI-assistenter =====
  * Backend tolererar att secret saknas (om AI_SHARED_SECRET inte satt i Script Properties).

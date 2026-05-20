@@ -1,6 +1,13 @@
 {
-  "latest": 134,
+  "latest": 135,
   "versions": [
+    {
+      "version": 135,
+      "date": "2026-05-20",
+      "notes": [
+        "Rättning: \"Uppgradera version\"-knappen visas nu tillförlitligt även vid långsamt nätverk — förut kunde knappen utebli så att du behövde stänga och öppna appen för att få den nya versionen."
+      ]
+    },
     {
       "version": 134,
       "date": "2026-05-19",

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 135;
+const APP_VERSION = 136;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -19,6 +19,9 @@ if(QA_MODE){
   window.__qaRefresh=()=>preloadShared().then(initData);
   window.__qaState=(t)=>{const nt=normTag(String(t));return{tag:nt,item:tagCache.get(nt)||null,meta:metaCache.get(nt)||null,logSingleCount:_qaLogSingleCount};};
   window.__qaReset=()=>{_qaLogSingleCount=0;};
+  // onScanResult är hoisted (async function-decl moduleScope) → __qaScan
+  // når den även när den definieras nedan. resultPoints:[] hoppar geometri.
+  window.__qaScan=(txt,fmt)=>{const t=String(txt);return onScanResult({text:t,getText:()=>t,getBarcodeFormat:()=>fmt,resultPoints:[],__qa:true});};
 }
 
 // Detekteras tidigt — ?print=1-tabben är ephemeral och ska INTE delta i
@@ -521,6 +524,16 @@ if (QA_MODE) window.__qaPending = () => ({
   tagLinksData: [..._pendingTagLinks.values()],
   logSingleData: [..._pendingLogSingle.values()]
 });
+// __qaSeedTag: deterministisk mock av tagCache + metaCache utan GAS-anslutning,
+// så scan-pipeline-tester (1D-varianter, samma-tagg-spärr) kan köras i ren
+// desktop-Chrome. Sätter preloadDone så onScanResult passerar guarden (4523).
+if (QA_MODE) window.__qaSeedTag = (tag, itemPatch, metaPatch) => {
+  const t = normTag(String(tag));
+  tagCache.set(t, { name: 'QA', type: 'singel', place: 'Test', sheetName: 'Test', rowNum: 1, ...itemPatch });
+  setLocalMeta(t, { qty: 1, unit: 'st', user: 'QA', lastMs: null, ...metaPatch });
+  preloadDone = true;
+  return { tag: t, cached: tagCache.get(t), meta: metaCache.get(t) };
+};
 
 /* ===== AI-assistenter =====
  * Backend tolererar att secret saknas (om AI_SHARED_SECRET inte satt i Script Properties).
@@ -4507,18 +4520,12 @@ startBtn?.addEventListener('click', ()=>{
   });
 });
 function stopReader(){stopFocusCycler();stopCropDecode();try{reader&&reader.reset();}catch{}cameraOn=false;statusDefault();}
-async function startCamera(){
-  stopReader(); reader=new ZXing.BrowserMultiFormatReader(_zxingHints());
-  const cams=await reader.listVideoInputDevices();
-  _backCameras = pickBackCameras(cams);
-  let cam=lastCamera||_backCameras[0]||cams[0];
-  const idx = _backCameras.findIndex(c => c.deviceId === cam?.deviceId);
-  _backCamIndex = idx >= 0 ? idx : 0;
-  lastCamera=cam; if(!cam){show("Ingen kamera","warn");return;}
-  cameraOn=true; statusDefault();
-  updateLensSwitchVisibility();
-  startFocusCycler();
-  const onScanResult = async res => {
+// onScanResult lyft från startCamera-scope till moduleScope så __qaScan kan
+// kalla EXAKT samma pipeline utan kamera-permission (alla referenser — v,
+// scanBox, lastCode, busy, dialogOpen, preloadDone, lookupByTag, Save,
+// tagCache, metaCache, normTag, acceptScan, cooldown, prepareContainerDialog
+// etc — är redan moduleScope, inga closure-beroenden av startCamera).
+async function onScanResult(res) {
     if(!res||!res.resultPoints||busy||dialogOpen())return;
     if(!preloadDone){show("Laddar artiklar...",null,{autoreset:false});return;}
     const pts=res.resultPoints||[];
@@ -4540,6 +4547,15 @@ async function startCamera(){
     busy=true; scanBox.classList.add("flash"); setTimeout(()=>scanBox.classList.remove("flash"),220);
 
     const hit=lookupByTag(scanned);
+    // P4: 1D-streckkoder kan rapporteras med olika .text mellan frames för
+    // SAMMA fysiska kod (UPC-A 12-digit ↔ EAN-13 med leading-0-pad, andra
+    // format-tvetydigheter). lookupByTag normaliserar via leading-0-fallback
+    // (rad 726-735), så två olika `scanned`-strängar mappar samma primaryTag.
+    // Snabb-gaten `scanned===lastCode` (rad 4550) är strikt match och missar
+    // detta → samma artikel registrerades 2-3× per skan av en 1D-kod (QR-
+    // koder har Reed-Solomon → identisk .text per frame → snabb-gaten räcker).
+    // Dedupe på primaryTag fångar varianterna utan att hindra äkta nya skan.
+    if (hit && hit.tag === lastCode) { busy=false; return; }
     if(hit){
       const primaryTag=hit.tag, cached=hit.item;
       const {name,type}=cached; await flashFeedback(name);
@@ -4580,14 +4596,21 @@ async function startCamera(){
       setLocalMeta(scanned,{qty:item.qty,unit:item.unit,user:item.user,lastMs:item.last||Date.now()}); recomputeMaxLast(); renderLists(); prepareContainerDialog(item,scanned);
       tagCache.set(scanned, { name: item.name, type: "behållare", place: normPlace(item.place) });
     });
-  };
+}
+async function startCamera(){
+  stopReader(); reader=new ZXing.BrowserMultiFormatReader(_zxingHints());
+  const cams=await reader.listVideoInputDevices();
+  _backCameras = pickBackCameras(cams);
+  let cam=lastCamera||_backCameras[0]||cams[0];
+  const idx = _backCameras.findIndex(c => c.deviceId === cam?.deviceId);
+  _backCamIndex = idx >= 0 ? idx : 0;
+  lastCamera=cam; if(!cam){show("Ingen kamera","warn");return;}
+  cameraOn=true; statusDefault();
+  updateLensSwitchVisibility();
+  startFocusCycler();
   reader.decodeFromVideoDevice(cam.deviceId, v, onScanResult);
   // Parallell crop-decode för bättre detection på små streckkoder
   startCropDecode(onScanResult);
-  // QA: injicera en avkodad tagg i EXAKT samma pipeline som en riktig skan.
-  // resultPoints:[] → passerar res-guarden (~rad 4470) och hoppar geometri-
-  // blocket precis som crop-decode redan gör. busy/dialogOpen gatar normalt.
-  if(QA_MODE){window.__qaScan=(txt)=>{const t=String(txt);return onScanResult({text:t,getText:()=>t,resultPoints:[],__qa:true});};}
   // Hint:a iOS att fokusera mitten av bilden (där scanBox visas) — annars fokuserar
   // iOS auto-focus på mittpunkten av HELA video-frame:n, vilket inte är scanBox.
   setTimeout(() => {

@@ -1,6 +1,13 @@
 {
-  "latest": 135,
+  "latest": 136,
   "versions": [
+    {
+      "version": 136,
+      "date": "2026-05-20",
+      "notes": [
+        "Rättning: vanliga streckkoder (EAN-13/UPC-A på matvaror m.m.) registreras nu bara EN gång per skanning — förut kunde samma streckkod räknas 2-3 gånger om kameran läste den lite olika mellan kamerabilderna. QR-koder var redan korrekta och påverkas inte."
+      ]
+    },
     {
       "version": 135,
       "date": "2026-05-20",

@@ -1,6 +1,13 @@
 {
-  "latest": 142,
+  "latest": 143,
   "versions": [
+    {
+      "version": 143,
+      "date": "2026-05-20",
+      "notes": [
+        "Rättning: när du kopplar en ny tagg till en artikel som tidigare saknat tagg, känns taggen igen direkt vid nästa skan — förut behövde du vänta tills den gröna bocken visats i historiken (kunde ta upp till 20 sekunder på mobilt nät) innan re-skan funkade."
+      ]
+    },
     {
       "version": 142,
       "date": "2026-05-20",

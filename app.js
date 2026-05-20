@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 142;
+const APP_VERSION = 143;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -576,6 +576,7 @@ if (QA_MODE) window.__qaSeedTag = (tag, itemPatch, metaPatch) => {
 if (QA_MODE) {
   window.__qaLinkTag = (scannedTag, target) => Save.linkTag(scannedTag, target);
   window.__qaGetCache = (t) => tagCache.get(t) || null;
+  window.__qaLookup = (t) => lookupByTag(t);
   // 5.3: queueUpdate + flushUpdates + updateQueue inspektion för batch-synk-
   // tester (catch-grenen tappar data eller ej, online-resync triggas eller ej).
   window.__qaQueueUpdate = (fnName, args) => queueUpdate(fnName, args);
@@ -1310,42 +1311,44 @@ const Save = {
     const isSynthetic = String(currentTag || '').startsWith('S');
     const le = appendLog(`${name} – tag ${scannedTag} kopplas`, currentTag);
 
-    if (!isSynthetic) {
-      const oldData = tagCache.get(currentTag);
-      if (oldData) tagCache.set(currentTag, {
-        ...oldData,
-        altTags: [...(oldData.altTags || []), scannedTag],
-        pendingSync: true
-      });
-    } else {
-      // 2.7: syntetiska (S-prefix) har inget altTags-att-uppdatera optimistiskt
-      // (key-swap S* → res.tag sker först vid server-success), MEN pendingSync
-      // måste sätts ändå så raden gulmarkeras vid offline + skyddas av
-      // initData-snapshotens pendingSync-filter (rad 2334). Annars förlorar
-      // användaren visuell feedback att kopplingen väntar på server.
-      const oldData = tagCache.get(currentTag);
-      if (oldData) tagCache.set(currentTag, { ...oldData, pendingSync: true });
-    }
+    // P0c-fix: optimistic altTags-push för BÅDA syntetiska och vanliga.
+    // Pre-P0c skippade synth-grenen altTags (med argument att key-swap sker
+    // först vid server-success). Bi-effekt: under "uppdateras"-window (kan
+    // vara 10-20s på mobilt nät GAS-cold-start) returnerar lookupByTag(X)
+    // null → re-skan av just kopplad tag öppnar "okänd"-dialog. Robert:
+    // "först när historik visade grön bock gick det att skanna" = exakt
+    // server-key-swap-tillfället. Lägg X som altTag på S-keyn → lookupByTag-
+    // fallback (rad 723-725) returnerar {tag:'S...', item} → cache-hit-
+    // grenen i onScanResult öppnar artikel-dialog. Synth-success (rad 1376+)
+    // raderar S-key och sätter X som ny key — filtrerar då X ur altTags
+    // (annars hamnar X både som primary OCH som alt på sig själv).
+    // Rejected-grenen (rad 1413+) filtrerar X ur altTags vid rollback.
+    const oldData = tagCache.get(currentTag);
+    if (oldData) tagCache.set(currentTag, {
+      ...oldData,
+      // Idempotent: vid resyncPendingTagLinks (online-retry) körs samma
+      // linkTag igen → undvik dubblett scannedTag i altTags (samma mönster
+      // som _markPendingRetry nedan).
+      altTags: (oldData.altTags || []).includes(scannedTag)
+        ? (oldData.altTags || [])
+        : [...(oldData.altTags || []), scannedTag],
+      pendingSync: true
+    });
 
     // Hjälpare: registrera EJ-bekräftad länk för online-resync + behåll pending.
     // Återanvänds av både catch (oväntat throw) och exhausted-fail-pathen.
     const _markPendingRetry = (msgTail) => {
       // BEHÅLL pendingSync:true + scannedTag i altTags (optimistiskt, men pending).
       // Ingen rollback → renderLists gulmarkerar raden (pendingSync-CSS).
-      if (!isSynthetic) {
-        const cur = tagCache.get(currentTag);
-        if (cur) tagCache.set(currentTag, {
-          ...cur,
-          altTags: (cur.altTags || []).includes(scannedTag)
-            ? (cur.altTags || [])
-            : [...(cur.altTags || []), scannedTag],
-          pendingSync: true
-        });
-      } else {
-        // 2.7: idempotent (om optimistiska pre-await redan satt pendingSync, ok).
-        const cur = tagCache.get(currentTag);
-        if (cur) tagCache.set(currentTag, { ...cur, pendingSync: true });
-      }
+      // P0c: gäller BÅDA synth + non-synth (idempotent altTag-push).
+      const cur = tagCache.get(currentTag);
+      if (cur) tagCache.set(currentTag, {
+        ...cur,
+        altTags: (cur.altTags || []).includes(scannedTag)
+          ? (cur.altTags || [])
+          : [...(cur.altTags || []), scannedTag],
+        pendingSync: true
+      });
       _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name });
       _persistPending_();
       if (le) {
@@ -1380,7 +1383,10 @@ const Save = {
             ...oldData,
             sheetName: null,
             rowNum: null,
-            altTags: oldData.altTags || [],
+            // P0c: scannedTag är nu PRIMARY (res.tag). Filtrera bort den ur
+            // altTags så den inte hamnar både som primary OCH som alt på sig
+            // själv (annars dubbel-hit i lookupByTag.altTags-loop, kosmetiskt).
+            altTags: (oldData.altTags || []).filter(t => t !== res.tag),
             pendingSync: false
           });
           const oldMeta = metaCache.get(currentTag);
@@ -1409,20 +1415,14 @@ const Save = {
     // → rollback exakt som förr. scannedTag tillhör inte denna rad.
     _pendingTagLinks.delete(scannedTag);
     _persistPending_();
-    if (!isSynthetic) {
-      const cur = tagCache.get(currentTag);
-      if (cur) tagCache.set(currentTag, {
-        ...cur,
-        pendingSync: false,
-        altTags: (cur.altTags || []).filter(t => t !== scannedTag)
-      });
-    } else {
-      // 2.7: rensa pendingSync vi optimistiskt satt vid pre-await — annars
-      // stannar synth-raden gulmarkerad förevigt efter en collision (server
-      // sa "redan kopplad till X" eller staleRow). Ingen altTags att rensa.
-      const cur = tagCache.get(currentTag);
-      if (cur) tagCache.set(currentTag, { ...cur, pendingSync: false });
-    }
+    // P0c: gäller BÅDA synth + non-synth — båda fick optimistic altTag-push,
+    // båda måste rensa scannedTag ur altTags + pendingSync:false vid rejected.
+    const cur = tagCache.get(currentTag);
+    if (cur) tagCache.set(currentTag, {
+      ...cur,
+      pendingSync: false,
+      altTags: (cur.altTags || []).filter(t => t !== scannedTag)
+    });
     const failMsg = res && res.collision
       ? `redan kopplad till "${res.existingName}"`
       : ((res && res.msg) || 'misslyckades');

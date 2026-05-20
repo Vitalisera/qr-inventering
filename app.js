@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 140;
+const APP_VERSION = 141;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -241,6 +241,20 @@ async function showUpdateBanner(reg) {
   // låt decideUpdateAction välja väg utifrån verklig SW-state just nu.
   btn.addEventListener('click', async () => {
     btn.disabled = true;
+    // P0-spinner (v141): visuell feedback under SW-update + reload-väntan.
+    // Mobilt nät + SW-install + reload kan ta 10-20s. Utan feedback ser
+    // användaren en död knapp och tror den är trasig (Roberts H3-hypotes,
+    // bekräftad genom desktop-harness GRÖN + iPhone observation). Watchdog
+    // efter 20s: om vi fortfarande är här (reload skedde inte) → felmeddelande
+    // + återaktivera så användaren kan försöka igen. Watchdog städas naturligt
+    // av location.reload() i success-path.
+    btn.classList.add('loading');
+    btn.textContent = 'Hämtar ny version…';
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.textContent = 'Försök igen';
+    }, 20000);
     // Vänta in pending Sheet-skrivningar innan reload — annars kan en ändring
     // som väntar på flush förloras vid SW-byte. Timeout 4s så banner inte hänger
     // om sync är trasigt.

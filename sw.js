@@ -1,4 +1,4 @@
-const CACHE = 'vitalisera-inv-v140';
+const CACHE = 'vitalisera-inv-v141';
 // Egna assets — om någon av dessa failar är appen trasig, all-or-nothing är OK.
 const PRECACHE_OWN = [
   './',

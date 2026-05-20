@@ -1,6 +1,13 @@
 {
-  "latest": 140,
+  "latest": 141,
   "versions": [
+    {
+      "version": 141,
+      "date": "2026-05-20",
+      "notes": [
+        "\"Uppgradera version\"-knappen visar nu spinner och texten \"Hämtar ny version…\" direkt när du trycker — förut såg det ut som inget hände under de 10-20 sekunder det kan ta att hämta ny version på mobilt nät. Vid timeout (20s) visas \"Försök igen\"."
+      ]
+    },
     {
       "version": 140,
       "date": "2026-05-20",

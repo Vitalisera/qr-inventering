@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 139;
+const APP_VERSION = 140;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -3005,16 +3005,30 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // alla andra ingångar börjar kollapsade så det blir konsekvent UX.
   extraFieldsExpanded = editMode;
   const meta = metaCache.get(tag) || {};
-  const _sn = item.sheetName || null;
-  const _rn = item.rowNum || null;
+  // P0a-fix: vissa callsites (localItem i onScanResult-cache-hit-grenen,
+  // m.fl.) plockar inte med sheetPlace + category när de bygger item-objektet
+  // som passas till prepareContainerDialog. dialogItem={...item}-spread ärver
+  // då undefined → rad 3205/3230 ser "(ingen)" som selected. UX-bug (visar
+  // tomt trots Sheet-värde) + kantfall för dataförlust (om användaren faktiskt
+  // rör dropdown skrivs blur-saven över med ny tom-värde). Robert verifierade
+  // att blur-triggered save bara skickar faktiskt ändrade fält → INTE aktiv
+  // dataförlust så länge användaren inte rör dropdown. Fallback till tagCache
+  // (sanningskällan från initData rad 2456-2457) säkerställer att load-vägen
+  // alltid har dessa fält. Sändar-sidan (localItem) lämnas oförändrad — mer
+  // future-proof att lappa mottagaren än alla 9 callsites.
+  const cachedRow = tagCache.get(tag) || {};
+  const _sn = item.sheetName || cachedRow.sheetName || null;
+  const _rn = item.rowNum || cachedRow.rowNum || null;
   const dialogItem = {
     ...item,
     qty: meta.qty ?? 0,
     unit: meta.unit ?? "",
     user: meta.user ?? "",
     lastMs: meta.lastMs ?? Date.now(),
-    minQty: item.minQty ?? 0,
-    comment: item.comment ?? ""
+    minQty: item.minQty ?? cachedRow.minQty ?? 0,
+    comment: item.comment ?? cachedRow.comment ?? "",
+    sheetPlace: item.sheetPlace ?? cachedRow.sheetPlace ?? "",
+    category: item.category ?? cachedRow.category ?? ""
   };
 
   const toYMD = d => {

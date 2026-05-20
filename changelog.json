@@ -1,6 +1,13 @@
 {
-  "latest": 139,
+  "latest": 140,
   "versions": [
+    {
+      "version": 140,
+      "date": "2026-05-20",
+      "notes": [
+        "Rättning: när du öppnar en artikel via skanning visar nu \"Plats\" och \"Kategori\" rätt värden direkt — förut stod det \"(ingen)\" trots att värdena fanns sparade i Sheet."
+      ]
+    },
     {
       "version": 139,
       "date": "2026-05-20",

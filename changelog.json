@@ -1,6 +1,13 @@
 {
-  "latest": 138,
+  "latest": 139,
   "versions": [
+    {
+      "version": 139,
+      "date": "2026-05-20",
+      "notes": [
+        "Rättning: \"Ångra\"-länken bredvid en just registrerad singel-artikel fungerar nu — artikeln återgår till \"Ej inventerat\" och datumet på raden försvinner. Förut såg ångra ut att inte göra något."
+      ]
+    },
     {
       "version": 138,
       "date": "2026-05-20",

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 138;
+const APP_VERSION = 139;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -1201,7 +1201,17 @@ function addUndoButton(logEntry, tag, prevOverride) {
   undoBtn.textContent = "Ångra";
   undoBtn.onclick = (ev) => {
     ev.stopPropagation();
+    // §1.3-fix (a): setLocalMeta respekterar nu explicit `lastMs: null` som
+    // clear-signal (root-fix rad 1819 — `explicitClear`-flagga slår fjärde
+    // else-fallback). Före fixen klobbades null tillbaka till prev.lastMs
+    // → Ångra såg ut att inte fungera (lastMs stannade på dagens datum).
     setLocalMeta(tag, { lastMs: prev.lastMs || null, user: prev.user || "" });
+    // §1.3-fix (b): markera pendingSync:true så initData-pollens snapshot
+    // (rad 2334 filtrerar BARA pendingSync-poster) skyddar lokala rollback
+    // tills server bekräftat undo. Annars klobbas lokala metaCache av
+    // poll medan undo:n är i flykt → "ångrad" → "inventerad igen".
+    const cur = tagCache.get(tag);
+    if (cur) tagCache.set(tag, { ...cur, pendingSync: true });
     recomputeMaxLast();
     renderLists();
     const payload = { clearUser: true, userName: prev.user || "", sheetName: prev.sheetName, rowNum: prev.rowNum };
@@ -1230,6 +1240,13 @@ function addUndoButton(logEntry, tag, prevOverride) {
           if (icon) icon.textContent = '⚠️';
           if (msg) msg.textContent += ' – ångra ej bekräftad';
           show("Ångra kunde inte bekräftas", "warn");
+        } else {
+          // §1.3-fix (b cleanup): undo verified → rensa pendingSync så raden
+          // INTE permanent gulmarkeras (b) satte true:n bara som tillfälligt
+          // initData-skydd under undo-flight). renderLists efter cleanup.
+          const cur2 = tagCache.get(tag);
+          if (cur2) tagCache.set(tag, { ...cur2, pendingSync: false });
+          renderLists();
         }
       })
       .catch(err => {
@@ -1785,7 +1802,34 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 }
 
 /* ===== Meta ===== */
-function setLocalMeta(tag,patch){const prev=metaCache.get(tag)||{};let next={...prev,...patch};if(typeof next.lastMs==="number"){next.lastMs=toDayMs(next.lastMs);next.lastStr=toDayStr(next.lastMs);}else if(typeof next.lastStr==="string"&&next.lastStr){const ms=parseLocalYMD(next.lastStr);next.lastMs=toDayMs(ms);next.lastStr=toDayStr(next.lastMs);}else if(prev.lastMs){next.lastMs=prev.lastMs;next.lastStr=prev.lastStr||toDayStr(prev.lastMs);}else{next.lastMs=null;next.lastStr="";}metaCache.set(tag,next);}
+function setLocalMeta(tag,patch){
+  const prev=metaCache.get(tag)||{};
+  let next={...prev,...patch};
+  // §1.3 root-fix: explicit `lastMs: null` i patch är en clear-signal från
+  // callern och MÅSTE respekteras FÖRE övriga grenar. Tidigare ordning lät
+  // (a) `else if (lastStr fallback)` resolvera till prev.lastStr (= dagens
+  // datum) och (b) `else if (prev.lastMs)` klobbra null tillbaka — båda
+  // gjorde att Ångra såg ut att inte fungera (lastMs stannade på dagens).
+  const explicitClear = Object.prototype.hasOwnProperty.call(patch, 'lastMs') && patch.lastMs === null;
+  if(explicitClear){
+    next.lastMs=null;
+    next.lastStr="";
+  } else if(typeof next.lastMs==="number"){
+    next.lastMs=toDayMs(next.lastMs);
+    next.lastStr=toDayStr(next.lastMs);
+  } else if(typeof next.lastStr==="string"&&next.lastStr){
+    const ms=parseLocalYMD(next.lastStr);
+    next.lastMs=toDayMs(ms);
+    next.lastStr=toDayStr(next.lastMs);
+  } else if(prev.lastMs){
+    next.lastMs=prev.lastMs;
+    next.lastStr=prev.lastStr||toDayStr(prev.lastMs);
+  } else {
+    next.lastMs=null;
+    next.lastStr="";
+  }
+  metaCache.set(tag,next);
+}
 function recomputeMaxLast(){let max=null;for(const v of metaCache.values())if(v.lastMs!=null)max=(max==null||v.lastMs>max)?v.lastMs:max;maxLastMs=max;}
 
 /* ===== Filter (flik-selector + gruppering) ===== */

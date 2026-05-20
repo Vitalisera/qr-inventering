@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 141;
+const APP_VERSION = 142;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -29,6 +29,18 @@ if(QA_MODE){
 // reloadar tabben vid uppgradering med samma URL → window.print() triggas
 // igen → "Tillåt utskrift?"-prompt vid varje uppgradering.
 const _isPrintTab = new URLSearchParams(location.search).get('print') === '1';
+
+// P0-fix (v142): rensa _swReloading-flaggan vid varje fresh page-load.
+// v121 flyttade flaggan från function-scope `let` till sessionStorage för
+// att skydda mot dubbel-reload över laddningar. Bi-effekt: flaggan kvarstår
+// över ALLA reloads inom samma tab-session, vilket blockerar legitim 2:a
+// klick på "Uppgradera version" (fallbackReload + controllerchange-listener
+// EARLY-RETURNAR pga guarden = '1'). Roberts 4-klick-symptom. Vid varje
+// fresh page-load (inkl. reload som följde en lyckad uppgradering) har
+// flaggan tjänat sitt syfte → rensa nu så nästa knapp-klick kan trigga
+// reload mot en ev. NYARE version. Säker: om vi når app-init är vi i en
+// ny page-load = pågående reload-cykel klar = inget att skydda från längre.
+try { sessionStorage.removeItem('_swReloading'); } catch (_) {}
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js', { scope: './' }).then(reg => {

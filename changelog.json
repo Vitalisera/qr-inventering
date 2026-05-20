@@ -1,6 +1,13 @@
 {
-  "latest": 141,
+  "latest": 142,
   "versions": [
+    {
+      "version": 142,
+      "date": "2026-05-20",
+      "notes": [
+        "Rättning: \"Uppgradera version\"-knappen fungerar nu även vid det andra trycket i samma session — förut blockerades alla efterföljande klick efter den första lyckade uppgraderingen, vilket gjorde att enda vägen till en ny version var att stänga appen helt och öppna igen."
+      ]
+    },
     {
       "version": 141,
       "date": "2026-05-20",

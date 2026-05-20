@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 137;
+const APP_VERSION = 138;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -85,6 +85,13 @@ if ('serviceWorker' in navigator) {
       // Idempotent (_resyncInFlight + _inflight-guard) → krockar ej med
       // online-listenern eller visibilitychange-handlern nedan.
       try { resyncPendingTagLinks(); } catch (_) {}
+      // 5.3 backup: iOS Safari fyrar inte alltid 'online' tillförlitligt efter
+      // flygplansläge av (samma rotorsak som drev 9.6 tidsdriven resync). Den
+      // dedikerade online-listenern (rad 1774) tar 99% av fallen; denna 60s-
+      // tick + visibility tar resten. Idempotent (flushInFlight + tom-check).
+      try {
+        if (typeof updateQueue !== 'undefined' && updateQueue.length > 0 && !flushInFlight) flushUpdates();
+      } catch (_) {}
     };
     if (QA_MODE) window.__qaCheckForUpdate = checkForUpdate;
     setInterval(checkForUpdate, 60000);
@@ -543,6 +550,15 @@ if (QA_MODE) window.__qaSeedTag = (tag, itemPatch, metaPatch) => {
 if (QA_MODE) {
   window.__qaLinkTag = (scannedTag, target) => Save.linkTag(scannedTag, target);
   window.__qaGetCache = (t) => tagCache.get(t) || null;
+  // 5.3: queueUpdate + flushUpdates + updateQueue inspektion för batch-synk-
+  // tester (catch-grenen tappar data eller ej, online-resync triggas eller ej).
+  window.__qaQueueUpdate = (fnName, args) => queueUpdate(fnName, args);
+  window.__qaFlushNow = () => flushUpdates();
+  window.__qaQueueState = () => ({
+    queueLength: updateQueue.length,
+    inFlight: !!flushInFlight,
+    items: [...updateQueue]
+  });
 }
 
 /* ===== AI-assistenter =====
@@ -1742,14 +1758,30 @@ function flushUpdates() {
     .catch(err => {
       _clearSyncBusyUI_();
       console.error("batch fail", err);
+      // 5.3: re-queue batchen — annars förlorad permanent. _buildBatch_ tömde
+      // updateQueue redan vid flush-start, så vid catch (nätfel/throw) hade
+      // jobben försvunnit och pendingSync-gul kvarstod förevigt på raderna
+      // tills användaren manuellt triggade en NY ändring. unshift bevarar
+      // ordning (sätts först → körs i nästa flush före nya jobb). Idempotens
+      // för upprepad fail: re-queue → nästa flush samma batch → fail igen →
+      // re-queue igen (no growth, bara samma jobb).
+      updateQueue.unshift(...batch);
       const msgLine = document.querySelector("#msgLine");
       if (msgLine) {
         msgLine.className = "msgLine warn";
-        msgLine.textContent = "❌ Fel vid synkning – försök igen.";
+        msgLine.textContent = "⚠️ Sparas när du är online igen";
       }
-      show("Fel vid synkning", "warn", { autoreset: false });
+      show("Sparas när du är online igen", "warn", { autoreset: false });
     })
     .finally(() => { flushInFlight = null; });
+}
+// 5.3: vid 'online' efter offline-fail, försök tömma updateQueue automatiskt
+// (idempotent via flushInFlight + tom-check i flushUpdates). Utan detta krävde
+// återhämtning en NY användar-mutation för att trigga flush.
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('online', () => {
+    if (updateQueue.length > 0 && !flushInFlight) flushUpdates();
+  });
 }
 
 /* ===== Meta ===== */

@@ -1,6 +1,13 @@
 {
-  "latest": 137,
+  "latest": 138,
   "versions": [
+    {
+      "version": 138,
+      "date": "2026-05-20",
+      "notes": [
+        "Rättning: om du ändrar flera värden (t.ex. \"antal som ska finnas\") medan nätet ligger nere sparas de nu automatiskt när uppkopplingen kommer tillbaka — förut tappades de tyst och du behövde göra ändringarna igen för att de skulle skickas."
+      ]
+    },
     {
       "version": 137,
       "date": "2026-05-20",

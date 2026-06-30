@@ -1,50 +1,38 @@
 {
   "approved": true,
   "status": "approved",
-  "reviewer": "code-reviewer subagent — Nivå 2 (logSingle + flushUpdates-separation) 2026-05-15",
-  "reviewed_at": "2026-05-15T07:43:14+02:00",
-  "reviewed_sha": "c956b9aa71cbc34cf12352f6dd785584d90f2b8a",
-  "target": "qr-pwa app.js — Save.logSingle + flushUpdates-separation",
-  "scope": "Granskat hela git diff app.js (Nivå 2; Save.linkTag är redan committad i c956b9a och syns ej i diffen). Verifierat Save.logSingle-helper (rad 962-977) mot 4 callsites: #confirmSingle (2178), #registerSingleBtn (2564), skanning singel direkt (3629), skanning lookup singel (3645). Verifierat flushUpdates-separationen i 5 helpers (_buildBatch_ 995, _clearSyncBusyUI_ 1007, _applyBatchResults_ 1015, _renderBatchOutcome_ 1033, _revalidateCacheTs_ 1050) + orkestrator flushUpdates (1063) rad-för-rad mot pre-refaktor (git show HEAD:app.js). node --check OK, 49/49 tester pass.",
-  "summary": "Disciplinerad mekanisk extraktion: Save.logSingle konsoliderar ett exakt 8-stegs-mönster och flushUpdates bröts i 5 namngivna helpers utan beteendeändring. Rad-för-rad-jämförelse mot HEAD bekräftar identisk ordning och timing i synk-kärnan — _buildBatch_ tömmer kön synkront före gasCall, flushInFlight tilldelas synkront, _clearSyncBusyUI_ körs i både then och catch, finally-blocket nollar flushInFlight oförändrat. Cache-ordningen i lookup-callsiten (tagCache.set FÖRE Save.logSingle) är bevarad. Approved för lokal commit; deploy efter Roberts iPhone-verifiering.",
+  "reviewer": "code-reviewer subagent — synk-robusthet-fix #1-#5 (v146) 2026-06-30",
+  "reviewed_at": "2026-06-30T18:02:40+0200",
+  "reviewed_sha": "276a98b1a136835c024b9c114d7cebcb3bb965fb",
+  "target": "qr-pwa app.js — synk-fix #1-#5 (kommentar/saldo/singel-datum/assertOk/kö-persistens)",
+  "scope": "app.js (huvudfil), changelog.json, index.html, sw.js. Verifierade frontend mot backend Code.js (doPost/updateMeta/updateCount/batchUpdates/logTag/_staleRowGuard_). vision-poc-v2.html ignorerad enligt instruktion.",
+  "summary": "Fem dataförlust-kritiska synk-fixar granskade rad-för-rad mot backend-kontraktet. Alla anrops-shapes korrekta, pendingSync sätts FÖRE write och rensas BARA vid verifierad bekräftelse, rollback-snapshot tas före optimistisk write utan aliasing, kö-persistensen är idempotent och re-sänder bara idempotenta absolut-writes. Inga blockers. node -c grönt, 19/19 testfiler gröna. Versionsbumpar konsistenta (APP_VERSION/CACHE/?v=/changelog alla 146).",
   "checks": {
-    "syntax": "pass — node --check app.js exit 0",
-    "tests": "pass (49/49 — autocomplete 20/0, checksum 15/0, simplify 14/0)",
-    "logsingle_parity": "pass — alla 4 callsites bevarar exakt beteende: appendLog→show→logTag→assertOk→markAsDone→addUndoButton / markLogFail→setLocalMeta→recomputeMaxLast→renderLists. Callsites behåller eget ansvar för cooldown/busy/return/closeDialog/statusDefault. #confirmSingle behåller statusDefault() efter (2179), #registerSingleBtn behåller closeDialog() efter (2565), scan-callsites behåller cooldown+busy=false+return (3630, 3646). sheetName/rowNum ?? null är ofarligt: backend Code.js gör 'if (sheetName && rowNum)' där null OCH undefined båda är falsy → identisk gren. Scan-callsites (3629, 3645) skickar ingen sheetName/rowNum → blir null, originalen utelämnade dem (undefined) — funktionellt identiskt.",
-    "logsingle_cache_order": "pass — KRITISK kontroll: original lookup-singel (HEAD 3620-3621) körde tagCache.set(scanned,...) FÖRE setLocalMeta/recomputeMaxLast/renderLists. Refaktorn behåller exakt ordning: rad 3644 tagCache.set(scanned,...) körs FÖRE rad 3645 Save.logSingle(scanned,...), och renderLists() ligger inuti helpern → cachen är redan korrekt populerad när renderLists() körs. De andra 3 callsites hade ingen tagCache.set i mönstret. Inget dubbel-show: varje original hade exakt ett show('Uppdaterar…'); det flyttades in i helpern och togs bort från alla 4 callsites — verifierat att ingen callsite har kvar ett eget show före anropet.",
-    "flushupdates_sync_timing": "pass — _buildBatch_ anropas SYNKRONT på rad 1066 (ej i .then), sätter updateQueue.length=0 + updateTimer=null INNAN gasCall på rad 1069, exakt som HEAD (queue-töm rad 970-971 låg synkront före gasCall rad 975). Race där queueUpdate under flight hamnar i fel batch är därmed utesluten — nya jobb går till nästa batch. flushInFlight = gasCall(...) tilldelas synkront (rad 1069), waitForPendingSync (990) await:ar den. Den 1000ms-debounce-guarden (queueUpdate rad 986) opåverkad.",
-    "flushupdates_then_catch_order": "pass — then-ordning identisk med HEAD: _clearSyncBusyUI_ (clearBusy) → _applyBatchResults_ (applyResults) → console.log('Synk klar:') → renderLists() → _renderBatchOutcome_ → _revalidateCacheTs_. catch kör _clearSyncBusyUI_ först (samma busy/overlay-rensning som HEAD), sedan console.error + msgLine-warn + show — oförändrat. finally(() => flushInFlight = null) bit-identisk med HEAD. console.log-strängar oförändrade ('Skickar batch:', 'Synk klar:', 'Servercache uppdaterad, hämtar ny data...', 'batch fail'). setTimeout(5000) i _renderBatchOutcome_ stänger korrekt över failedTags (parameter) + msgLine (lokal const i samma funktion) — closuren är intakt, ingen stale-referens eftersom msgLine hämtas på nytt inuti helpern istället för att delas från then-scopet.",
-    "no_double_calls": "pass — inga dubbel-anrop av show, renderLists, gasCall eller setLocalMeta. logTag-anropet sker exakt en gång per callsite (grep visar 0 kvarvarande 'gasCall(\\'logTag\\'' utanför helpern bland de 4 ersatta). _clearSyncBusyUI_ körs en gång per promise-utfall (then ELLER catch, ej båda — promise-semantik). renderLists() körs en gång i then (1074) plus en gång inuti varje Save.logSingle — samma totala antal som originalen.",
-    "tdz_hoisting": "pass — Save.logSingle refererar setLocalMeta, recomputeMaxLast, renderLists, appendLog, markAsDone, addUndoButton, markLogFail som alla är 'function'-declarations (hoistade till modul-scope) och anropas först vid runtime (efter full parse), ej vid objekt-literal-evaluering. const Save evalueras vid modul-load men logSingle-kroppen exekveras aldrig då. flushUpdates + _-helpers är alla function-declarations → ömsesidiga referenser hoistade, ingen TDZ. _buildBatch_ används före sin lexikala position i koden inte aktuellt (definierad rad 995, anropad 1066).",
-    "regression_risk": "low — Rent mekanisk extraktion. flushUpdates-helpers är bit-för-bit identiska med pre-refaktor-blocken; enda skillnaden är funktionsgränser. logSingle introducerar ?? null för sheetName/rowNum vilket är backend-säkert (falsy-guard). Cache-ordning i lookup-callsiten bevarad. Inga nya innerHTML, ingen access-modelländring."
+    "syntax": "PASS — node -c app.js OK.",
+    "tests": "PASS — alla 19 *.test.js gröna (syncresilience, syncrestclass, staleecho, autosaveflush m.fl. inkluderade).",
+    "shape_correctness": "PASS — #1 kommentar (batch): tag inuti args, userName injiceras av _buildBatch_ (rad 1736), updateMeta läser args.comment/args.userName. #2 saldo (batch): updateCount-grenen i batchUpdates (rad 959) läser args.newCount/args.userName/args.sheetName/args.rowNum — payloaden skickar exakt dessa nycklar. #3 singel-datum (direkt): {tag, args:innerArgs} → doPost updateMeta(body.tag, body.args). Alla tre matchar backend.",
+    "username_injection": "PASS — _buildBatch_ injicerar userName ENBART för updateMeta. #2 (updateCount) skickar userName själv i payloaden (key 'userName', läses som args.userName i batch). #3 clear-grenen går DIREKT (gasCallWithRetry), ej batch → ingen userName-klobb; clearUser+userName:'' rensar USER-cellen korrekt (Code.js rad 850).",
+    "assertok_callsites": "PASS — enda kvarvarande .then(assertOk) är rad 4677 (ny artikel/logTag). logTag returnerar {ok:true,...} på BÅDE update- och create-grenen (Code.js 738/776); stale/fel → ok!==true → kastar korrekt. Container-callsitens gamla .then(assertOk).then(markAsDone) är borttagen (går nu via kö). Ingen success-väg utan ok:true når assertOk.",
+    "queue_persistence": "PASS — _buildBatch_ tömmer updateQueue innan _inflightBatch sätts → union-concat i _persistQueue_ ger aldrig dubbletter. Ett jobb ägs av antingen updateQueue ELLER _inflightBatch, aldrig båda; vid fel unshift:as batchen tillbaka och _inflightBatch nollas. Rehydrate idempotent (filtrerar på fnName+args+args.tag, rena primitiv-objekt, JSON-säkra). Kill mitt i flush → re-sändning av idempotenta absolut-writes (updateCount=newCount, updateMeta=absoluta fält) → inga dubblettrader. _persistQueue_/rehydrate/pagehide/visibility alla try/catch-omslutna → kan ej kasta/blockera.",
+    "pendingsync_lifecycle": "PASS — #1/#2/#3 sätter pendingSync:true FÖRE write. #1/#2 rensas enbart i _applyBatchResults_ via _isJobVerifiedOk_ (ok+!stale+matchande writtenTag). #3 rensas bara på classifyLinkResult==='verified'; pending-retry behåller true; rejected rensar efter rollback; .catch behåller true (offline). Ingen för-tidig clear.",
+    "rollback": "PASS — #3 _prevMeta = metaCache.get(tag) snapshot:as FÖRE setLocalMeta. setLocalMeta muterar inte prev (skapar nytt {...prev,...patch}, rad 1901) → ingen aliasing → metaCache.set(tag,_prevMeta) återställer äkta föregående värde vid rejected.",
+    "false_success": "PASS — alla tre vägar visar 'sparas…/rensas…' optimistiskt; #3 visar verifierad text först vid 'verified'. Global synk-banner + gul rad är sanningskälla. assertOk-skärpningen (#4) stänger maskerings-glipan för {error} utan ok-fält.",
+    "regression_risk": "LÅG — Egenskaper-dialogen (rad 3739, queueUpdate updateMeta) delar samma flush-väg, opåverkad; flushUpdates then/catch-ordning bevarad, _inflightBatch-hanteringen additiv. Inga dangling-referenser efter borttagen historik-logg i container (oldCount kvar/använd, le/delta/logText helt borttagna). Versionsbumpar konsistenta."
   },
   "issues": [
-    {
-      "severity": "suggestion",
-      "id": "logsingle-test-coverage",
-      "where": "tests/",
-      "msg": "Save.logSingle saknar enhetstest. Helpern är deterministisk och mockbar (gasCall/appendLog/setLocalMeta). Lägg till units: success-path (markAsDone+addUndoButton), fail-path (markLogFail), samt verifiering att setLocalMeta/recomputeMaxLast/renderLists körs synkront oavsett promise-utfall. Inga blockers — manuell iPhone-verifiering enligt projekt-konvention.",
-      "blocking": false
-    },
-    {
-      "severity": "suggestion",
-      "id": "underscore-helper-naming",
-      "where": "app.js:995-1058",
-      "msg": "_buildBatch_/_clearSyncBusyUI_ etc använder leading+trailing underscore som privat-konvention. Konsekvent inom filen men avviker från Save.*-objektmönstret. Överväg att samla flush-internals i ett const Sync = {...}-objekt vid en framtida Nivå-3-iteration för symmetri med Save. Ej blockerande, ren stilfråga.",
-      "blocking": false
-    }
+    {"severity":"info","id":"hist-log-removed","where":"prepareContainerDialog saldo-save (~3674)","msg":"Per-rad historik-bock (appendLog/markAsDone) medvetet borttagen för saldo; sanningskälla nu pendingSync-gul + global synk-banner. Konsistent med Egenskaper-edits. Avsiktligt, ej blocker.","blocking":false},
+    {"severity":"info","id":"rehydrate-username","where":"_rehydrateQueue_ + startup-flush","msg":"Rehydrerat updateMeta-jobb som persisterades medan det ännu låg i updateQueue (ej byggt) får userName injicerat vid nästa _buildBatch_ med AKTUELL userName. userName återställs normalt från localStorage/cookie vid start → praktiskt ofarligt; matchar befintligt beteende för köade jobb.","blocking":false}
   ],
   "verified": [
-    "node --check app.js exit 0",
-    "49/49 tester pass (autocomplete 20/0, checksum 15/0, simplify 14/0)",
-    "git diff visar ENDAST Nivå 2 — Save.linkTag (c956b9a) ej i diffen, bekräftar att Nivå 1 redan committad",
-    "grep Save.logSingle = 4 callsites (2178, 2564, 3629, 3645) + 1 definition (962) — matchar spec",
-    "Lookup-callsite: rad 3644 tagCache.set(scanned,...) körs FÖRE rad 3645 Save.logSingle — cache-ordning identisk med HEAD 3620-3621",
-    "Pre-refaktor flushUpdates (git show HEAD:app.js 961-1040) jämförd rad-för-rad mot ny flushUpdates+helpers — queue-töm synkront före gasCall bevarad, then-ordning bevarad, catch+finally bit-identiska",
-    "show('Uppdaterar…') borttagen från alla 4 callsites, finns exakt en gång i helpern (rad 965) — inget dubbel/tappat anrop",
-    "backend-guard 'if (sheetName && rowNum)' gör null===undanfall identiskt med undefined — ?? null ofarligt",
-    "_renderBatchOutcome_ setTimeout(5000)-closure stänger över egen parameter failedTags + lokal msgLine — ingen stale closure från then-scopet"
-  ],
-  "decision": "approved",
-  "notes": "Nivå 2 är en exemplarisk beteende-bevarande extraktion. Synk-kärnan (flushUpdates) verifierad rad-för-rad mot HEAD: ingen timing- eller ordningsändring, ingen race introducerad. Save.logSingle bevarar paritet i alla 4 callsites inkl. den kritiska tagCache.set-före-renderLists-ordningen i lookup-flödet. Suggestions är icke-blockerande städ/test-noteringar för framtida iteration. Säker för lokal commit. INGEN PUSH/clasp/deploy — först efter Roberts iPhone-verifiering enligt projekt-konvention."
+    "node -c app.js → SYNTAX_OK",
+    "19/19 *.test.js gröna",
+    "Code.js doPost updateMeta(body.tag, body.args) — #3 direkt-shape korrekt",
+    "Code.js batchUpdates updateCount-gren läser args.userName — #2 userName-stämpling bevarad",
+    "Code.js updateMeta clearUser → USER-cell = args.userName||'' — #3 clear-grenen rensar användare",
+    "logTag returnerar ok:true på success (738/776) — assertOk-skärpning säker",
+    "setLocalMeta muterar ej prev-objektet → #3 rollback utan aliasing",
+    "_buildBatch_ tömmer updateQueue före _inflightBatch → ingen dubbel-persist/dubbel-send",
+    "Idempotenta absolut-writes (updateCount=newCount, updateMeta=absoluta fält) → re-sändning efter kill skapar inga dubbletter",
+    "Versionsbumpar konsistenta: APP_VERSION=146, CACHE=v146, app.js?v=146, changelog latest=146"
+  ]
 }

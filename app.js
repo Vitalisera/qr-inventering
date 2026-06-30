@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 145;
+const APP_VERSION = 146;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -445,7 +445,14 @@ async function gasCallWithRetry(fn, params = {}, opts = {}) {
 // Kastar om svaret har ok:false. Används för alla muterande anrop så att .then() inte
 // råkar markera operationen som lyckad när servern faktiskt returnerade ett fel.
 function assertOk(r) {
-  if (r && r.ok === false) throw new Error(r.msg || r.error || 'Okänt serverfel');
+  // #4 (synk-audit 2026-06-30): tidigare kastade detta BARA på explicit ok:false.
+  // doPost top-catch (Code.js) returnerar {error:...} UTAN ok-fält vid serverkast
+  // (Sheet-quota, setValue-undantag) → ok===undefined → undefined===false är false
+  // → assertOk släppte igenom → serverfel maskerades som framgång på alla
+  // .then(assertOk)-callsites (markAsDone). Kräv nu ok:true explicit; allt annat
+  // (ok:false, {error}, null) kastar. Säkert: kvarvarande callsite (logTag, ny
+  // artikel) returnerar ok:true på success.
+  if (!r || r.ok !== true) throw new Error((r && (r.msg || r.error)) || 'Okänt serverfel');
   return r;
 }
 
@@ -1684,8 +1691,36 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 const updateQueue = [];
 let updateTimer = null;
 let flushInFlight = null;
+// #5 (synk-audit 2026-06-30): updateQueue var ren in-memory → en köad eller
+// in-flight meta/count-write (kommentar, saldo, Egenskaper) gick PERMANENT
+// förlorad när iOS dödade bakgrunds-PWA:n innan flush hann bekräftas (samma
+// dataförlust-klass som 9.6 löste för _pendingLogSingle/_pendingTagLinks).
+// Fix: persistera kön OCH den just avsända batchen till localStorage; rehydrera
+// vid start och flush:a. _inflightBatch hålls separat så en kill MITT i ett
+// gasCall('batch') ändå återställs (updateMeta/updateCount är idempotenta på
+// servern → re-sändning skapar inga dubbletter, bara samma setValue igen).
+const _QUEUE_LS_KEY = 'vitaliseraUpdateQueue';
+let _inflightBatch = null;
+function _persistQueue_() {
+  try {
+    const all = updateQueue.concat(_inflightBatch || []);
+    if (!all.length) { localStorage.removeItem(_QUEUE_LS_KEY); return; }
+    localStorage.setItem(_QUEUE_LS_KEY, JSON.stringify(all));
+  } catch (_) {}
+}
+function _rehydrateQueue_() {
+  try {
+    const raw = localStorage.getItem(_QUEUE_LS_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) for (const j of arr) {
+      if (j && j.fnName && j.args && j.args.tag) updateQueue.push({ fnName: j.fnName, args: j.args });
+    }
+  } catch (_) {}
+}
 function queueUpdate(fnName, args) {
   updateQueue.push({ fnName, args });
+  _persistQueue_();
   if (!updateTimer) updateTimer = setTimeout(flushUpdates, 1000);
 }
 async function waitForPendingSync() {
@@ -1797,11 +1832,21 @@ function flushUpdates() {
   const batch = _buildBatch_();
   console.log("Skickar batch:", batch.map(b => b.args.tag));
 
+  // #5: håll batchen persisterad medan den är in-flight — en PWA-kill mitt i
+  // gasCall('batch') skulle annars tappa den (varken i updateQueue eller LS).
+  _inflightBatch = batch;
+  _persistQueue_();
+
   flushInFlight = gasCall('batch', {batch})
     .then(res => {
       _clearSyncBusyUI_();
       const failedTags = _applyBatchResults_(batch, res);
       console.log("Synk klar:", batch.length - failedTags.length, "ok,", failedTags.length, "fail");
+      // #5: batchen bekräftad (per-jobb-utfall hanterat av _applyBatchResults_) →
+      // släpp in-flight-persistensen. Misslyckade jobb behåller pendingSync-gul i
+      // listan; de re-köas ej här (känt, ALLVARLIG #10 — andra paketet).
+      _inflightBatch = null;
+      _persistQueue_();
       renderLists();
       _renderBatchOutcome_(failedTags);
       _revalidateCacheTs_();
@@ -1817,6 +1862,10 @@ function flushUpdates() {
       // för upprepad fail: re-queue → nästa flush samma batch → fail igen →
       // re-queue igen (no growth, bara samma jobb).
       updateQueue.unshift(...batch);
+      // #5: batchen är åter i updateQueue → flytta persistensen dit (in-flight
+      // tömd) så LS speglar sanningen och en kill nu räddar den via updateQueue.
+      _inflightBatch = null;
+      _persistQueue_();
       const msgLine = document.querySelector("#msgLine");
       if (msgLine) {
         msgLine.className = "msgLine warn";
@@ -1832,6 +1881,17 @@ function flushUpdates() {
 if (typeof window !== 'undefined' && window.addEventListener) {
   window.addEventListener('online', () => {
     if (updateQueue.length > 0 && !flushInFlight) flushUpdates();
+  });
+  // #5: rehydrera ev. köade/in-flight-jobb som överlevde en PWA-kill och flush:a
+  // dem så snart appen startar igen (idempotent backend → inga dubbletter). Den
+  // 60s-tick + 'online' + visibilitychange driver annars vidare om nätet saknas.
+  _rehydrateQueue_();
+  if (updateQueue.length > 0) setTimeout(() => { if (!flushInFlight) flushUpdates(); }, 1500);
+  // #5: belt-and-suspenders — persistera kön när sidan göms/avlastas (iOS dödar
+  // bakgrunds-PWA aggressivt och fyrar ej alltid någon flush-bar händelse).
+  window.addEventListener('pagehide', () => { try { _persistQueue_(); } catch (_) {} });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { try { _persistQueue_(); } catch (_) {} }
   });
 }
 
@@ -2322,23 +2382,25 @@ document.addEventListener('click', function(e) {
   const escHandler = ev => { if (ev.key === "Escape") closeDialogLocal(); };
   document.addEventListener("keydown", escHandler);
 
-  saveBtn.onclick = () => {
-    const newComment = (textarea.value || "").trim();
-    tagCache.set(tag, { ...tk, comment: newComment });
+  // #1 (synk-audit 2026-06-30): denna snabb-popup var appens ENDA muterande väg
+  // med 0 av 5 skydd — ingen pendingSync (→ klobbades av 15s-pollens initData som
+  // snapshotar BARA pendingSync-rader), fire-and-forget gasCall (kringgick kön),
+  // ingen rollback/re-queue/persistens, OCH visade falsk "Kommentar sparad" FÖRE
+  // serversvar. = de rapporterade förlorade kommentarerna. Fix: route via samma
+  // robusta, nu persisterade (#5) kö-väg som Egenskaper-dialogen (~rad 3660) —
+  // pendingSync:true skyddar optimistisk write, queueUpdate batchar + persisteras
+  // → överlever PWA-kill + auto-resync, _applyBatchResults_ rensar pendingSync
+  // först vid verifierad bekräftelse. userName injiceras av _buildBatch_.
+  const _saveComment = (val) => {
+    const cur = tagCache.get(tag) || tk;
+    tagCache.set(tag, { ...cur, comment: val, pendingSync: true });
     renderLists();
-    show("Kommentar sparad", "ok");
-    gasCall('updateMeta', {tag, args: { comment: newComment, userName }})
-      .catch(() => show("Kunde inte spara kommentaren", "warn"));
+    queueUpdate('updateMeta', { tag, comment: val, sheetName: cur.sheetName ?? null, rowNum: cur.rowNum ?? null });
+    show(val ? "Kommentar sparas…" : "Kommentar rensas…", "ok");
     closeDialogLocal();
   };
-  clearBtn.onclick = () => {
-    tagCache.set(tag, { ...tk, comment: "" });
-    renderLists();
-    show("Kommentar rensad", "warn");
-    gasCall('updateMeta', {tag, args: { comment: "", userName }})
-      .catch(() => show("Kunde inte rensa kommentaren", "warn"));
-    closeDialogLocal();
-  };
+  saveBtn.onclick = () => _saveComment((textarea.value || "").trim());
+  clearBtn.onclick = () => _saveComment("");
   closeBtn.onclick = closeDialogLocal;
 });
 
@@ -3024,19 +3086,50 @@ function prepareSingleDialog(item, tag) {
   const dateInput = qs("#singleDateEdit");
   dateInput.addEventListener('change', () => {
     const newVal = dateInput.value;
-    if (!newVal) {
-      // Rensa datum = avinventera
-      gasCall('updateMeta', {tag, args: {clearTimestamp: true, clearUser: true, userName: ''}});
-      setLocalMeta(tag, { lastMs: 0, user: '' });
-      recomputeMaxLast(); renderLists();
-      const ml = qs("#msgLine"); if(ml){ml.className='msgLine ok';ml.textContent='Datum rensat — artikeln avinventerad';}
-    } else {
+    // #3 (synk-audit 2026-06-30): denna datum-väg var oobserverad fire-and-forget
+    // — gasCall UTAN .then/.catch (fel sväljs HELT), ingen pendingSync (optimistisk
+    // write klobbades av 15s-pollen), och visade "Datum uppdaterat"/"rensat"
+    // oavsett utfall (falsk framgång → tyst tappad avinventering/datumändring).
+    // Fix: spegla commitContainerDate — gasCallWithRetry + classifyLinkResult,
+    // pendingSync:true skyddar optimistisk write, villkorat meddelande (success
+    // först vid verified), rollback vid äkta server-avvisning. OBS: clear-grenen
+    // (userName:'') KAN EJ gå via batch — _buildBatch_ injicerar global userName
+    // för updateMeta → skulle skriva tillbaka användaren istf. blanka. Direkt
+    // anrop använder nästlat {tag, args:{}} (doPost → updateMeta(body.tag, body.args)).
+    const cur = tagCache.get(tag) || {};
+    const _prevMeta = metaCache.get(tag) || {};
+    const innerArgs = newVal
+      ? { lastYMD: newVal, userName, sheetName: cur.sheetName ?? null, rowNum: cur.rowNum ?? null }
+      : { clearTimestamp: true, clearUser: true, userName: '', sheetName: cur.sheetName ?? null, rowNum: cur.rowNum ?? null };
+    if (newVal) {
       const ms = new Date(newVal + 'T12:00:00').getTime();
-      gasCall('updateMeta', {tag, args: {lastYMD: newVal, userName}});
       setLocalMeta(tag, { lastMs: ms, user: userName });
-      recomputeMaxLast(); renderLists();
-      const ml = qs("#msgLine"); if(ml){ml.className='msgLine ok';ml.textContent='Datum uppdaterat';}
+    } else {
+      setLocalMeta(tag, { lastMs: null, user: '' });
     }
+    tagCache.set(tag, { ...cur, pendingSync: true });
+    recomputeMaxLast(); renderLists();
+    const ml = qs("#msgLine"); if (ml) { ml.className = 'msgLine ok'; ml.textContent = newVal ? 'Datum sparas…' : 'Avinventeras…'; }
+    gasCallWithRetry('updateMeta', { tag, args: innerArgs })
+      .then(res => {
+        const cls = classifyLinkResult(res);
+        const ml2 = qs("#msgLine");
+        if (cls === 'verified') {
+          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+          if (ml2) { ml2.className = 'msgLine ok'; ml2.textContent = newVal ? 'Datum uppdaterat' : 'Datum rensat — artikeln avinventerad'; }
+        } else if (cls === 'pending-retry') {
+          if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Sparas när du är online igen'; }
+        } else {
+          metaCache.set(tag, _prevMeta);
+          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+          recomputeMaxLast(); renderLists();
+          if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Kunde inte spara datumet'; }
+        }
+      })
+      .catch(() => {
+        const ml2 = qs("#msgLine");
+        if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Sparas när du är online igen'; }
+      });
   });
 
   qs("#confirmSingle").onclick = () => {
@@ -3559,25 +3652,26 @@ function prepareContainerDialog(item, tag, opts = {}) {
     // Saldo ÄNDRAT: spara ev. även datum-ändring (no-op om redan committat).
     if (containerDateInput) commitContainerDate(containerDateInput.value);
 
-    // Logg-text speglar vad användaren gjorde — delta för stepper-justering,
-    // total för manuell omskrivning. Heuristik: hopp > 5 i ett enda ändringssteg
-    // är troligen direkt-edit, inte +/−-trampning.
-    const delta = newCount - oldCount;
-    const logText = Math.abs(delta) <= 5
-      ? `${dialogItem.name} – ny mängd ${newCount}`
-      : `${dialogItem.name} – total ändrad till ${newCount}`;
-    const le = appendLog(logText);
-
-    // Optimistic: uppdatera lokalt + stäng dialog direkt. Synk i bakgrunden.
+    // #2 (synk-audit 2026-06-30): saldot saknade pendingSync (klobbades av 15s-
+    // pollens initData som snapshotar BARA pendingSync-rader), körde bare gasCall
+    // UTAN retry, visade success FÖRE serversvar, och assertOk-glipan (#4) lät
+    // t.o.m. ett serverkast passera som ✓ → tappade inventeringar. Fix: route via
+    // samma robusta, nu persisterade (#5) kö-väg som Egenskaper/kommentar.
+    // pendingSync:true skyddar den optimistiska qty-writen mot poll-klobb;
+    // queueUpdate batchar updateCount (idempotent setValue på servern),
+    // persisteras → överlever PWA-kill + auto-resync; _applyBatchResults_ rensar
+    // pendingSync först vid VERIFIERAD bekräftelse, ⚠️-banner vid fel.
+    // Historik-loggen (appendLog) utgår här precis som för Egenskaper-edits —
+    // radens gul→vit + den globala synk-bannern är sanningskällan, ingen falsk
+    // per-rad-bock. userName skickas i payloaden (batch injicerar bara för
+    // updateMeta, ej updateCount).
     setLocalMeta(tag, { qty: newCount, lastMs: Date.now(), user: userName });
+    tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: true });
     recomputeMaxLast(); renderLists();
-    show(`${dialogItem.name}: ny mängd ${newCount}.`, "ok");
+    show(`${dialogItem.name}: ny mängd ${newCount} – sparas…`, "ok");
     closeDialog();
 
-    gasCall('updateCount', {tag, newCount, user: userName, sheetName: _sn, rowNum: _rn})
-      .then(assertOk)
-      .then(() => markAsDone(le))
-      .catch(err => markLogFail(le, err));
+    queueUpdate('updateCount', { tag, newCount, userName, sheetName: _sn, rowNum: _rn });
   };
 
   // Auto-save vid blur/change — moderna apps (Notion, Linear) auto-sparar

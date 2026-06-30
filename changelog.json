@@ -1,6 +1,15 @@
 {
-  "latest": 145,
+  "latest": 146,
   "versions": [
+    {
+      "version": 146,
+      "date": "2026-06-30",
+      "notes": [
+        "Rättat: kommentarer, antal och datum kunde i sällsynta fall försvinna utan att synas — nu sparas de pålitligt även vid svajig uppkoppling.",
+        "Ändringar som inte hunnit skickas sparas nu undan och skickas automatiskt nästa gång appen öppnas, även om appen stängdes innan.",
+        "Tydligare besked: appen visar \"sparas…\" och bekräftar först när ändringen verkligen nått servern — inga falska \"sparat\" längre."
+      ]
+    },
     {
       "version": 145,
       "date": "2026-05-20",

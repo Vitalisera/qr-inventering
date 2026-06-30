@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 146;
+const APP_VERSION = 147;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -1774,6 +1774,27 @@ function _isJobVerifiedOk_(expectedTag, r) {
   return true;
 }
 
+// Synk-audit 2026-07-01: grace-fönster mot post-confirm-klobb. När en batch
+// bekräftats rensas pendingSync, men _revalidateCacheTs_ kan omedelbart dra en
+// coalescad preload som startade FÖRE writen (stale). _recentlySynced markerar
+// nyss-bekräftade tags så initData-snapshoten bevarar det lokala (korrekta)
+// värdet tills server-preloaden garanterat reflekterar writen (backend-guarden
+// säkerställer att cachen inte längre förgiftas → server blir korrekt inom kort).
+const _recentlySynced = new Map();   // tag → ms vid batch-bekräftelse
+const SYNC_GRACE_MS = 20000;         // > max preload-scan (~13s) + poll-cadence-marginal
+// Ren, testbar predikat: är ett nyss-synkat värde fortfarande inom grace?
+function _isWithinGrace_(syncedMs, nowMs, graceMs) {
+  return typeof syncedMs === 'number' && (nowMs - syncedMs) < graceMs;
+}
+// Slå upp + lazy-pruna utgångna poster.
+function _withinSyncGrace_(tag) {
+  const t = _recentlySynced.get(tag);
+  if (t == null) return false;
+  if (_isWithinGrace_(t, Date.now(), SYNC_GRACE_MS)) return true;
+  _recentlySynced.delete(tag);
+  return false;
+}
+
 // Per-index-matchning: tag kan förekomma flera gånger i samma batch (två
 // updateMeta-jobb på samma rad). Rensar pendingSync på ÄKTA verifierat
 // lyckade (ok + ej stale + writtenTag matchar); allt annat → fail-tag,
@@ -1789,6 +1810,14 @@ function _applyBatchResults_(batch, res) {
     } else {
       const cur = tagCache.get(tag);
       if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
+      // Synk-audit 2026-07-01 (kommentar-display-bugg): batch bekräftad → pendingSync
+      // rensas, MEN _revalidateCacheTs_ kör direkt efter och kan dra en coalescad
+      // preload som STARTADE FÖRE vår write (stale, utan ändringen). Då pendingSync
+      // redan är false skulle initData rebuilda raden från stale server-data →
+      // ikon/värde försvinner ur vyn (datan i arket är intakt). Markera tag som
+      // nyss-synkad så initData-snapshoten bevarar det lokala (korrekta) värdet i
+      // ett kort grace-fönster tills server-preloaden garanterat reflekterar writen.
+      _recentlySynced.set(tag, Date.now());
     }
   }
   return failedTags;
@@ -2556,7 +2585,7 @@ function initData(records, { fromCache = false } = {}) {
   // som ännu inte batch-flushats, så vi får inte tappa pendingSync + lokala värden.
   const pendingSnapshot = [];
   for (const [t, item] of tagCache.entries()) {
-    if (item?.pendingSync) pendingSnapshot.push({ t, item, meta: metaCache.get(t) });
+    if (item?.pendingSync || _withinSyncGrace_(t)) pendingSnapshot.push({ t, item, meta: metaCache.get(t) });
   }
 
   tagCache.clear();

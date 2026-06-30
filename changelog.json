@@ -1,6 +1,13 @@
 {
-  "latest": 146,
+  "latest": 147,
   "versions": [
+    {
+      "version": 147,
+      "date": "2026-07-01",
+      "notes": [
+        "Rättat på riktigt: en kommentar (eller ändrat antal) kunde sparas till Google Sheets men ändå försvinna ur appens vy en stund senare. Orsaken satt i hur servern mellanlagrade listan — nu visas dina ändringar direkt och stannar kvar."
+      ]
+    },
     {
       "version": 146,
       "date": "2026-06-30",

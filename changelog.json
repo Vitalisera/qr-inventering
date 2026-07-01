@@ -1,6 +1,13 @@
 {
-  "latest": 147,
+  "latest": 148,
   "versions": [
+    {
+      "version": 148,
+      "date": "2026-07-01",
+      "notes": [
+        "Sök visar nu träffar även i flikar du inte kryssat i: först \"Valda flikar\", sedan \"Övriga flikar\" under egen rubrik. Slipper missa en artikel bara för att fel flik var vald."
+      ]
+    },
     {
       "version": 147,
       "date": "2026-07-01",

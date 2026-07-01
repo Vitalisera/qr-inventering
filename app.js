@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 147;
+const APP_VERSION = 148;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -2454,6 +2454,30 @@ let _searchAiTimer = null;
 // i stället för att taggen kopplas. Guarden gör renderSearchResults inert i
 // länk-läge och städar dess pågående AI-timer.
 let _linkModeActive = false;
+// Bygg + append en sökträff-knapp. Delas av sektion "Valda flikar" + "Övriga
+// flikar" i den tvådelade sökningen (Robert 2026-07-01). Tap=öppna, långtryck=redigera.
+function _appendSearchHit_(info){
+  const btn = document.createElement('button');
+  btn.type = "button"; btn.className = "statusRow";
+  const synHint = info.syn ? ` <span class="sr-syn">(${esc(info.syn)})</span>` : '';
+  const fuzzyHint = info.source === 'fuzzy' ? ` <span class="sr-syn">(liknande)</span>` : '';
+  const m = metaCache.get(info.tag) || {};
+  const saldo = m.qty != null && m.qty !== "" ? `${esc(m.qty)} ${esc(m.unit || "")}`.trim() : "";
+  btn.innerHTML = `<span class="sr-name">${esc(info.label)}${synHint}${fuzzyHint}</span><span class="sr-saldo">${saldo}</span><span class="sr-date">${esc(m.lastStr||"")}</span>`;
+  const _tag = info.tag;
+  addSafeTap(btn,
+    () => { closeSearchDialog(); openContainerForTag(_tag); },
+    () => { closeSearchDialog(); const c = tagCache.get(_tag); if (c) prepareContainerDialog(c, _tag, { editMode: true }); }
+  );
+  searchResults.appendChild(btn);
+}
+// Sektionsrubrik i sökresultaten (återanvänder searchAiHeader-stilen → ingen CSS-ändring).
+function _appendSearchHeader_(text){
+  const h = document.createElement('div');
+  h.className = 'searchAiHeader';
+  h.textContent = text;
+  searchResults.appendChild(h);
+}
 function renderSearchResults(q){
   if(_linkModeActive){
     if(_searchAiTimer){ clearTimeout(_searchAiTimer); _searchAiTimer=null; }
@@ -2486,23 +2510,54 @@ function renderSearchResults(q){
 
   const suggestions = Search.articles(qn, passing);
 
+  // Tvådelad sökning (Robert 2026-07-01): plats-filtret dolde träffar i andra
+  // flikar (ibland hjälpsamt, ibland frustrerande). Sektion 1 = valda flikar (som
+  // förr). Sektion 2 = ÖVRIGA flikar (komplementet till activePlaces) — visas BARA
+  // när ett plats-filter är aktivt OCH ger extra träffar. onlyLow appliceras i båda
+  // för konsekvens. Sektionerna är disjunkta per plats → inga dubbletter.
+  let otherSuggestions = [];
+  if(activePlaces){
+    const others = [];
+    for(const [tag, val] of tagCache.entries()){
+      const name = val?.name||""; if(!name) continue;
+      if(activePlaces.has(val.place||"Okänd")) continue;   // valda flikar visas i sektion 1
+      if(onlyLow){
+        const meta = metaCache.get(tag)||{};
+        const isLow = (val.minQty||0) && (meta.qty < val.minQty);
+        if(!isLow) continue;
+      }
+      others.push([tag, val]);
+    }
+    otherSuggestions = Search.articles(qn, others);
+  }
+  const twoSections = otherSuggestions.length > 0;
+
   const shownTags = new Set();
+  // Sektion 1 (valda flikar). Rubriken sätts EFTER render, och BARA om minst en
+  // träff faktiskt visades — annars stod "Valda flikar" över en tom lista när
+  // träffen bara fanns i övriga flikar (= huvudfallet feature:n löser).
+  let sec1Count = 0;
   for(const info of suggestions){
     if(shownTags.has(info.tag)) continue;
     shownTags.add(info.tag);
-    const btn = document.createElement('button');
-    btn.type = "button"; btn.className = "statusRow";
-    const synHint = info.syn ? ` <span class="sr-syn">(${esc(info.syn)})</span>` : '';
-    const fuzzyHint = info.source === 'fuzzy' ? ` <span class="sr-syn">(liknande)</span>` : '';
-    const m = metaCache.get(info.tag) || {};
-    const saldo = m.qty != null && m.qty !== "" ? `${esc(m.qty)} ${esc(m.unit || "")}`.trim() : "";
-    btn.innerHTML = `<span class="sr-name">${esc(info.label)}${synHint}${fuzzyHint}</span><span class="sr-saldo">${saldo}</span><span class="sr-date">${esc(m.lastStr||"")}</span>`;
-    const _tag = info.tag;
-    addSafeTap(btn,
-      () => { closeSearchDialog(); openContainerForTag(_tag); },
-      () => { closeSearchDialog(); const c = tagCache.get(_tag); if (c) prepareContainerDialog(c, _tag, { editMode: true }); }
-    );
-    searchResults.appendChild(btn);
+    _appendSearchHit_(info);
+    sec1Count++;
+  }
+  if(twoSections && sec1Count > 0){
+    const h = document.createElement('div');
+    h.className = 'searchAiHeader';
+    h.textContent = 'Valda flikar';
+    searchResults.insertBefore(h, searchResults.firstChild);
+  }
+  // Sektion 2 (övriga flikar) — rubrik läggs först när första träffen faktiskt visas.
+  if(twoSections){
+    let sec2Started = false;
+    for(const info of otherSuggestions){
+      if(shownTags.has(info.tag)) continue;
+      if(!sec2Started){ _appendSearchHeader_('Övriga flikar'); sec2Started = true; }
+      shownTags.add(info.tag);
+      _appendSearchHit_(info);
+    }
   }
 
   // AI-kandidater = filterpassade artiklar som INTE redan visats

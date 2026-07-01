@@ -624,7 +624,17 @@ body:has(.dialog:not(.hidden))::after {
   overflow: hidden;
 }
 #searchDialog input { text-align: left; padding-left: 12px; }
-#searchDialog .list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+#searchDialog .list {
+  flex: 1 1 auto; overflow-y: auto; min-height: 0;
+  /* iOS standalone-PWA: en inre overflow:auto-div i en scroll-låst body
+     (html overflow:hidden + overscroll-behavior:none) scrollar ofta inte via
+     touch utan dessa. -webkit-overflow-scrolling ger momentum-scroll; contain
+     hindrar att den låsta body:n "äter" scrollen; pan-y deklarerar explicit att
+     elementet hanterar vertikal panorering (2026-07-01: sökresultat ej skrollbara). */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
 #searchDialog .actions { flex-shrink: 0; }
 
 /* Namndialog */

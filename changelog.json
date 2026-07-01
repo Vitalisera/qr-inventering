@@ -1,6 +1,13 @@
 {
-  "latest": 148,
+  "latest": 149,
   "versions": [
+    {
+      "version": 149,
+      "date": "2026-07-01",
+      "notes": [
+        "Rättat: sökresultatlistan går nu att skrolla när träffarna är fler än vad som får plats (fastnade förut på mobilen)."
+      ]
+    },
     {
       "version": 148,
       "date": "2026-07-01",

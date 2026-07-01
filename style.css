@@ -1281,3 +1281,124 @@ body.kb #cameraBox { display: none !important; }
   .rowIcon { display: none !important; visibility: hidden !important; font-size: 0 !important; }
   @page { margin: 1cm; size: A4; }
 }
+
+/* ============ HANDBOK + ONBOARDING (qr-doc) ============
+   Bygger på .dialog-basen (fast panel, ljus botten #cce2e3, backdrop, scroll).
+   Egna qr-prefixade klasser + fasta bläckfärger som läser bra på den ljusa
+   panelen i både ljust och mörkt läge (panelen är alltid ljus). */
+.qr-doc {
+  --qi-ink: #12333b;
+  --qi-soft: #385158;
+  --qi-dim: #5c757c;
+  --qi-brd: #a9c6c8;
+  --qi-chip: #dcecec;
+  --qi-accent: #1f5e69;
+  text-align: left;
+}
+.qr-manual { max-width: 600px; }
+/* Explicit display på .qr-fullbtn/.qr-doclink slår annars UA:s [hidden]-regel. */
+.qr-doc [hidden] { display: none !important; }
+.qr-mark {
+  width: 62px; height: 62px; margin: 2px auto 12px; border-radius: 16px;
+  background: var(--primary); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8rem; box-shadow: 0 6px 18px rgba(0,0,0,.28);
+}
+.qr-mark::before { content: '📦'; }
+.qr-doc .qr-title { text-align: center; font-size: 1.4rem; color: var(--qi-accent); margin: 0 0 2px; }
+.qr-lede { text-align: center; color: var(--qi-soft); font-size: 0.94rem; line-height: 1.5; margin: 8px 0 18px; }
+.qr-doc-head { text-align: center; margin-bottom: 6px; }
+.qr-fullbtn { display: block; width: 90%; max-width: 360px; margin: 6px auto; }
+.qr-print { margin-bottom: 16px; }
+
+.qr-block { margin: 0 0 16px; }
+.qr-sec { margin: 0 0 20px; }
+.qr-h {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 1.03rem; font-weight: 700; color: var(--qi-ink); margin: 0 0 9px;
+}
+.qr-n {
+  width: 23px; height: 23px; flex: 0 0 auto; border-radius: 50%;
+  background: var(--qi-accent); color: #fff; font-size: 0.8rem; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+.qr-list { margin: 0; padding: 0 0 0 30px; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.qr-list li { position: relative; color: var(--qi-soft); font-size: 0.92rem; line-height: 1.45; }
+.qr-list li::before { content: '•'; position: absolute; left: -15px; color: var(--qi-accent); font-weight: 800; }
+.qr-p { margin: 0 0 7px; padding-left: 32px; color: var(--qi-soft); font-size: 0.92rem; line-height: 1.5; }
+.qr-list b, .qr-p b { font-weight: 700; color: var(--qi-ink); }
+.qr-p a { color: var(--qi-accent); }
+
+.qr-loop {
+  background: color-mix(in srgb, var(--qi-accent) 8%, #fff);
+  border: 1px solid var(--qi-brd); border-radius: 14px; padding: 14px 16px;
+}
+.qr-actions { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
+.qr-chip {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--qi-chip); border: 1px solid var(--qi-brd); border-radius: 12px;
+  padding: 9px 13px; font-size: 0.9rem; font-weight: 650; color: var(--qi-ink);
+}
+.qr-chip .ic { width: 1.3em; text-align: center; font-size: 1.05rem; color: var(--qi-accent); font-weight: 800; }
+.qr-chip em { margin-left: auto; font-style: normal; font-size: 0.76rem; color: var(--qi-dim); text-align: right; line-height: 1.25; }
+.qr-chip.is-main { background: color-mix(in srgb, var(--qi-accent) 16%, #fff); border-color: var(--qi-accent); }
+
+.qr-cards { margin-top: 8px; }
+.qr-card-row { display: flex; gap: 11px; padding: 7px 0; align-items: baseline; }
+.qr-card-row .mc-ic { flex: 0 0 1.4em; text-align: center; color: var(--qi-accent); font-weight: 800; }
+.qr-card-row .mc-nm { color: var(--qi-ink); }
+.qr-card-row .mc-desc { color: var(--qi-soft); font-size: 0.9rem; line-height: 1.45; }
+
+.qr-safe {
+  margin: 16px 0 14px; padding: 12px 15px; border-radius: 12px;
+  background: color-mix(in srgb, var(--qi-accent) 10%, #fff);
+  border: 1px solid var(--qi-brd); color: var(--qi-soft);
+  font-size: 0.87rem; line-height: 1.45; text-align: center;
+}
+.qr-hide {
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  color: var(--qi-soft); font-size: 0.9rem; margin: 0 0 14px; cursor: pointer;
+}
+.qr-hide input { width: 18px; height: 18px; accent-color: var(--qi-accent); }
+.qr-doclink {
+  display: block; width: 100%; margin: 10px auto 0; background: none; border: 0;
+  color: var(--qi-accent); font: inherit; font-size: 0.9rem; font-weight: 650;
+  cursor: pointer; padding: 8px; text-align: center;
+}
+
+/* ---- Utskrift av handboken (aktiveras via html.print-manual) ----
+   Den vanliga @media print ovan gäller list-utskrift och döljer .dialog.
+   Här visar vi i stället bara #qrManual. id-selektorn slår .dialog-regeln. */
+@media print {
+  html.print-manual, html.print-manual body {
+    background: #fff !important; height: auto !important; overflow: visible !important;
+  }
+  html.print-manual body > *:not(#qrManual) { display: none !important; }
+  html.print-manual #qrManual {
+    display: block !important; position: static !important;
+    left: auto !important; bottom: auto !important; transform: none !important;
+    width: 100% !important; max-width: none !important; max-height: none !important;
+    overflow: visible !important; box-shadow: none !important;
+    background: #fff !important; border-radius: 0 !important; padding: 0 !important;
+    animation: none !important;
+  }
+  html.print-manual #qrManual,
+  html.print-manual #qrManual h2, html.print-manual #qrManual h3,
+  html.print-manual #qrManual p, html.print-manual #qrManual li,
+  html.print-manual #qrManual b, html.print-manual #qrManual span,
+  html.print-manual #qrManual a { color: #000 !important; }
+  html.print-manual #qrManual .qr-title, html.print-manual #qrManual .qr-h { color: #08323f !important; }
+  html.print-manual #qrManual .qr-n {
+    background: #08323f !important; color: #fff !important;
+    print-color-adjust: exact; -webkit-print-color-adjust: exact;
+  }
+  html.print-manual #qrManual .qr-lede, html.print-manual #qrManual .qr-p,
+  html.print-manual #qrManual .qr-card-row .mc-desc { color: #222 !important; }
+  html.print-manual #qrManual .qr-chip, html.print-manual #qrManual .qr-loop,
+  html.print-manual #qrManual .qr-safe { border: 0.5pt solid #999 !important; background: none !important; }
+  html.print-manual #qrManualClose, html.print-manual #qrManualPrint,
+  html.print-manual #qrManualVideo, html.print-manual .qr-mark { display: none !important; }
+  html.print-manual .qr-sec, html.print-manual .qr-block,
+  html.print-manual .qr-card-row, html.print-manual .qr-chip { page-break-inside: avoid; break-inside: avoid; }
+  html.print-manual #qrManual .qr-h { page-break-after: avoid; break-after: avoid; }
+}

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 149;
+const APP_VERSION = 150;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -5150,3 +5150,106 @@ document.addEventListener('click', e => {
   if (!box) return;
   box.classList.toggle('open');
 });
+
+/* ===== Handbok + onboarding =====
+ * Följer appens dialogmönster: .dialog + hidden-klass, stäng via knapp/Escape.
+ * qrIntro visas automatiskt första gången (localStorage-flaggan qrIntroSeen,
+ * i stil med installOverlaySeen). qrManual är den fullständiga, utskrivbara
+ * handboken, nåbar från Inställningar och från onboardingen. */
+(function docs(){
+  const QR_INTRO_KEY = 'qrIntroSeen';
+  const intro = qs('#qrIntro'), manual = qs('#qrManual');
+  if (!intro || !manual) return;
+
+  function introHidden(){ try { return localStorage.getItem(QR_INTRO_KEY) === '1'; } catch (_) { return false; } }
+
+  function openQrManual(){
+    manual.classList.remove('hidden');
+    manual.scrollTop = 0;
+  }
+  function closeQrManual(){ manual.classList.add('hidden'); }
+
+  function openQrIntro(){
+    const hide = qs('#qrIntroHide'); if (hide) hide.checked = introHidden();
+    intro.classList.remove('hidden');
+    intro.scrollTop = 0;
+  }
+  function closeQrIntro(){
+    intro.classList.add('hidden');
+    const hide = qs('#qrIntroHide');
+    try { localStorage.setItem(QR_INTRO_KEY, hide && hide.checked ? '1' : '0'); } catch (_) {}
+  }
+
+  // Entry points
+  qs('#openManualBtn')?.addEventListener('click', () => {
+    try { closeSettingsDialog(); } catch (_) {}
+    openQrManual();
+  });
+  qs('#qrManualClose')?.addEventListener('click', closeQrManual);
+  qs('#qrIntroStart')?.addEventListener('click', closeQrIntro);
+  qs('#qrIntroManual')?.addEventListener('click', () => { closeQrIntro(); openQrManual(); });
+
+  // Escape stänger handbok/onboarding (överst → först)
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (!manual.classList.contains('hidden')) { closeQrManual(); e.preventDefault(); return; }
+    if (!intro.classList.contains('hidden')) { closeQrIntro(); e.preventDefault(); return; }
+  });
+
+  // Utskrift av handboken. I standalone-PWA fungerar inte window.print() direkt,
+  // så vi öppnar en vanlig flik med ?print=manual som skriver ut sig själv.
+  qs('#qrManualPrint')?.addEventListener('click', () => {
+    const standalone = navigator.standalone === true ||
+      window.matchMedia('(display-mode: standalone)').matches;
+    if (standalone) { window.open(location.pathname + '?print=manual', '_blank'); return; }
+    printManual();
+  });
+  function printManual(){
+    document.documentElement.classList.add('print-manual');
+    const cleanup = () => document.documentElement.classList.remove('print-manual');
+    window.addEventListener('afterprint', cleanup, { once: true });
+    setTimeout(() => { try { window.print(); } catch (_) {} setTimeout(cleanup, 1000); }, 60);
+  }
+
+  // Första gången: visa onboardingen. Krockar inte med install-overlayn.
+  // Vi räknar ut samma villkor som den inline-skriptet (standalone + seen)
+  // deterministiskt, i stället för att läsa DOM-klassen vid osäker timing.
+  // Ska install-overlayn visas väntar vi tills den stängts, annars direkt.
+  function maybeShowQrIntro(){
+    if (_isPrintTab || introHidden()) return;
+    if (new URLSearchParams(location.search).get('print') === 'manual') return;
+    const isStandalone = navigator.standalone === true ||
+      window.matchMedia('(display-mode: standalone)').matches;
+    let installSeen = false;
+    try { installSeen = !!localStorage.getItem('installOverlaySeen'); } catch (_) {}
+    const io = qs('#installOverlay');
+    // Samma villkor som install-overlayns inline-skript: visas den, väntar vi.
+    const installWillShow = !isStandalone && !installSeen && io;
+    if (installWillShow) {
+      // Observern reagerar bara på ändringar: overlayn visas (hidden tas bort,
+      // ingen träff) och stängs sedan (hidden läggs till → visa intro). Robust
+      // mot skript-ordning eftersom vi inte litar på DOM-state just nu.
+      const obs = new MutationObserver(() => {
+        if (io.classList.contains('hidden')) { obs.disconnect(); setTimeout(openQrIntro, 300); }
+      });
+      obs.observe(io, { attributes: true, attributeFilter: ['class'] });
+    } else {
+      openQrIntro();
+    }
+  }
+
+  // ?print=manual: minimal flik som bara skriver ut handboken.
+  if (new URLSearchParams(location.search).get('print') === 'manual') {
+    openQrManual();
+    setTimeout(printManual, 450);
+  } else {
+    // Vänta på DOMContentLoaded: #installOverlay + dess inline-skript ligger
+    // EFTER app.js i index.html, så de finns inte när app.js körs. En setTimeout(0)
+    // hann före dem (parsern gav upp tråden), därför band vi till DOMContentLoaded.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', maybeShowQrIntro, { once: true });
+    } else {
+      maybeShowQrIntro();
+    }
+  }
+})();

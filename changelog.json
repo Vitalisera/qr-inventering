@@ -1,6 +1,13 @@
 {
-  "latest": 149,
+  "latest": 150,
   "versions": [
+    {
+      "version": 150,
+      "date": "2026-07-01",
+      "notes": [
+        "Nytt: en inbyggd handbok som förklarar hela appen, och en kort välkomstguide första gången du öppnar den. Du hittar handboken under Inställningar (⚙️), och kan skriva ut den som PDF."
+      ]
+    },
     {
       "version": 149,
       "date": "2026-07-01",

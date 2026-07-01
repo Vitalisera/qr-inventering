@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=22">
+  <link rel="stylesheet" href="style.css?v=23">
 </head>
 
 <body>
@@ -141,6 +141,9 @@
   <div class="actions">
     <button id="printListBtn" class="btn cancel">🖨️ Skriv ut / spara som PDF</button>
   </div>
+  <div class="actions">
+    <button id="openManualBtn" class="btn cancel" type="button">📖 Handbok / hjälp</button>
+  </div>
   <div class="version-label" id="versionLabel"></div>
 </div>
 
@@ -153,6 +156,172 @@
     <input id="searchInput" type="search" placeholder="Sök..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
     <div id="searchResults" class="list"></div>
     <div class="actions"><button id="closesearchFab" class="btn cancel">Stäng</button><button id="newItemBtn" class="btn">Ny artikel</button></div>
+  </div>
+
+  <!-- ============ ONBOARDING / SÅ FUNKAR DET ============ -->
+  <div id="qrIntro" class="dialog qr-doc hidden" role="dialog" aria-modal="true" aria-labelledby="qrIntro-title" tabindex="-1">
+    <div class="qr-mark" aria-hidden="true"></div>
+    <h2 class="qr-title" id="qrIntro-title">Så funkar det</h2>
+    <p class="qr-lede">Vitaliseras inventeringsapp. Skanna en etikett eller tryck på en artikel i listan, så håller appen reda på vad som finns och vad som behöver fyllas på.</p>
+
+    <section class="qr-block">
+      <h3 class="qr-h"><span class="qr-n">1</span> Kom igång</h3>
+      <ul class="qr-list">
+        <li>Skriv ditt namn första gången. Det sparas i tio dagar och visas i arket, så att man ser vem som inventerat.</li>
+        <li>Tryck <b>📷 Skanna</b> och rikta kameran mot QR-koden eller streckkoden. En grön ram, ett pip och en blinkning betyder att koden är avläst.</li>
+      </ul>
+    </section>
+
+    <section class="qr-block qr-loop">
+      <h3 class="qr-h"><span class="qr-n">2</span> När du skannar</h3>
+      <div class="qr-actions">
+        <span class="qr-chip"><b class="ic">1</b><span>Singel</span><em>registreras direkt med datum och ditt namn</em></span>
+        <span class="qr-chip is-main"><b class="ic">＋</b><span>Behållare</span><em>räkna upp antalet eller skriv en ny total</em></span>
+        <span class="qr-chip"><b class="ic">?</b><span>Okänd kod</span><em>skapa en ny artikel, eller koppla koden till en befintlig</em></span>
+      </div>
+    </section>
+
+    <section class="qr-block">
+      <h3 class="qr-h"><span class="qr-n">3</span> Listorna och att spara</h3>
+      <p class="qr-p"><b>Inventerat</b> visar allt som rörts de senaste fem dagarna, <b>Ej inventerat</b> visar resten. Röd bakgrund betyder att saldot är lägre än vad som ska finnas under kurs.</p>
+      <p class="qr-p">Allt sparas först på din telefon (gul markering) och synkas sedan automatiskt till Google-arket (☑️). Det fungerar även utan nät och överlever att appen stängs.</p>
+    </section>
+
+    <p class="qr-safe">Du kan inte råka förstöra något. Varje ändring loggas med namn och datum, och du kan alltid rätta den igen.</p>
+    <label class="qr-hide"><input type="checkbox" id="qrIntroHide" /> Visa inte det här igen</label>
+    <button id="qrIntroStart" class="btn" type="button">Sätt igång</button>
+    <!-- Filmen kommer i steg 2. Knappen hålls dold tills dess. -->
+    <button id="qrIntroVideo" class="qr-doclink" type="button" hidden>▶ Se filmen</button>
+    <button id="qrIntroManual" class="qr-doclink" type="button">📖 Läs hela handboken</button>
+  </div>
+
+  <!-- ============ KOMPLETT HANDBOK (läsbar + utskrivbar som PDF) ============ -->
+  <div id="qrManual" class="dialog qr-doc qr-manual hidden" role="dialog" aria-modal="true" aria-labelledby="qrManual-title" tabindex="-1">
+    <div class="qr-doc-head">
+      <h2 class="qr-title" id="qrManual-title">Handbok</h2>
+      <p class="qr-lede">Allt om Vitaliseras inventeringsapp, i lugn och ro. Läs här, eller skriv ut den som PDF att ha bredvid dig.</p>
+      <!-- Filmen kommer i steg 2. Knappen hålls dold tills dess. -->
+      <button id="qrManualVideo" class="btn cancel qr-fullbtn" type="button" hidden>▶ Se filmen</button>
+      <button id="qrManualPrint" class="btn cancel qr-fullbtn qr-print" type="button">🖨 Skriv ut / spara som PDF</button>
+    </div>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">1</span> Välkommen</h3>
+      <p class="qr-p">Det här är Vitaliseras app för lagerinventering. Du skannar en etikett med mobilkameran, eller trycker på en artikel i listan, och appen håller reda på hur mycket som finns, var det står och vad som behöver fyllas på inför nästa kurs.</p>
+      <p class="qr-p">Du behöver inte kunna något i förväg. Varje ändring sparas automatiskt och loggas med ditt namn och datum, så inget kan gå förlorat och allt går att rätta.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">2</span> Kom igång</h3>
+      <p class="qr-p">Första gången du öppnar appen får du skriva in <b>ditt namn</b>. Det sparas lokalt i tio dagar och visas i Google-arket vid varje registrering, så att man i efterhand ser vem som inventerat vad.</p>
+      <p class="qr-p">Tryck sedan <b>📷 Skanna</b> för att slå på kameran. Vill du hellre söka eller bläddra så finns hela lagret i listorna längre ner, och sökknappen hittar en artikel direkt på namnet.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">3</span> Skanna en artikel</h3>
+      <p class="qr-p">Rikta kameran mot QR-koden eller streckkoden och håll den inne i den gröna rutan. När koden lästs hörs ett <b>pip</b> och rutan <b>blinkar grönt</b>. Appen fungerar bäst i stående läge.</p>
+      <p class="qr-p">Vad som händer sedan beror på artikeltypen:</p>
+      <div class="qr-cards">
+        <div class="qr-card-row"><span class="mc-ic">1</span><span><b class="mc-nm">Singel.</b> <span class="mc-desc">En sak som räknas som en, till exempel ett verktyg. Den registreras direkt med dagens datum och ditt namn, utan något extra steg.</span></span></div>
+        <div class="qr-card-row"><span class="mc-ic">＋</span><span><b class="mc-nm">Behållare.</b> <span class="mc-desc">Något du har flera av, till exempel en låda pennor. En ruta öppnas där du räknar upp och ner med − och +, eller skriver in en ny total direkt.</span></span></div>
+      </div>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">4</span> När koden är okänd</h3>
+      <p class="qr-p">Om koden inte finns i arket sedan tidigare öppnas en dialog där du kan <b>skapa en ny artikel</b>. Du fyller i benämning, typ, plats, enhet och mängd. För matvaror med streckkod slår appen dessutom upp namnet automatiskt via OpenFoodFacts, så du slipper skriva.</p>
+      <p class="qr-p">Ibland vill du hellre <b>koppla den skannade koden till en artikel som redan finns</b> i listan, i stället för att skapa en dubblett. Öppna den artikeln (via sök eller listan), tryck på kugghjulet <b>⚙️ Egenskaper</b> och skanna koden där, så fästs etiketten på rätt rad.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">5</span> Inventeringslistorna</h3>
+      <p class="qr-p">Under kameran finns två listor. <b>Inventerat senaste 5 dagarna</b> visar allt som rörts nyligen, och <b>Ej inventerat</b> visar resten, alltså det som fortfarande behöver gås igenom.</p>
+      <p class="qr-p">En <b>röd bakgrund</b> betyder att saldot är lägre än det antal som ska finnas under kurs. En <b>gul markering</b> betyder att ändringen ännu inte hunnit synkas till arket. Tryck på en rad för att öppna artikeln, och tryck på en rubrik för att byta ordning mellan listorna.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">6</span> Uppdatera antal</h3>
+      <p class="qr-p">När du öppnat en behållare räknar du med <b>−</b> och <b>+</b>, ett steg i taget, eller så trycker du på siffran och skriver in en helt ny total. Tryck <b>Spara</b> för att bekräfta.</p>
+      <p class="qr-p">För en singel-artikel finns i stället knappen <b>Registrera inventering</b>, som bekräftar att den är räknad idag, med ditt namn och datum.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">7</span> Datum och avinventering</h3>
+      <p class="qr-p">I artikeldialogen kan du ändra inventeringsdatum under <b>Nytt datum</b>. Vill du markera att en artikel inte längre är inventerad så <b>rensar du datumfältet</b>, då flyttas den tillbaka till Ej inventerat.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">8</span> Kommentarer</h3>
+      <p class="qr-p">Ikonen <b>ℹ️</b> på en rad visar och döljer en kommentar. Här kan du skriva en notering om artikeln, till exempel var något står eller att det behöver beställas.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">9</span> Egenskaper</h3>
+      <p class="qr-p">Kugghjulet <b>⚙️ Egenskaper</b> i artikeldialogen öppnar de övriga fälten: kommentar, kategori, enhet, typ, det antal som ska finnas under kurs (min-mängd) och tag. Här skannar eller byter du också etiketten på en rad. Vill du byta namn på artikeln trycker du direkt på rubriken högst upp i dialogen.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">10</span> Filtrera listorna</h3>
+      <p class="qr-p">Kugghjulet <b>⚙️</b> längst ner öppnar Inställningar, där du bestämmer vad listorna ska visa:</p>
+      <ul class="qr-list">
+        <li><b>Visa från följande flikar.</b> Bocka i de flikar i arket du vill inventera. Siffran bredvid visar hur långt du kommit (inventerat av totalt) per flik.</li>
+        <li><b>Visa endast lågt saldo.</b> Döljer allt som det redan finns tillräckligt av.</li>
+        <li><b>Gruppera efter kategori.</b> Delar upp listan i block per kategori.</li>
+        <li><b>Visa enhet i stället för datum.</b> Byter högerkolumnen mot enheten (st, kg, l), praktiskt vid till exempel matbeställning.</li>
+        <li><b>Dölj artiklar med saldo 0</b> och <b>Dölj min-kolumnen</b> gör listan renare i lägen där de siffrorna inte är intressanta.</li>
+        <li><b>Visa ikoner.</b> Väljer vilka symboler som ritas efter namnet: 🏷️ tag, • singel, ℹ️ kommentar.</li>
+      </ul>
+      <p class="qr-p">Tryck <b>Använd</b> för att spara valen, eller <b>Välj alla</b> för att nollställa flikvalet.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">11</span> Sök</h3>
+      <p class="qr-p">Knappen <b>Sök</b> hittar en artikel med fritext. Träffarna delas i två delar: <b>Valda flikar</b> visar det som ligger i flikarna du inventerar just nu, och <b>Övriga flikar</b> visar resten. Tryck på en träff för att öppna artikeln, eller <b>Ny artikel</b> för att skapa en helt ny.</p>
+      <p class="qr-p">Ger den vanliga sökningen få träffar hjälper en <b>AI-sökning</b> till och föreslår artiklar som liknar det du skrev, även när stavningen inte är exakt.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">12</span> Analysera bild med AI</h3>
+      <p class="qr-p">Knappen <b>📸 Analysera bild</b> låter dig ta ett foto på en vara i stället för att skanna en kod. Appen känner igen vad det är och föreslår en artikel, som du sedan kan bekräfta eller justera. Bra när en etikett saknas eller inte går att läsa.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">13</span> Allt sparas automatiskt</h3>
+      <p class="qr-p">Appen är byggd för att fungera även med dålig eller ingen uppkoppling. Varje ändring sparas först på din telefon och visas med en <b>gul markering</b>. Så snart det går synkas den till Google-arket, och markeringen blir en <b>☑️</b>.</p>
+      <p class="qr-p">Du behöver inte trycka Spara-till-servern någonstans. Stänger du appen mitt i så ligger ändringarna kvar och skickas iväg nästa gång du är online.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">14</span> Skriv ut listan</h3>
+      <p class="qr-p">Vill du ha en utskrift av själva inventeringslistan, till exempel en plocklista eller matbeställning, öppnar du <b>⚙️ Inställningar</b> och trycker <b>🖨️ Skriv ut / spara som PDF</b>. Då skrivs de artiklar ut som ditt filter visar. Välj "Spara som PDF" som destination för att få en fil.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">15</span> Installera appen</h3>
+      <p class="qr-p">Appen fungerar bäst tillagd på hemskärmen, då startar den snabbt och i helskärm som en vanlig app. I Safari trycker du på <b>dela-knappen</b> och väljer <b>Lägg till på hemskärmen</b>. Första gången visar appen en liten guide för just detta.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">16</span> Mörkt läge och nya versioner</h3>
+      <p class="qr-p">Appen följer telefonens <b>mörka läge</b> automatiskt, du behöver inte ställa in något. När en ny version finns dyker ett litet band upp med knappen <b>Uppgradera version</b>. Tryck på den så laddas den senaste versionen.</p>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">17</span> Tips för en smidig inventering</h3>
+      <ul class="qr-list">
+        <li>Håll telefonen i stående läge, liggande läge blockeras.</li>
+        <li>Bocka i bara de flikar du faktiskt ska inventera, så blir listorna kortare och tydligare.</li>
+        <li>Låt gula markeringar bli ☑️ innan du stänger, då vet du att allt nått arket. Men även om du stänger tidigare skickas de iväg sedan.</li>
+        <li>Använd kommentaren ℹ️ för sådant som behöver beställas eller står på ovanligt ställe.</li>
+      </ul>
+    </section>
+
+    <section class="qr-sec">
+      <h3 class="qr-h"><span class="qr-n">18</span> Om Vitalisera</h3>
+      <p class="qr-p">Inventeringsappen är byggd av och för Vitalisera. Mer om oss finns på <a href="https://vitalisera.se" target="_blank" rel="noopener">vitalisera.se</a>.</p>
+    </section>
+
+    <button id="qrManualClose" class="btn" type="button">Stäng</button>
   </div>
 
   <!-- FABs + LJUD -->
@@ -169,7 +338,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=149"></script>
+  <script src="app.js?v=150"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

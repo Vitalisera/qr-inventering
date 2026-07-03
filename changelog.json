@@ -1,6 +1,15 @@
 {
-  "latest": 150,
+  "latest": 151,
   "versions": [
+    {
+      "version": 151,
+      "date": "2026-07-04",
+      "notes": [
+        "Rättat: en skannad artikel kunde i vissa fall se ut att registreras men aldrig hamna rätt i Google Sheets. Nu sparas den mot rätt rad varje gång.",
+        "Rättat: efter att en tagg kopplats till en artikel kunde ändringar gjorda strax innan fastna som osparade (gula). Nu följer de med och sparas som de ska.",
+        "Nytt: om en registrering trots många försök inte går att spara säger appen ifrån tydligt och ber dig skanna om artikeln, i stället för att vänta i det tysta."
+      ]
+    },
     {
       "version": 150,
       "date": "2026-07-01",

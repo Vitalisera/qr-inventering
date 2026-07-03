@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 150;
+const APP_VERSION = 151;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -510,12 +510,62 @@ const _pendingTagLinks = new Map();
 // = tag. Värde = { tag, name, sheetName, rowNum }. Self-delete vid
 // verified/rejected; behålls om fortf. offline.
 const _pendingLogSingle = new Map();
+// v151: efter så här många misslyckade spar-försök byter historikraden text
+// från "sparas när du är online igen" till en uppmaning att skanna om —
+// evig tyst retry ska inte se ut som att allt är på väg att ordna sig.
+// Enbart meddelandet ändras; jobbet ligger kvar och re-försöks som förut.
+const RESYNC_WARN_AFTER = 5;
 // Ren urvalsfunktion: vilka pending-länkar ska re-försökas vid online-event?
 // Idempotent — returnerar bara poster som inte redan har ett aktivt re-försök.
 function selectPendingResync(map) {
   const out = [];
   for (const [k, v] of (map instanceof Map ? map : new Map())) {
     if (v && !v._inflight) out.push({ key: k, job: v });
+  }
+  return out;
+}
+
+// B4 (v151), ren och testbar (samma mönster som selectPendingResync): när en
+// syntetisk nyckel ("S<flik>R<rad>") byts mot en riktig tagg efter lyckad
+// koppling måste ALLA köade jobb som pekar på den gamla nyckeln följa med —
+// annars får de cache-miss i _applyBatchResults_ (pendingSync rensas aldrig →
+// evig gulmarkering) och resync av logSingle-jobb återskapar spöknycklar i
+// tagCache/metaCache. Muterar jobbobjekten på plats (samma objekt ligger kvar
+// i köerna) och fyller i saknade koordinater från coords. Anroparen ansvarar
+// för persistering (_persistQueue_/_persistPending_).
+// Returnerar { queue, singles, links } = antal om-nycklade jobb per kö.
+function rekeyPendingJobs(oldTag, newTag, coords, queueArr, singleMap, linkMap) {
+  const c = coords || {};
+  const out = { queue: 0, singles: 0, links: 0 };
+  if (!oldTag || !newTag || oldTag === newTag) return out;
+  // Bundlade updateMeta/updateCount-jobb: nyckelfältet är args.tag.
+  for (const j of (queueArr || [])) {
+    if (!j || !j.args || j.args.tag !== oldTag) continue;
+    j.args.tag = newTag;
+    if (j.args.sheetName == null && c.sheetName != null) j.args.sheetName = c.sheetName;
+    if (j.args.rowNum == null && c.rowNum != null) j.args.rowNum = c.rowNum;
+    out.queue++;
+  }
+  // Pending singel-registreringar: map-nyckel = tag OCH jobbfält .tag.
+  if (singleMap instanceof Map && singleMap.has(oldTag)) {
+    const job = singleMap.get(oldTag);
+    singleMap.delete(oldTag);
+    if (job) {
+      job.tag = newTag;
+      if (job.sheetName == null && c.sheetName != null) job.sheetName = c.sheetName;
+      if (job.rowNum == null && c.rowNum != null) job.rowNum = c.rowNum;
+      if (!singleMap.has(newTag)) singleMap.set(newTag, job);
+      out.singles++;
+    }
+  }
+  // Pending tag-länkar: map-nyckel = scannedTag (oförändrad), men .currentTag
+  // pekar på artikelns cache-nyckel och måste följa med vid swap.
+  if (linkMap instanceof Map) for (const job of linkMap.values()) {
+    if (!job || job.currentTag !== oldTag) continue;
+    job.currentTag = newTag;
+    if (job.sheetName == null && c.sheetName != null) job.sheetName = c.sheetName;
+    if (job.rowNum == null && c.rowNum != null) job.rowNum = c.rowNum;
+    out.links++;
   }
   return out;
 }
@@ -537,7 +587,8 @@ function _persistPending_() {
     const logSingle = [];
     for (const v of _pendingLogSingle.values()) {
       if (v && v.tag) logSingle.push({
-        tag: v.tag, name: v.name ?? '', sheetName: v.sheetName ?? null, rowNum: v.rowNum ?? null
+        tag: v.tag, name: v.name ?? '', sheetName: v.sheetName ?? null, rowNum: v.rowNum ?? null,
+        retries: v.retries || 0   // v151: eskaleringsräknaren överlever PWA-kill
       });
     }
     if (!tagLinks.length && !logSingle.length) { localStorage.removeItem(_PENDING_LS_KEY); return; }
@@ -1393,11 +1444,22 @@ const Save = {
       if (isSynthetic) {
         const oldData = tagCache.get(currentTag);
         if (oldData) {
+          // B4 (v151): BEHÅLL koordinaterna vid key-swap. addTag skriver taggen
+          // i SAMMA rad (raden flyttas inte — verifierat mot Code.js
+          // addTagToRow som setValue:ar TAG-cellen på angiven rowNum). Det
+          // gamla `sheetName: null, rowNum: null` var okommenterat sedan
+          // initial-committen (8d3737c) utan dokumenterad avsikt, och slog ut
+          // koordinatvägen i backend resolveItem för alla senare writes.
+          // target-koordinaterna (de addTag faktiskt skrev mot) prioriteras.
+          const _coords = {
+            sheetName: sheetName ?? oldData.sheetName ?? null,
+            rowNum: rowNum ?? oldData.rowNum ?? null
+          };
           tagCache.delete(currentTag);
           tagCache.set(res.tag, {
             ...oldData,
-            sheetName: null,
-            rowNum: null,
+            sheetName: _coords.sheetName,
+            rowNum: _coords.rowNum,
             // P0c: scannedTag är nu PRIMARY (res.tag). Filtrera bort den ur
             // altTags så den inte hamnar både som primary OCH som alt på sig
             // själv (annars dubbel-hit i lookupByTag.altTags-loop, kosmetiskt).
@@ -1406,6 +1468,14 @@ const Save = {
           });
           const oldMeta = metaCache.get(currentTag);
           if (oldMeta) { metaCache.delete(currentTag); metaCache.set(res.tag, oldMeta); }
+          // B4 (v151): re-keya ALLA köade jobb S→res.tag (updateQueue,
+          // _pendingLogSingle, _pendingTagLinks.currentTag) så de varken får
+          // cache-miss i _applyBatchResults_ eller återskapar spöknycklar vid
+          // resync. Map-ändringarna persisteras av _persistPending_ nedan;
+          // updateQueue persisteras här om den rördes.
+          const _rekeyed = rekeyPendingJobs(currentTag, res.tag, _coords,
+            updateQueue, _pendingLogSingle, _pendingTagLinks);
+          if (_rekeyed.queue > 0) _persistQueue_();
         }
       } else {
         const cur = tagCache.get(currentTag);
@@ -1514,14 +1584,22 @@ const Save = {
           const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum };
           job._inflight = false;
           job._le = le;                 // återanvänd samma rad vid resync
+          // v151: räkna misslyckade försök (persisteras) → synlig eskalering
+          // i stället för evig tyst retry när samma jobb failar om och om igen.
+          job.retries = (job.retries || 0) + 1;
           _pendingLogSingle.set(tag, job);
           _persistPending_();
+          const _gaveUpHope = job.retries >= RESYNC_WARN_AFTER;
           if (le) {
             const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
             const m = le.querySelector('.msg');
-            if (m) m.textContent = `${name} – sparas när du är online igen`;
+            if (m) m.textContent = _gaveUpHope
+              ? `${name} – kunde inte sparas, skanna om artikeln`
+              : `${name} – sparas när du är online igen`;
           }
-          show("Ingen kontakt — sparas när du är online igen", "warn");
+          show(_gaveUpHope
+            ? "En artikel kunde inte sparas – skanna om den"
+            : "Ingen kontakt — sparas när du är online igen", "warn");
         } else {
           // Äkta server-avvisning (validering / staleRow) → ingen bock,
           // ⚠️ + felmeddelande. Avregistrera — re-försök är meningslöst.
@@ -1542,6 +1620,7 @@ const Save = {
         const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum };
         job._inflight = false;
         job._le = le;                   // återanvänd samma rad vid resync
+        job.retries = (job.retries || 0) + 1;  // v151: räknas mot RESYNC_WARN_AFTER
         _pendingLogSingle.set(tag, job);
         _persistPending_();
         markLogFail(le, err);
@@ -4927,6 +5006,20 @@ function stopReader(){stopFocusCycler();stopCropDecode();try{reader&&reader.rese
 // scanBox, lastCode, busy, dialogOpen, preloadDone, lookupByTag, Save,
 // tagCache, metaCache, normTag, acceptScan, cooldown, prepareContainerDialog
 // etc — är redan moduleScope, inga closure-beroenden av startCamera).
+// B3 (v151), ren och testbar: bygg logSingle-target för skan-grenarna.
+// Koordinaterna MÅSTE med när de finns — utan sheetName/rowNum kan backend
+// resolveItem inte slå upp syntetiska nycklar ("S<flik>R<rad>"): normalizeTag
+// strippar bokstäverna till en pseudo-tag av bara siffror, och logTag skapar
+// då en DUBBLETTRAD i default-fliken med falsk ok:true (eller skriver fel rad
+// vid sifferkollision) — inventeringen når aldrig rätt rad. Verifierat mot
+// Code.js resolveItem/logTag/findTagAcrossSheets 2026-07-04. Hanterar både
+// cache-formen (rowNum) och lookup-svarets form (row, från makeItemFromCols).
+function buildLogSingleTarget(name, item) {
+  const it = item || {};
+  const rn = it.rowNum != null ? it.rowNum : (it.row != null ? it.row : null);
+  return { name, sheetName: it.sheetName != null ? it.sheetName : null, rowNum: rn };
+}
+
 async function onScanResult(res) {
     if(!res||!res.resultPoints||busy||dialogOpen())return;
     if(!preloadDone){show("Laddar artiklar...",null,{autoreset:false});return;}
@@ -4970,7 +5063,9 @@ async function onScanResult(res) {
         // blir ambient via Save.logSingle:s pendingSync/historik (⚠️ vid
         // genuint fel). cooldown 8000ms → kvarliggande tagg re-fyrar ej; en
         // ANNAN tagg har scanned!==lastCode → skannar fritt direkt.
-        Save.logSingle(primaryTag, { name });
+        // B3 (v151): skicka med koordinaterna från cachen — annars kan backend
+        // inte lösa upp syntetiska nycklar (se buildLogSingleTarget ovan).
+        Save.logSingle(primaryTag, buildLogSingleTarget(name, cached));
         cooldown(primaryTag, 8000); busy=false;
         showSingelCaptured(name);
         return;
@@ -4990,7 +5085,9 @@ async function onScanResult(res) {
         tagCache.set(scanned,{name:item.name,type:"singel",place:normPlace(item.place)});
         // Stark OMEDELBAR "fångad"-signal ersätter fördröjd bock (se
         // cache-hit-grenen ovan). Server-confirm ambient via Save.logSingle.
-        Save.logSingle(scanned, { name: item.name });
+        // B3 (v151): lookup-svaret bär sheetName + row (makeItemFromCols) —
+        // skicka med dem så backend slår upp exakt rad i stället för tag-scan.
+        Save.logSingle(scanned, buildLogSingleTarget(item.name, item));
         cooldown(scanned, 8000); busy=false;
         showSingelCaptured(item.name);
         return;

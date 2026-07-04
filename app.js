@@ -6,7 +6,10 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 151;
+const APP_VERSION = 152;
+// S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
+// cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
+const NAME_TTL_DAYS = 365;
 // QA-testfäste — flag-gated, PROD NO-OP. På via ?qa=1 eller localStorage.qaMode='1'.
 // Möjliggör autonom verifiering i desktop-Chrome FÖRE deploy: __qaScan injicerar
 // en avkodad tagg i exakt samma onScanResult-pipeline som en riktig skan;
@@ -740,6 +743,26 @@ const normTag=x=>{const s=String(x||"").trim();return s.startsWith("S")?s:s.repl
 // Escape för säker interpolation i innerHTML — Sheet-data kan innehålla <, >, ", ', &.
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// F2 (v152): precisionsföljande steg för mängd-steppern [−]/[+]. Hårdkodad ±1
+// var obrukbar för decimalsaldon (0,5 + gav 1,5 — ingen väg till 0,6).
+// Steget = värdets egen decimalupplösning: heltal → 1, en decimal → 0,1,
+// två decimaler → 0,01 (max 6 decimaler). Resultatet avrundas till samma
+// decimalantal (ingen 0.30000000000000004), golvas på 0, och behåller
+// användarens decimaltecken (komma eller punkt).
+// Ren funktion — speglad ORDAGRANT i qtystep.test.js. Håll i synk.
+function stepQty(raw, dir) {
+  const s0 = String(raw == null ? "" : raw).trim();
+  const comma = s0.includes(",");
+  const s = s0.replace(",", ".");
+  const v = parseFloat(s);
+  const cur = isFinite(v) ? v : 0;
+  const m = isFinite(v) ? /\.(\d+)$/.exec(s) : null;
+  const decimals = m ? Math.min(m[1].length, 6) : 0;
+  const next = Math.max(0, cur + dir * Math.pow(10, -decimals));
+  const out = next.toFixed(decimals);
+  return comma ? out.replace(".", ",") : out;
+}
+
 // Preferenser för ikoner i listan (togglas i Inställningar-dialogen).
 const prefs = {
   iconTag:     localStorage.getItem('vitaliseraIconTag')     === 'true',
@@ -752,7 +775,7 @@ function renderRowIcons(t, item, hasComment) {
   if (prefs.iconTag && !t.startsWith('S')) out.push('<span class="rowIcon">🏷️</span>');
   if (prefs.iconType && item.type === 'singel') out.push('<span class="rowIcon">•</span>');
   if (prefs.iconComment && hasComment) {
-    out.push(`<span class="infoIcon" data-tag="${t}">ℹ️</span>`);
+    out.push(`<span class="infoIcon" data-tag="${esc(t)}">ℹ️</span>`);
   }
   return out.length ? ' ' + out.join('') : '';
 }
@@ -1242,7 +1265,19 @@ async function showSingelCaptured(name){
   }
 }
 const cooldown=(t,ms=COOLDOWN_MS)=>{lastCode=t;setTimeout(()=>{ if(lastCode===t) lastCode=""; },ms);};
-const dialogOpen=()=>!dlg.classList.contains('hidden')||!nameDialog.classList.contains('hidden')||!settingsDialog.classList.contains('hidden')||!searchDialog.classList.contains('hidden');
+// B1 (v152): generaliserad från en hårdkodad fyra-dialoglista som missade
+// kommentar-popupen (.dialog.comment, dynamiskt appendad utan hidden-klass),
+// qrIntro, qrManual — skanning processades felaktigt bakom öppna overlays.
+// Alla dialoger/overlays i appen har class="dialog" och visas genom att
+// 'hidden'-klassen tas bort (popupen tas bort ur DOM när den stängs) — utom
+// #installOverlay som saknar dialog-klass och därför kollas separat.
+// Callsites (3 st, alla i onScanResult) vill alla ignorera skan när NÅGON
+// overlay är öppen, så breddningen ändrar ingen avsedd semantik.
+const dialogOpen=()=>{
+  if(document.querySelector('.dialog:not(.hidden)'))return true;
+  const io=document.getElementById('installOverlay');
+  return !!(io&&!io.classList.contains('hidden'));
+};
 
 /* ===== Logg ===== */
 const MAX_LOG = 5;
@@ -3224,17 +3259,26 @@ function prepareSingleDialog(item, tag) {
 
   dlgTitle.textContent = item.name || "Okänd artikel";
   dlgTitle.contentEditable = "false";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Registrera inventering</b> bekräftar dagens inventering med ditt namn och datum.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera artikeln.<br>"⚙️ Egenskaper" öppnar kommentar, kategori, enhet, typ, min-mängd och tag.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade uppgifter. Under <b>Ny inventering</b> registrerar du dagens.<br><b>Registrera inventering</b> bekräftar dagens inventering med ditt namn och datum.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera artikeln.<br>"⚙️ Egenskaper" öppnar kommentar, kategori, enhet, typ, min-mängd och tag.';}
 
   const todayYMD = toYMD(Date.now());
   const oldDate = toYMD(meta.lastMs);
+  // U5 (v152): gamla och nya värden var oetiketterade — föregående saldo/person/
+  // datum stod direkt ovanför "Nytt datum:" (prefyllt med idag) och blandades
+  // ihop med den nya registreringen. Nu två tydligt separerade block.
   dlgInfo.innerHTML = `
-    <div class="metaTop">
-      <span class="metaQty">${esc(meta.qty ?? 0)} ${esc(meta.unit ?? "")}</span>
-      ${meta.user ? `<span class="metaBy"> • ${esc(meta.user)}</span>` : ""}
-      ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
+    <div class="invPrev">
+      <div class="invLabel">Föregående inventering</div>
+      <div class="metaTop">
+        <span class="metaQty">${esc(meta.qty ?? 0)} ${esc(meta.unit ?? "")}</span>
+        ${meta.user ? `<span class="metaBy"> • ${esc(meta.user)}</span>` : ""}
+        ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
+      </div>
     </div>
-    <div class="metaDate" style="margin-top:8px">Nytt datum:<input type="date" id="singleDateEdit" value="${esc(todayYMD)}"></div>
+    <div class="invNew">
+      <div class="invLabel">Ny inventering</div>
+      <div class="metaDate">Nytt datum:<input type="date" id="singleDateEdit" value="${esc(todayYMD)}"></div>
+    </div>
   `;
 
   dlgBtns.innerHTML = `
@@ -3313,10 +3357,10 @@ function prepareSingleDialog(item, tag) {
 
 function prepareContainerDialog(item, tag, opts = {}) {
   resetDialog();
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner med 1 åt gången, eller tappa siffran och skriv in en helt ny total.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade saldo, person och datum. Under <b>Ny inventering</b> registrerar du dagens.<br>Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner. Steget följer siffrans decimaler: 3 blir 4, men 0,5 blir 0,6. Du kan också tappa siffran och skriva in en helt ny total.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
 
   const editMode = opts.editMode === true;
-  // Reset per dialog: editMode (Fler fält från singel) öppnar expanderat,
+  // Reset per dialog: editMode (Egenskaper från singel) öppnar expanderat,
   // alla andra ingångar börjar kollapsade så det blir konsekvent UX.
   extraFieldsExpanded = editMode;
   const meta = metaCache.get(tag) || {};
@@ -3406,14 +3450,22 @@ function prepareContainerDialog(item, tag, opts = {}) {
   const _p7Line = _p7Parts.length
     ? `<div class="metaBy" style="margin-bottom:4px">${_p7Parts.join(' | ')}</div>`
     : '';
+  // U5 (v152): samma tvåblocks-struktur som i prepareSingleDialog — föregående
+  // inventering (dämpad) tydligt skild från den nya registreringen.
   dlgInfo.innerHTML = `
     ${_p7Line}
-    <div class="metaTop">
-      <span class="metaQty">${esc(dialogItem.qty)} ${esc(dialogItem.unit)}</span>
-      ${dialogItem.user ? `<span class="metaBy"> • ${esc(dialogItem.user)}</span>` : ""}
-      ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
+    <div class="invPrev">
+      <div class="invLabel">Föregående inventering</div>
+      <div class="metaTop">
+        <span class="metaQty">${esc(dialogItem.qty)} ${esc(dialogItem.unit)}</span>
+        ${dialogItem.user ? `<span class="metaBy"> • ${esc(dialogItem.user)}</span>` : ""}
+        ${oldDate ? `<span class="metaBy"> • ${esc(oldDate)}</span>` : ""}
+      </div>
     </div>
-    <div class="metaDate" style="margin-top:8px">Nytt datum:<input type="date" id="containerDateEdit" value="${esc(isoDate)}"></div>
+    <div class="invNew">
+      <div class="invLabel">Ny inventering</div>
+      <div class="metaDate">Nytt datum:<input type="date" id="containerDateEdit" value="${esc(isoDate)}"></div>
+    </div>
   `;
 
   // Singel-artiklar har ingen mängd att stega — visa Egenskaper-panelen
@@ -3761,15 +3813,13 @@ function prepareContainerDialog(item, tag, opts = {}) {
     return `${y}-${m}-${da}`;
   };
 
-  // Stepper [−]/[+] justerar siffran med 1 åt gången. Användaren kan också
-  // tappa siffran och skriva en ny total direkt. Spara skickar den slutliga
-  // siffran till samma updateCount-API som de gamla Öka/Ny total-knapparna.
+  // Stepper [−]/[+] stegar med värdets egen decimalupplösning (se stepQty).
+  // Användaren kan också tappa siffran och skriva en ny total direkt. Spara
+  // skickar den slutliga siffran till samma updateCount-API som förut.
   const qtyDecBtn = qs("#qtyDec");
   const qtyIncBtn = qs("#qtyInc");
-  const adjustQty = (delta) => {
-    const v = parseFloat((dlgInput.value || "0").replace(",", ".")) || 0;
-    const next = Math.max(0, v + delta);
-    dlgInput.value = String(next);
+  const adjustQty = (dir) => {
+    dlgInput.value = stepQty(dlgInput.value, dir);
     markError(dlgInput, false);
     setMsg("", "");
   };
@@ -3887,6 +3937,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (placeRaw === "__new__" && !sheetPlace) return;
 
     tagCache.set(tag, { ...tagCache.get(tag), comment, unit, minQty, type: typeVal, category, sheetPlace, pendingSync: true });
+
+    // B6 (v152): spegla enhetsbytet direkt i mängdfältets suffix — sattes
+    // tidigare bara en gång vid dialogbygget, så suffixet visade gammal enhet
+    // tills dialogen öppnades om. Ofarligt vid teardown-flush (resetDialog
+    // nollar textContent) och för singel (dlgInputWrap är dold).
+    dlgInputSuffix.textContent = unit;
 
     const patch = { unit };
     if (date) patch.lastStr = date;
@@ -4881,14 +4937,16 @@ qs('#addBtn')?.addEventListener('click',()=>{ensureName(()=>{createManualArticle
 
 /* ===== Namn (cookie + localStorage) ===== */
 function getCookie(k){const m=document.cookie.match(new RegExp('(?:^|; )'+k+'=([^;]*)'));return m?decodeURIComponent(m[1]):null;}
-function setCookie(k,v,days){document.cookie=k+'='+encodeURIComponent(v)+'; max-age='+(days*86400)+'; path=/; SameSite=Lax';}
+// S5 (v152): Secure — sajten serveras alltid över HTTPS (GitHub Pages), så
+// cookien ska aldrig kunna skickas över okrypterad HTTP.
+function setCookie(k,v,days){document.cookie=k+'='+encodeURIComponent(v)+'; max-age='+(days*86400)+'; path=/; SameSite=Lax; Secure';}
 function ensureName(cb){
   const saved=getCookie("vitaliseraUser")||localStorage.getItem("vitaliseraUser");
   const exp=Number(getCookie("vitaliseraExpiry")||localStorage.getItem("vitaliseraExpiry")||0);
   if(saved&&Date.now()<exp){userName=saved;if(typeof cb==="function")cb();return true;}
   nameDialog.classList.remove("hidden"); userNameInput.value=saved||""; saveNameBtn.onclick=()=>{const n=(userNameInput.value||"").trim();if(!n)return;userName=n;
-    localStorage.setItem("vitaliseraUser",n);localStorage.setItem("vitaliseraExpiry",Date.now()+365*86400000);
-    setCookie("vitaliseraUser",n,365);setCookie("vitaliseraExpiry",String(Date.now()+365*86400000),365);
+    localStorage.setItem("vitaliseraUser",n);localStorage.setItem("vitaliseraExpiry",Date.now()+NAME_TTL_DAYS*86400000);
+    setCookie("vitaliseraUser",n,NAME_TTL_DAYS);setCookie("vitaliseraExpiry",String(Date.now()+NAME_TTL_DAYS*86400000),NAME_TTL_DAYS);
     nameDialog.classList.add("hidden");if(typeof cb==="function")cb();};
 }
 
@@ -5076,25 +5134,12 @@ async function onScanResult(res) {
     }
     await flashFeedback("Läser av…");
     if (dialogOpen()) { busy=false; cooldown(scanned); return; }
-    if(preloadDone){busy=false;showLinkTagDialog(scanned);return;}
-    show("Hämtar uppgifter…",null,{autoreset:false});
-    gasCall('lookup', {tag: scanned}).then(item => {
-      if(!item){busy=false;showLinkTagDialog(scanned);return;}
-      const type=(item.type||"singel").toLowerCase();
-      if(type==="singel"){
-        tagCache.set(scanned,{name:item.name,type:"singel",place:normPlace(item.place)});
-        // Stark OMEDELBAR "fångad"-signal ersätter fördröjd bock (se
-        // cache-hit-grenen ovan). Server-confirm ambient via Save.logSingle.
-        // B3 (v151): lookup-svaret bär sheetName + row (makeItemFromCols) —
-        // skicka med dem så backend slår upp exakt rad i stället för tag-scan.
-        Save.logSingle(scanned, buildLogSingleTarget(item.name, item));
-        cooldown(scanned, 8000); busy=false;
-        showSingelCaptured(item.name);
-        return;
-      }
-      setLocalMeta(scanned,{qty:item.qty,unit:item.unit,user:item.user,lastMs:item.last||Date.now()}); recomputeMaxLast(); renderLists(); prepareContainerDialog(item,scanned);
-      tagCache.set(scanned, { name: item.name, type: "behållare", place: normPlace(item.place) });
-    });
+    // B2 (v152): okänd tagg → alltid koppla/skapa-dialogen. Den gamla online-
+    // lookup-fallbacken som låg efter denna rad var DÖD kod: toppguarden
+    // `if(!preloadDone) return` (början av onScanResult) garanterar att
+    // preloadDone är true här, så `if(preloadDone){...return}` tog alltid
+    // denna väg och gasCall('lookup')-grenen kunde aldrig nås. Borttagen.
+    busy=false;showLinkTagDialog(scanned);
 }
 async function startCamera(){
   stopReader(); reader=new ZXing.BrowserMultiFormatReader(_zxingHints());

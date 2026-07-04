@@ -1,6 +1,16 @@
 {
-  "latest": 151,
+  "latest": 152,
   "versions": [
+    {
+      "version": 152,
+      "date": "2026-07-04",
+      "notes": [
+        "Tydligare artikeldialog: det som sparades förra gången står nu under rubriken Föregående inventering, och dagens registrering under Ny inventering, så att gammalt och nytt inte blandas ihop.",
+        "Plus- och minusknapparna räknar nu rätt även med decimaler: står det 0,5 stegar de till 0,6 i stället för att hoppa till 1,5.",
+        "Byter du enhet på en artikel syns den nya enheten direkt i mängdfältet, utan att dialogen behöver öppnas om.",
+        "Rättat: hjälptexterna sa att ditt namn sparas i tio dagar, men det sparas i själva verket i ett år. Nu stämmer texterna."
+      ]
+    },
     {
       "version": 151,
       "date": "2026-07-04",

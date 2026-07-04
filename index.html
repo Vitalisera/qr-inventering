@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=23">
+  <link rel="stylesheet" href="style.css?v=24">
 </head>
 
 <body>
@@ -73,7 +73,7 @@
   <div id="nameDialog" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
     <h2>Ange ditt namn <span class="help-toggle dark" data-help="name">?</span></h2>
     <div class="help-box" id="help-name">
-      Ditt namn sparas lokalt i 10 dagar och visas i Sheetet vid varje registrering, så att man ser vem som inventerade.
+      Ditt namn sparas lokalt i ett år och visas i Sheetet vid varje registrering, så att man ser vem som inventerade.
     </div>
     <input id="userNameInput" placeholder="Ex. Robert Kraft" autocomplete="name" />
     <div class="actions"><button id="saveNameBtn" class="btn">OK</button></div>
@@ -83,13 +83,11 @@
   <div id="dialogBox" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
     <h2 id="dialogTitle" contenteditable="true"></h2>
     <span class="help-toggle dark" data-help="article">?</span>
-    <div class="help-box" id="help-article">
-      <b>Behållare:</b> tryck − eller + för att räkna upp/ner, eller skriv en ny total direkt. Spara bekräftar.<br>
-      <b>Singel:</b> "Registrera inventering" bekräftar dagens inventering.<br>
-      <b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>
-      Tryck på artikelnamnet för att byta namn.<br>
-      "Fler fält" visar kommentar, kategori, enhet, typ, min-mängd och tag.
-    </div>
+    <!-- U2/D3 (v152): medvetet tom — innehållet sätts ALLTID av app.js vid
+         dialogöppning (olika text för singel/behållare/ny artikel/okänd tagg),
+         och dialogen kan inte visas utan att en av de vägarna körts. En statisk
+         text här kan aldrig ses av användaren och driftar bara ur synk. -->
+    <div class="help-box" id="help-article"></div>
     <p id="dialogInfo"></p>
     <div id="newItemFields" class="hidden">
       <input id="manualName" placeholder="Benämning" autocomplete="off" />
@@ -167,7 +165,7 @@
     <section class="qr-block">
       <h3 class="qr-h"><span class="qr-n">1</span> Kom igång</h3>
       <ul class="qr-list">
-        <li>Skriv ditt namn första gången. Det sparas i tio dagar och visas i arket, så att man ser vem som inventerat.</li>
+        <li>Skriv ditt namn första gången. Det sparas i ett år och visas i arket, så att man ser vem som inventerat.</li>
         <li>Tryck <b>📷 Skanna</b> och rikta kameran mot QR-koden eller streckkoden. En grön ram, ett pip och en blinkning betyder att koden är avläst.</li>
       </ul>
     </section>
@@ -213,7 +211,7 @@
 
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">2</span> Kom igång</h3>
-      <p class="qr-p">Första gången du öppnar appen får du skriva in <b>ditt namn</b>. Det sparas lokalt i tio dagar och visas i Google-arket vid varje registrering, så att man i efterhand ser vem som inventerat vad.</p>
+      <p class="qr-p">Första gången du öppnar appen får du skriva in <b>ditt namn</b>. Det sparas lokalt i ett år och visas i Google-arket vid varje registrering, så att man i efterhand ser vem som inventerat vad.</p>
       <p class="qr-p">Tryck sedan <b>📷 Skanna</b> för att slå på kameran. Vill du hellre söka eller bläddra så finns hela lagret i listorna längre ner, och sökknappen hittar en artikel direkt på namnet.</p>
     </section>
 
@@ -241,7 +239,8 @@
 
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">6</span> Uppdatera antal</h3>
-      <p class="qr-p">När du öppnat en behållare räknar du med <b>−</b> och <b>+</b>, ett steg i taget, eller så trycker du på siffran och skriver in en helt ny total. Tryck <b>Spara</b> för att bekräfta.</p>
+      <p class="qr-p">Överst i dialogen står <b>Föregående inventering</b>: senast sparade saldo, vem som räknade och när. Under <b>Ny inventering</b> registrerar du dagens siffror, så att gammalt och nytt aldrig blandas ihop.</p>
+      <p class="qr-p">För en behållare räknar du med <b>−</b> och <b>+</b>, eller så trycker du på siffran och skriver in en helt ny total. Knapparna följer siffrans decimaler: står det 3 stegar de till 4, står det 0,5 stegar de till 0,6. Tryck <b>Spara</b> för att bekräfta.</p>
       <p class="qr-p">För en singel-artikel finns i stället knappen <b>Registrera inventering</b>, som bekräftar att den är räknad idag, med ditt namn och datum.</p>
     </section>
 
@@ -338,7 +337,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=151"></script>
+  <script src="app.js?v=152"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=25">
+  <link rel="stylesheet" href="style.css?v=26">
 </head>
 
 <body>
@@ -176,7 +176,7 @@
     <section class="qr-block qr-loop">
       <h3 class="qr-h"><span class="qr-n">2</span> När du skannar</h3>
       <div class="qr-actions">
-        <span class="qr-chip"><b class="ic">1</b><span>Singel</span><em>registreras direkt med datum och ditt namn</em></span>
+        <span class="qr-chip"><b class="ic">1</b><span>Singel</span><em>registreras direkt med datum och ditt namn, och kan markeras som saknad i artikelrutan</em></span>
         <span class="qr-chip is-main"><b class="ic">＋</b><span>Behållare</span><em>räkna upp antalet eller skriv en ny total</em></span>
         <span class="qr-chip"><b class="ic">?</b><span>Okänd kod</span><em>skapa en ny artikel, eller koppla koden till en befintlig</em></span>
       </div>
@@ -246,6 +246,7 @@
       <p class="qr-p">Överst i dialogen står <b>Föregående inventering</b>: senast sparade saldo, vem som räknade och när. Under <b>Ny inventering</b> registrerar du dagens siffror, så att gammalt och nytt aldrig blandas ihop.</p>
       <p class="qr-p">För en behållare räknar du med <b>−</b> och <b>+</b>, eller så trycker du på siffran och skriver in en helt ny total. Knapparna följer siffrans decimaler: står det 3 stegar de till 4, står det 0,5 stegar de till 0,6. Tryck <b>Spara</b> för att bekräfta.</p>
       <p class="qr-p">För en singel-artikel finns i stället knappen <b>Registrera inventering</b>, som bekräftar att den är räknad idag, med ditt namn och datum.</p>
+      <p class="qr-p">Hittar du inte artikeln alls trycker du på knappen <b>Saknas</b>. Då sätts saldot till noll, med dagens datum och ditt namn, precis som en vanlig inventering. Artikeln räknas som inventerad idag och blir röd i listan om den borde finnas under kurs. Har du valt att dölja artiklar med saldo 0 försvinner den ur listan tills den fylls på igen.</p>
     </section>
 
     <section class="qr-sec">
@@ -343,7 +344,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=153"></script>
+  <script src="app.js?v=154"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

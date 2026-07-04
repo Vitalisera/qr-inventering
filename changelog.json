@@ -1,6 +1,13 @@
 {
-  "latest": 153,
+  "latest": 154,
   "versions": [
+    {
+      "version": 154,
+      "date": "2026-07-05",
+      "notes": [
+        "Nytt: en Saknas-knapp för enstaka artiklar. Hittar du inte artikeln trycker du Saknas så sätts antalet till noll med dagens datum och ditt namn, och artikeln blir röd i listan om den borde finnas."
+      ]
+    },
     {
       "version": 153,
       "date": "2026-07-04",

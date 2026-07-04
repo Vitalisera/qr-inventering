@@ -479,6 +479,20 @@ body:has(.dialog:not(.hidden))::after {
 }
 .dialog .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
+/* F1 (v154): "Saknas" i singel-dialogen — sekundär varnande stil, tydligt
+   skild från både primärknappen (fylld teal) och Stäng (teal-kontur). Samma
+   rödton som delete-knappen men som kontur, inte fylld. */
+.dialog .btn.missing {
+  background: transparent;
+  color: #c0392b;
+  border: 2px solid #c0392b;
+  box-shadow: none;
+  flex: 0 0 auto;
+}
+@media (prefers-color-scheme: dark) {
+  .dialog .btn.missing { color: #e0857a; border-color: #e0857a; }
+}
+
 /* Meta-info i artikeldialog */
 .metaTop { color: var(--text); margin-bottom: 6px; }
 .metaQty { font-weight: 700; font-size: 1em; }

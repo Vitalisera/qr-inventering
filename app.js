@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 153;
+const APP_VERSION = 154;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -2746,7 +2746,7 @@ function renderSearchResults(q){
     if(activePlaces && !activePlaces.has(val.place||"Okänd")) continue;
     if(onlyLow){
       const meta = metaCache.get(tag)||{};
-      const isLow = (val.minQty||0) && (meta.qty < val.minQty);
+      const isLow = isLowQty(meta.qty, val.minQty);
       if(!isLow) continue;
     }
     passingTags.push(tag);
@@ -3025,6 +3025,12 @@ function addSafeTap(el, onTap, onLong) {
 }
 
 /* ===== Rendera listor ===== */
+// F1 (v154), ren och testbar (missing.test.js): lågt-saldo-predikatet som
+// styr röd markering + "bara lågt saldo"-filtren. Identisk semantik med de
+// tidigare inline-uttrycken (truthy minQty && qty < minQty) — qty 0 mot
+// minQty >= 1 gav rött REDAN före Saknas-knappen, ingen ny logik behövdes.
+function isLowQty(qty, minQty) { return !!(minQty && qty < minQty); }
+
 function renderLists() {
   const makeHeader = () => {
     const h = document.createElement("div");
@@ -3054,7 +3060,7 @@ function renderLists() {
     const place = item.place || "Okänd";
     if (activePlaces && !activePlaces.has(place)) continue;
 
-    const isLow = item.minQty && meta.qty < item.minQty;
+    const isLow = isLowQty(meta.qty, item.minQty);
     if (onlyLow && !isLow) continue;
 
     if (!itemPassesStepFilter(item)) continue;
@@ -3396,7 +3402,7 @@ function prepareSingleDialog(item, tag) {
 
   dlgTitle.textContent = item.name || "Okänd artikel";
   dlgTitle.contentEditable = "false";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade uppgifter. Under <b>Ny inventering</b> registrerar du dagens.<br><b>Registrera inventering</b> bekräftar dagens inventering med ditt namn och datum.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera artikeln.<br>"⚙️ Egenskaper" öppnar kommentar, kategori, enhet, typ, min-mängd och tag.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade uppgifter. Under <b>Ny inventering</b> registrerar du dagens.<br><b>Registrera inventering</b> bekräftar dagens inventering med ditt namn och datum.<br><b>Saknas</b> sätter saldot till noll med dagens datum och ditt namn. Artikeln räknas som inventerad idag och blir röd i listan om den borde finnas under kurs.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera artikeln.<br>"⚙️ Egenskaper" öppnar kommentar, kategori, enhet, typ, min-mängd och tag.';}
 
   const todayYMD = toYMD(Date.now());
   const oldDate = toYMD(meta.lastMs);
@@ -3420,6 +3426,7 @@ function prepareSingleDialog(item, tag) {
 
   dlgBtns.innerHTML = `
     <button id="cancelSingle" class="btn cancel">Stäng</button>
+    <button id="missingSingle" class="btn missing">Saknas</button>
     <button id="editSingle" class="btn icon-btn" aria-label="Egenskaper" title="Egenskaper"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     <button id="confirmSingle" class="btn">Registrera inventering</button>
     <div id="msgLine" class="msgLine"></div>
@@ -3482,6 +3489,19 @@ function prepareSingleDialog(item, tag) {
     statusDefault();
   };
 
+  // F1 (v154): "Saknas" = en inventering med resultatet noll. Åker på EXAKT
+  // samma persisterade kö-väg som behållar-saldot (queueUpdate → batch →
+  // updateCount). Servern stämplar qty=0 + dagens datum + användarnamn i
+  // SAMMA anrop (Code.js updateCount → updateRowWithCols, verifierat
+  // 2026-07-04: qty-guarden är `!== undefined && !== null` så 0 skrivs,
+  // TIMESTAMP sätts alltid, USER när icke-tom) — inga dubbla serveranrop.
+  qs("#missingSingle").onclick = () => {
+    dlg.classList.add("hidden");
+    markSingleMissing(tag, item.name || "Okänd artikel",
+      buildMissingPayload(tag, item, userName));
+    statusDefault();
+  };
+
   qs("#editSingle").onclick = () => {
     prepareContainerDialog(item, tag, { editMode: true });
   };
@@ -3492,8 +3512,50 @@ function prepareSingleDialog(item, tag) {
   };
 }
 
+// F1 (v154): markera en singel-artikel som saknad. Optimistisk lokal write +
+// pendingSync-skydd mot poll-klobb (samma mönster som saveBtn-saldovägen
+// ~4029), sedan den BEFINTLIGA persisterade kö-vägen queueUpdate('updateCount')
+// — batchning, retry, rehydrering och rollback oförändrade (synk-kärnan orörd).
+// Historikraden får sitt utfall EFTER flushen genom att läsa det pendingSync-
+// tillstånd som _applyBatchResults_ redan satt: false = VERIFIERAT sparat → ✅,
+// annars ⚠️ (ingen falsk bock). waitForPendingSync är den befintliga
+// "flush:a nu + vänta"-kanalen (samma som delete-vägen ~4210).
+function markSingleMissing(tag, name, payload) {
+  setLocalMeta(tag, { qty: 0, lastMs: Date.now(), user: userName });
+  tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: true });
+  recomputeMaxLast();
+  renderLists();
+  const le = appendLog(`${name} – markerad som saknad – sparas…`, tag);
+  show(`${name}: markerad som saknad – sparas…`, "ok");
+  queueUpdate('updateCount', payload);
+  (async () => {
+    try { await waitForPendingSync(); } catch (_) {}
+    const cur = tagCache.get(tag);
+    const ic = le.querySelector('.icon'), m = le.querySelector('.msg');
+    if (cur && cur.pendingSync === false) {
+      if (ic) ic.textContent = '✅';
+      if (m) m.textContent = `${name} – markerad som saknad`;
+    } else {
+      // Offline/avvisad: jobbet ligger kvar i den persisterade kön (gul rad),
+      // online-flushen tar det vidare — meddelandet är SANT, ingen falsk bock.
+      if (ic) ic.textContent = '⚠️';
+      if (m) m.textContent = `${name} – markerad som saknad – sparas när du är online igen`;
+    }
+  })();
+  return le;
+}
+
 function prepareContainerDialog(item, tag, opts = {}) {
   resetDialog();
+  // v154 (reviewer-uppföljning v153): sätt currentDialogTag HÄR i stället för
+  // att lita på att varje anropare gör det — sökresultatens editMode-callsites
+  // (renderSearchResults m.fl.) anropade direkt utan att sätta den, så key-swap-
+  // deferralens guard (rad ~1501: currentDialogTag === oldTag) täckte inte den
+  // vägen. Måste ligga EFTER resetDialog (closeDialog nollar; autosave-flushen
+  // i resetDialog ska se den GAMLA dialogens tag). Alla anropare som redan
+  // sätter den (openContainerForTag, swipe, koppla-flödet) sätter SAMMA tag
+  // före anropet → redundant men ofarligt.
+  currentDialogTag = tag;
   const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade saldo, person och datum. Under <b>Ny inventering</b> registrerar du dagens.<br>Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner. Steget följer siffrans decimaler: 3 blir 4, men 0,5 blir 0,6. Du kan också tappa siffran och skriva in en helt ny total.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
 
   const editMode = opts.editMode === true;
@@ -5257,6 +5319,25 @@ function buildLogSingleTarget(name, item) {
   const it = item || {};
   const rn = it.rowNum != null ? it.rowNum : (it.row != null ? it.row : null);
   return { name, sheetName: it.sheetName != null ? it.sheetName : null, rowNum: rn };
+}
+
+// F1 (v154), ren och testbar (testfil: missing.test.js): bygg updateCount-
+// payloaden för "Saknas" i singel-dialogen. newCount är ALLTID 0 — servern
+// (Code.js updateCount → updateRowWithCols) skriver 0:an (qty-guarden är
+// `!== undefined && !== null`), stämplar TIMESTAMP = new Date() och USER i
+// samma anrop. Samma koordinat-fallback som buildLogSingleTarget ovan:
+// cache-formen (rowNum) och lookup-svarets form (row) — koordinaterna krävs
+// för syntetiska nycklar ("S<flik>R<rad>") som backend inte kan tag-söka.
+function buildMissingPayload(tag, item, user) {
+  const it = item || {};
+  const rn = it.rowNum != null ? it.rowNum : (it.row != null ? it.row : null);
+  return {
+    tag,
+    newCount: 0,
+    userName: user,
+    sheetName: it.sheetName != null ? it.sheetName : null,
+    rowNum: rn
+  };
 }
 
 async function onScanResult(res) {

@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 152;
+const APP_VERSION = 153;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -573,6 +573,58 @@ function rekeyPendingJobs(oldTag, newTag, coords, queueArr, singleMap, linkMap) 
   return out;
 }
 
+// B5 (v153), ren och testbar: ska inventeringssteget fyras vid koppling?
+// Designregel D4: kopplingen är redan optimistiskt applicerad (altTags-push)
+// när Save.linkTag startar → inventeringssteget ska INTE gate:as på server-
+// bekräftelse. Fyr direkt vid kopplingsögonblicket, men ALDRIG om:
+//   - inställningen är av,
+//   - en dialog/overlay är öppen vid fyr-ögonblicket (ingen dialog får klobbas),
+//   - användaren hunnit vidare (staleness: > windowMs sedan kopplings-klicket).
+function shouldFireInventOnLink(enabled, dialogIsOpen, clickTs, nowMs, windowMs = 5000) {
+  if (!enabled) return false;
+  if (dialogIsOpen) return false;
+  const ts = typeof clickTs === 'number' ? clickTs : nowMs;
+  return (nowMs - ts) <= windowMs;
+}
+
+// U4 (v153), ren och testbar: modell för synk-badgen vid statusraden.
+// counts = { links, singles, queue, warn } där warn = antal jobb som nått
+// retries >= RESYNC_WARN_AFTER. Returnerar { visible, warn, text }.
+function buildSyncBadgeModel(counts) {
+  const c = counts || {};
+  const links = c.links || 0, singles = c.singles || 0, queue = c.queue || 0, warn = c.warn || 0;
+  const total = links + singles + queue;
+  if (total <= 0) return { visible: false, warn: false, text: '' };
+  if (warn > 0) return { visible: true, warn: true, text: warn + ' kunde inte sparas' };
+  const noun = (links === total)
+    ? (total === 1 ? 'koppling' : 'kopplingar')
+    : (total === 1 ? 'ändring' : 'ändringar');
+  return { visible: true, warn: false, text: total + ' ' + noun + ' synkas…' };
+}
+
+// U4: uppdatera badgen från köernas faktiska tillstånd. Anropas från samma
+// choke-points som persisteringen (_persistPending_/_persistQueue_) — ingen
+// polling-timer. try/catch: updateQueue/_inflightBatch deklareras senare i
+// filen (TDZ-skydd om någon framtida init-väg persisterar före deklaration).
+function _updateSyncBadge_() {
+  try {
+    const el = document.getElementById('syncBadge');
+    if (!el) return;
+    let warn = 0;
+    for (const j of _pendingLogSingle.values()) if (j && (j.retries || 0) >= RESYNC_WARN_AFTER) warn++;
+    for (const j of _pendingTagLinks.values()) if (j && (j.retries || 0) >= RESYNC_WARN_AFTER) warn++;
+    const m = buildSyncBadgeModel({
+      links: _pendingTagLinks.size,
+      singles: _pendingLogSingle.size,
+      queue: updateQueue.length + (_inflightBatch ? _inflightBatch.length : 0),
+      warn
+    });
+    el.classList.toggle('hidden', !m.visible);
+    el.classList.toggle('warn', m.warn);
+    el.textContent = m.visible ? (m.warn ? '⚠️ ' + m.text : '⏳ ' + m.text) : '';
+  } catch (_) {}
+}
+
 // 9.6: pending-jobben var enbart in-memory → iPhone dödar PWA i bakgrund =
 // permanent tyst dataförlust av offline-skannade artiklar. Persistera bara
 // data-fälten (EXKL _le DOM-nod / _inflight runtime) till localStorage;
@@ -594,9 +646,10 @@ function _persistPending_() {
         retries: v.retries || 0   // v151: eskaleringsräknaren överlever PWA-kill
       });
     }
-    if (!tagLinks.length && !logSingle.length) { localStorage.removeItem(_PENDING_LS_KEY); return; }
+    if (!tagLinks.length && !logSingle.length) { localStorage.removeItem(_PENDING_LS_KEY); _updateSyncBadge_(); return; }
     localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle }));
   } catch (_) {}
+  _updateSyncBadge_();   // U4: badge speglar köerna — samma choke-point som persistering
 }
 function _rehydratePending_() {
   try {
@@ -1307,6 +1360,15 @@ qs('#logToggleBtn')?.addEventListener('click', () => {
   tog.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
   tog.textContent = collapsed ? '▾ Historik' : '▴ Historik';
 });
+
+// U4 (v153): tap på synk-badgen expanderar historiken (#logList) så ⏳/⚠️-
+// raderna blir synliga. Återanvänder toggle-knappens handler (klick) i stället
+// för en parallell expander-väg — men bara när listan är kollapsad.
+qs('#syncBadge')?.addEventListener('click', () => {
+  const list = qs('#logList');
+  const tog = qs('#logToggleBtn');
+  if (list && list.classList.contains('collapsed') && tog) tog.click();
+});
 function markAsDone(e) {
   const icon = e.querySelector(".icon");
   const msg  = e.querySelector(".msg");
@@ -1388,6 +1450,68 @@ function addUndoButton(logEntry, tag, prevOverride) {
     undoBtn.remove();
     undoData.delete(tag);
   }, UNDO_WINDOW_MS);
+}
+
+/* ===== B5 (v153): nyckel-swap S→riktig tagg, med dialog-medveten deferral =====
+ * Swappen (flytta tagCache/metaCache-post + re-keya köade jobb) låg tidigare
+ * inline i Save.linkTag och kördes ALLTID direkt vid server-success. Nu när
+ * inventeringssteget fyrar optimistiskt kan en behållar-dialog vara ÖPPEN på
+ * S-nyckeln när servern bekräftar — en omedelbar swap skulle då lämna dialogens
+ * closure-tag pekande på en raderad nyckel (spökposter vid nästa spar).
+ * Lösning: är dialogen öppen på just den taggen → skjut upp swappen tills
+ * dialogen stängs (resetDialog). Pre-swap-läget är fullt funktionellt: den
+ * skannade taggen ligger som altTag (P0c) och alla writes bär koordinater. */
+const _deferredKeySwaps = new Map();   // oldTag → { newTag, coords }
+function _applySyntheticKeySwap_(oldTag, newTag, coords) {
+  const c = coords || {};
+  const oldData = tagCache.get(oldTag);
+  if (oldData) {
+    tagCache.delete(oldTag);
+    // MERGE över ev. befintlig post på nya nyckeln (15s-pollens initData kan
+    // ha hunnit bygga den från server-data medan swappen var uppskjuten) —
+    // lokala fält (senaste edits) vinner, saknade fält faller tillbaka på server.
+    tagCache.set(newTag, {
+      ...(tagCache.get(newTag) || {}),
+      ...oldData,
+      sheetName: c.sheetName ?? oldData.sheetName ?? null,
+      rowNum: c.rowNum ?? oldData.rowNum ?? null,
+      // P0c: nya taggen är nu PRIMARY — filtrera den ur altTags.
+      altTags: (oldData.altTags || []).filter(t => t !== newTag)
+    });
+    const oldMeta = metaCache.get(oldTag);
+    if (oldMeta) { metaCache.delete(oldTag); metaCache.set(newTag, oldMeta); }
+  }
+  // B4 (v151) + v153: re-keya ALLA köade jobb — updateQueue OCH den just
+  // avsända batchen (_inflightBatch). Batch-payloaden är redan serialiserad
+  // när gasCall startade (fetch body JSON.stringify:as synkront), så servern
+  // ser gamla taggen + koordinater (resolveItem via rowNum, _verifyTagInRow_
+  // 'skip' för S-tagg) — re-keyningen gäller frontendens facit i
+  // _applyBatchResults_ (batch[i].args.tag), där _isJobVerifiedOk_ matchar
+  // den nya taggen mot serverns writtenTag-eko efter att addTag landat.
+  const rekeyed = rekeyPendingJobs(oldTag, newTag, c,
+    updateQueue.concat(_inflightBatch || []), _pendingLogSingle, _pendingTagLinks);
+  if (rekeyed.queue > 0) _persistQueue_();
+  if (rekeyed.singles > 0 || rekeyed.links > 0) _persistPending_();
+}
+// Kör uppskjutna swappar vars dialog inte längre är öppen. Anropas från
+// resetDialog (efter autosave-flushen, så nyss-flushade jobb re-keyas med).
+function _runDeferredKeySwaps_() {
+  if (!_deferredKeySwaps.size) return;
+  for (const [oldTag, d] of [..._deferredKeySwaps.entries()]) {
+    if (currentDialogTag === oldTag) continue;   // fortfarande öppen → vänta
+    _deferredKeySwaps.delete(oldTag);
+    try { _applySyntheticKeySwap_(oldTag, d.newTag, d.coords); } catch (_) {}
+  }
+}
+
+// B5: spårning av optimistiskt fyrade inventeringar per kopplingsförsök, så
+// rejected-grenen i Save.linkTag kan (a) avboka en ännu ej fyrad inventering
+// och (b) retro-varna om inventeringen redan gjordes mot en koppling som inte
+// gick igenom. Nyckel = scannedTag. Rensas vid verified/rejected; lazy-prune.
+const _inventOnLinkState = new Map();  // scannedTag → { fired, cancelled, ts }
+function _pruneInventOnLinkState_() {
+  const cutoff = Date.now() - 3600000;
+  for (const [k, v] of _inventOnLinkState) if (!v || v.ts < cutoff) _inventOnLinkState.delete(k);
 }
 
 /* ===== Save — funktion-grupperat objekt för spara-flöden =====
@@ -1481,36 +1605,23 @@ const Save = {
         if (oldData) {
           // B4 (v151): BEHÅLL koordinaterna vid key-swap. addTag skriver taggen
           // i SAMMA rad (raden flyttas inte — verifierat mot Code.js
-          // addTagToRow som setValue:ar TAG-cellen på angiven rowNum). Det
-          // gamla `sheetName: null, rowNum: null` var okommenterat sedan
-          // initial-committen (8d3737c) utan dokumenterad avsikt, och slog ut
-          // koordinatvägen i backend resolveItem för alla senare writes.
+          // addTagToRow som setValue:ar TAG-cellen på angiven rowNum).
           // target-koordinaterna (de addTag faktiskt skrev mot) prioriteras.
           const _coords = {
             sheetName: sheetName ?? oldData.sheetName ?? null,
             rowNum: rowNum ?? oldData.rowNum ?? null
           };
-          tagCache.delete(currentTag);
-          tagCache.set(res.tag, {
-            ...oldData,
-            sheetName: _coords.sheetName,
-            rowNum: _coords.rowNum,
-            // P0c: scannedTag är nu PRIMARY (res.tag). Filtrera bort den ur
-            // altTags så den inte hamnar både som primary OCH som alt på sig
-            // själv (annars dubbel-hit i lookupByTag.altTags-loop, kosmetiskt).
-            altTags: (oldData.altTags || []).filter(t => t !== res.tag),
-            pendingSync: false
-          });
-          const oldMeta = metaCache.get(currentTag);
-          if (oldMeta) { metaCache.delete(currentTag); metaCache.set(res.tag, oldMeta); }
-          // B4 (v151): re-keya ALLA köade jobb S→res.tag (updateQueue,
-          // _pendingLogSingle, _pendingTagLinks.currentTag) så de varken får
-          // cache-miss i _applyBatchResults_ eller återskapar spöknycklar vid
-          // resync. Map-ändringarna persisteras av _persistPending_ nedan;
-          // updateQueue persisteras här om den rördes.
-          const _rekeyed = rekeyPendingJobs(currentTag, res.tag, _coords,
-            updateQueue, _pendingLogSingle, _pendingTagLinks);
-          if (_rekeyed.queue > 0) _persistQueue_();
+          // Länken är bekräftad → släpp pendingSync på nuvarande nyckel.
+          tagCache.set(currentTag, { ...oldData, pendingSync: false });
+          // B5 (v153): är en dialog öppen på just S-nyckeln (optimistiskt
+          // inventeringssteg, eller Egenskaper-dialogen där taggen skannades)
+          // → skjut upp swappen tills dialogen stängs. Annars swappa direkt
+          // (inkl. re-key av updateQueue + _inflightBatch + pending-maps).
+          if (currentDialogTag === currentTag) {
+            _deferredKeySwaps.set(currentTag, { newTag: res.tag, coords: _coords });
+          } else {
+            _applySyntheticKeySwap_(currentTag, res.tag, _coords);
+          }
         }
       } else {
         const cur = tagCache.get(currentTag);
@@ -1518,6 +1629,7 @@ const Save = {
       }
       _pendingTagLinks.delete(scannedTag); // bekräftat → ej längre pending
       _persistPending_();
+      _inventOnLinkState.delete(scannedTag); // B5: bekräftat → ingen retro-varning
       markAsDone(le);
       return { ok: true, tag: res.tag, alreadyPresent: !!res.alreadyPresent, le };
     }
@@ -1549,6 +1661,18 @@ const Save = {
     if (le) {
       const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
       le.querySelector('.msg').textContent = `${name} – ${failMsg}`;
+    }
+    // B5 (v153): kopplingen avvisades. Avboka en ännu ej fyrad optimistisk
+    // inventering, och retro-varna (⚠️-historikrad, samma kanal som avvisningen
+    // ovan) om inventeringen redan hann göras mot den koppling som nu rullats
+    // tillbaka — datumet/saldot på artikeln kan då behöva kontrolleras.
+    const _ist = _inventOnLinkState.get(scannedTag);
+    if (_ist) {
+      _ist.cancelled = true;
+      _inventOnLinkState.delete(scannedTag);
+      if (_ist.fired) {
+        appendLog(`${name} – inventerades vid en koppling som avvisades, kontrollera artikeln`, currentTag, '⚠️');
+      }
     }
     return { ok: false, res, le, collision: !!(res && res.collision) };
   },
@@ -1608,7 +1732,10 @@ const Save = {
           _persistPending_();
           // Server bekräftad → släpp pendingSync så server blir sanningskälla
           // igen vid nästa poll (spegel av v125 commitContainerDate verified).
-          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+          // B5 (v153): has-guard — vid optimistisk inventering på syntetisk
+          // nyckel kan key-swappen (S→riktig tagg) ha hunnit köras under
+          // flykten; en villkorslös set skulle då återskapa en spökpost.
+          if (tagCache.has(tag)) tagCache.set(tag, { ...tagCache.get(tag), pendingSync: false });
           markAsDone(le); addUndoButton(le, tag, _undoPrev);
         } else if (cls === 'pending-retry') {
           // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
@@ -1642,8 +1769,10 @@ const Save = {
           // inte falskt visar "inventerad idag" (spegel av v125 rejected).
           _pendingLogSingle.delete(tag);
           _persistPending_();
-          metaCache.set(tag, _prevMeta);
-          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+          // B5 (v153): has-guards av samma skäl som verified-grenen — rulla
+          // bara tillbaka om nyckeln fortfarande finns (annars spökpost).
+          if (metaCache.has(tag)) metaCache.set(tag, _prevMeta);
+          if (tagCache.has(tag)) tagCache.set(tag, { ...tagCache.get(tag), pendingSync: false });
           recomputeMaxLast(); renderLists();
           markLogFail(le, new Error((res && res.msg) || 'serverfel'));
         }
@@ -1818,9 +1947,10 @@ let _inflightBatch = null;
 function _persistQueue_() {
   try {
     const all = updateQueue.concat(_inflightBatch || []);
-    if (!all.length) { localStorage.removeItem(_QUEUE_LS_KEY); return; }
+    if (!all.length) { localStorage.removeItem(_QUEUE_LS_KEY); _updateSyncBadge_(); return; }
     localStorage.setItem(_QUEUE_LS_KEY, JSON.stringify(all));
   } catch (_) {}
+  _updateSyncBadge_();   // U4: badge speglar köerna — samma choke-point som persistering
 }
 function _rehydrateQueue_() {
   try {
@@ -2036,6 +2166,9 @@ if (typeof window !== 'undefined' && window.addEventListener) {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { try { _persistQueue_(); } catch (_) {} }
   });
+  // U4 (v153): initiera badgen från rehydrerade köer (persist-choke-points körs
+  // inte vid rehydrering) — pending jobb som överlevt en PWA-kill syns direkt.
+  _updateSyncBadge_();
 }
 
 /* ===== Meta ===== */
@@ -3236,6 +3369,10 @@ function resetDialog(){
     const f = _pendingAutoSaveFlush; _pendingAutoSaveFlush = null;
     try { f(); } catch {}
   }
+  // B5 (v153): kör uppskjutna nyckel-swappar (S→riktig tagg) nu när dialogen
+  // rivs. MÅSTE ligga EFTER autosave-flushen ovan: flushen köar ev. sista jobb
+  // under den gamla S-nyckeln, och swappen re-keyar dem direkt efteråt.
+  _runDeferredKeySwaps_();
   // Bort med stale fokus innan vi bygger nytt innehåll. Begränsa till element INOM dlg —
   // annars blur:as t.ex. searchInput när Koppla-till-befintlig öppnar sökdialogen parallellt
   // med att den föregående dialogen stängs (closeDialog kör resetDialog i RAF).
@@ -3757,6 +3894,11 @@ function prepareContainerDialog(item, tag, opts = {}) {
       startTagScanMode(async (scannedTag) => {
         const targetName = cached?.name || tag;
         setMsg("Sparar tag…", "");
+        // B5 (v153): samma optimistiska fyr som övriga kopplingsvägar. Här är
+        // artikeldialogen dock redan öppen igen (cancelTagScan visar den innan
+        // callbacken körs) → dialogOpen()-guarden undertrycker steget medvetet:
+        // användaren står redan i artikelns dialog och kan inventera där.
+        _fireInventOnLink(tag, targetName, scannedTag);
         const result = await Save.linkTag(scannedTag, {
           name: targetName,
           sheetName: _sn || (cached?.place),
@@ -4307,17 +4449,25 @@ async function fetchOpenFoodFacts(barcode) {
   finally { clearTimeout(timer); }
 }
 
-// P5: efter "Tag kopplad" — om inventOnLink-toggle PÅ, fall igenom till
-// post-skan-flödet (singel: logga direkt; behållare: öppna antal-dialog).
-// finalTag = primärtag i tagCache efter linkTag-success: för non-synth = currentTag,
-// för synth = result.tag (key-swap S* → res.tag har redan skett).
-function _maybeInventOnLink(finalTag, name) {
-  if (!inventOnLink) return;
+// P5 → B5 (v153): "Inventera vid koppling" är nu OPTIMISTISK (designregel D4).
+// Steget fyrar vid kopplingsögonblicket — INTE efter server-svar (som kunde
+// dröja 10-30+ s på GAS-cold-start/mobilnät och aldrig fyrade vid pending-
+// retry). finalTag = artikelns AKTUELLA cache-nyckel vid fyr-ögonblicket:
+// för vanliga artiklar = currentTag, för syntetiska = S-nyckeln (key-swappen
+// skjuts upp medan dialogen är öppen, se _deferredKeySwaps).
+// Både logSingle (pendingSync/retry-kön) och behållar-dialogens saves går via
+// den verifierade kövägen med koordinater → inget tappas vid senare serverfel.
+// Returnerar true om steget faktiskt utfördes (för retro-varningsspårningen).
+function _maybeInventOnLink(finalTag, name, clickTs) {
+  if (!shouldFireInventOnLink(inventOnLink, dialogOpen(), clickTs, Date.now())) return false;
   const cached = tagCache.get(finalTag);
-  if (!cached) return;
+  if (!cached) return false;
   if (cached.type === 'singel') {
-    Save.logSingle(finalTag, { name: cached.name || name });
-    return;
+    // B5-residual (v153): koordinater via buildLogSingleTarget — utan
+    // sheetName/rowNum kan backend inte lösa upp syntetiska nycklar (samma
+    // mönster som skan-grenen, verifierat mot Code.js resolveItem/logTag).
+    Save.logSingle(finalTag, buildLogSingleTarget(cached.name || name, cached));
+    return true;
   }
   if (cached.type === 'behållare') {
     const meta = metaCache.get(finalTag) || {};
@@ -4337,8 +4487,30 @@ function _maybeInventOnLink(finalTag, name) {
       sheetPlace: cached.sheetPlace,
       category: cached.category
     };
+    // Sätt currentDialogTag (som openContainerForTag gör) — krävs för att
+    // Save.linkTag ska kunna skjuta upp key-swappen medan dialogen är öppen,
+    // och ger swipe/autosave-orphan-skydd samma sanning som övriga ingångar.
+    currentDialogTag = finalTag;
     prepareContainerDialog(localItem, finalTag);
+    return true;
   }
+  return false;
+}
+
+// B5: fyr-hjälpare för callsites. Anropas SYNKRONT vid kopplings-klicket
+// (samma ögonblick som "kopplas"-historikraden skapas via Save.linkTag).
+// Kort defer (150 ms) så källdialogens closeDialog-RAF hinner gömma dialogen
+// innan dialogOpen()-guarden utvärderas — annars skulle guarden alltid slå.
+// Guards (dialogOpen + staleness ~5 s från klicket) utvärderas VID FYR.
+function _fireInventOnLink(finalTag, name, scannedTag) {
+  if (!inventOnLink) return;
+  const clickTs = Date.now();
+  const st = { fired: false, cancelled: false, ts: clickTs };
+  if (scannedTag) { _pruneInventOnLinkState_(); _inventOnLinkState.set(scannedTag, st); }
+  setTimeout(() => {
+    if (st.cancelled) return;   // linkTag hann avvisas → fyr inte
+    st.fired = _maybeInventOnLink(finalTag, name, clickTs) === true;
+  }, 150);
 }
 
 function showLinkTagDialog(scannedTag) {
@@ -4349,7 +4521,7 @@ function showLinkTagDialog(scannedTag) {
   const ha = document.getElementById('help-article');
   if (ha) {
     ha.classList.remove('open');
-    ha.innerHTML = 'Den här streckkoden känner appen inte igen.<br><b>Använd förslag</b> = skapa ny artikel med namn från OpenFoodFacts.<br><b>Skapa ny artikel</b> = fyll i alla fält manuellt.<br><b>Koppla till befintlig</b> = sök upp en artikel du redan har och koppla denna kod till den.<br>Om appen visar "Du har redan liknande" — tryck en av dem för snabb koppling.';
+    ha.innerHTML = 'Den här streckkoden känner appen inte igen.<br><b>Använd förslag</b> = skapa ny artikel med namn från OpenFoodFacts.<br><b>Skapa ny artikel</b> = fyll i alla fält manuellt.<br><b>Koppla till befintlig</b> = sök upp en artikel du redan har och koppla denna kod till den.<br>Om appen visar "Du har redan liknande" — tryck en av dem för snabb koppling.<br>Är <b>Inventera vid koppling</b> påslaget i inställningarna öppnas inventeringssteget direkt när du kopplat.';
   }
   const offUrl = `https://se.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(scannedTag)}&search_simple=1&action=process`;
   dlgInfo.innerHTML = `Tag <b>${esc(scannedTag)}</b> hittades inte.<div id="offResult" data-tag="${esc(scannedTag)}" style="margin-top:10px;font-size:0.9em;opacity:0.85"><span class="aiSpinner"></span> Söker på OpenFoodFacts…</div>`;
@@ -4430,6 +4602,9 @@ function showLinkTagDialog(scannedTag) {
         // Bug 2.7: visa INTE "Tag kopplad" före svar — banner får ej ljuga
         // offline. Neutral progress; definitivt utfall efter await.
         show('Kopplar tag…');
+        // B5 (v153): OFF-vägen saknade inventeringssteget helt — nu samma
+        // optimistiska beteende som övriga kopplingsvägar (fyr vid koppling).
+        _fireInventOnLink(matchTag, matchName, scannedTag);
         const result = await Save.linkTag(scannedTag, {
           name: matchName,
           sheetName,
@@ -4621,11 +4796,14 @@ function openLinkSearchDialog(tagToLink) {
           show("Kopplar tag…");
           renderLists();
           cooldown(tagToLink);
+          // B5 (v153): inventeringssteget fyrar optimistiskt VID kopplingen
+          // (designregel D4) — inte efter server-svar. finalTag = tag
+          // (artikelns primärnyckel, oförändrad för icke-syntetiska).
+          _fireInventOnLink(tag, name, tagToLink);
           const result = await Save.linkTag(tagToLink, target);
           renderLists();
           if (result.ok) {
             show(`Tag kopplad till "${name}"`, "ok");
-            _maybeInventOnLink(tag, name);
           } else if (result.pending) {
             show("Ingen kontakt — sparas när du är online igen", "warn");
           } else if (result.collision) {
@@ -4637,13 +4815,16 @@ function openLinkSearchDialog(tagToLink) {
           }
           return;
         }
-        // Mönster B: syntetisk artikel kräver server-svar för key-swap
+        // Mönster B: syntetisk artikel — key-swap sker vid server-svar, men
+        // B5 (v153): inventeringssteget fyrar optimistiskt på S-nyckeln redan
+        // vid kopplingen. Är dialogen öppen när servern bekräftar skjuts
+        // swappen upp (_deferredKeySwaps); köade jobb re-keyas då efteråt.
         show("Kopplar tag…");
+        _fireInventOnLink(tag, name, tagToLink);
         const result = await Save.linkTag(tagToLink, target);
         if (result.ok) {
           show(`Tag kopplad till "${name}"`, "ok");
           renderLists();
-          _maybeInventOnLink(result.tag, name);
         } else if (result.pending) {
           show("Ingen kontakt — sparas när du är online igen", "warn");
           renderLists();

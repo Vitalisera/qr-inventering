@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=24">
+  <link rel="stylesheet" href="style.css?v=25">
 </head>
 
 <body>
@@ -40,6 +40,7 @@
   <!-- STATUS + LOGG -->
   <section id="statusContainer">
     <div id="status">Välj artikel i listan</div>
+    <button id="syncBadge" type="button" class="hidden" aria-live="polite" aria-label="Visa vad som väntar på att sparas"></button>
     <button id="logToggleBtn" type="button" class="hidden" aria-expanded="false" aria-controls="logList" aria-label="Visa eller dölj historik">▾ Historik</button>
     <div id="logList" class="collapsed"></div>
   </section>
@@ -56,6 +57,7 @@
         <b>Ej inventerat</b> = övriga artiklar.<br>
         <b>Röd bakgrund</b> = mängden understiger "ska finnas under kurs".<br>
         <b>Gul markering</b> = ändring väntar på synk mot Sheetet.<br>
+        Den gula statusraden under kameran (t.ex. "⏳ 2 ändringar synkas") visar hur mycket som väntar; tryck på den för att öppna historiken.<br>
         Tryck på en rad för att öppna artikeln. Tryck på rubrikerna för att byta ordning.
       </div>
       <div id="listInventerat" class="list"></div>
@@ -125,6 +127,7 @@
     <b>Visa enhet istället för datum</b> byter höger-kolumnen mot enheten (st, kg, l) — användbart vid t.ex. matbeställning.<br>
     <b>Dölj artiklar med saldo 0</b> döljer allt som är slut. Kombinera med plats=Kursgården för att se all mat som finns.<br>
     <b>Dölj Min-kolumnen</b> kompakterar listan när min-värdet inte är intressant (t.ex. vid matbeställning).<br>
+    <b>Inventera vid koppling</b> öppnar inventeringssteget direkt när du kopplar en kod till en artikel, så att du slipper skanna om den.<br>
     <b>🖨️ Skriv ut</b> öppnar utskriftsdialogen. Välj "Spara som PDF" som destination för att få en PDF-fil.<br>
     <b>Visa från följande flikar</b> styr vilka flikar som ska synas; siffran (inv/total) visar hur långt du kommit per flik.<br>
     <b>Visa ikoner</b> väljer vilka symboler som ritas efter artikelnamnet: 🏷️ tag, • singel, ℹ️ kommentar.<br>
@@ -182,7 +185,7 @@
     <section class="qr-block">
       <h3 class="qr-h"><span class="qr-n">3</span> Listorna och att spara</h3>
       <p class="qr-p"><b>Inventerat</b> visar allt som rörts de senaste fem dagarna, <b>Ej inventerat</b> visar resten. Röd bakgrund betyder att saldot är lägre än vad som ska finnas under kurs.</p>
-      <p class="qr-p">Allt sparas först på din telefon (gul markering) och synkas sedan automatiskt till Google-arket (☑️). Det fungerar även utan nät och överlever att appen stängs.</p>
+      <p class="qr-p">Allt sparas först på din telefon (gul markering) och synkas sedan automatiskt till Google-arket (☑️). En liten gul statusrad under kameran visar när något fortfarande sparas. Det fungerar även utan nät och överlever att appen stängs.</p>
     </section>
 
     <p class="qr-safe">Du kan inte råka förstöra något. Varje ändring loggas med namn och datum, och du kan alltid rätta den igen.</p>
@@ -228,7 +231,8 @@
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">4</span> När koden är okänd</h3>
       <p class="qr-p">Om koden inte finns i arket sedan tidigare öppnas en dialog där du kan <b>skapa en ny artikel</b>. Du fyller i benämning, typ, plats, enhet och mängd. För matvaror med streckkod slår appen dessutom upp namnet automatiskt via OpenFoodFacts, så du slipper skriva.</p>
-      <p class="qr-p">Ibland vill du hellre <b>koppla den skannade koden till en artikel som redan finns</b> i listan, i stället för att skapa en dubblett. Öppna den artikeln (via sök eller listan), tryck på kugghjulet <b>⚙️ Egenskaper</b> och skanna koden där, så fästs etiketten på rätt rad.</p>
+      <p class="qr-p">Ibland vill du hellre <b>koppla den skannade koden till en artikel som redan finns</b> i listan, i stället för att skapa en dubblett. Tryck <b>Koppla till befintlig</b> och sök upp artikeln, eller öppna artikeln via sök eller listan, tryck på kugghjulet <b>⚙️ Egenskaper</b> och skanna koden där, så fästs etiketten på rätt rad.</p>
+      <p class="qr-p">Har du slagit på <b>Inventera vid koppling</b> i inställningarna kommer inventeringssteget direkt när du kopplat: en singel registreras på en gång, och för en behållare öppnas mängdrutan. Du behöver alltså inte skanna om artikeln efteråt. Sparandet sköts som vanligt i bakgrunden, och skulle kopplingen mot förmodan avvisas av arket säger historiken till så att du kan kontrollera artikeln.</p>
     </section>
 
     <section class="qr-sec">
@@ -268,6 +272,7 @@
         <li><b>Gruppera efter kategori.</b> Delar upp listan i block per kategori.</li>
         <li><b>Visa enhet i stället för datum.</b> Byter högerkolumnen mot enheten (st, kg, l), praktiskt vid till exempel matbeställning.</li>
         <li><b>Dölj artiklar med saldo 0</b> och <b>Dölj min-kolumnen</b> gör listan renare i lägen där de siffrorna inte är intressanta.</li>
+        <li><b>Inventera vid koppling.</b> När du kopplar en kod till en artikel öppnas inventeringssteget direkt efteråt, så att du slipper skanna om artikeln.</li>
         <li><b>Visa ikoner.</b> Väljer vilka symboler som ritas efter namnet: 🏷️ tag, • singel, ℹ️ kommentar.</li>
       </ul>
       <p class="qr-p">Tryck <b>Använd</b> för att spara valen, eller <b>Välj alla</b> för att nollställa flikvalet.</p>
@@ -287,6 +292,7 @@
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">13</span> Allt sparas automatiskt</h3>
       <p class="qr-p">Appen är byggd för att fungera även med dålig eller ingen uppkoppling. Varje ändring sparas först på din telefon och visas med en <b>gul markering</b>. Så snart det går synkas den till Google-arket, och markeringen blir en <b>☑️</b>.</p>
+      <p class="qr-p">Under kameran finns en liten <b>gul statusrad</b> som visar när något fortfarande håller på att sparas, till exempel <b>⏳ 2 ändringar synkas</b>. Tryck på den för att öppna historiken och se exakt vad som väntar. Statusraden försvinner när allt är bekräftat, och blir <b>röd</b> om något efter många försök inte gått att spara, då bör du skanna om den artikeln.</p>
       <p class="qr-p">Du behöver inte trycka Spara-till-servern någonstans. Stänger du appen mitt i så ligger ändringarna kvar och skickas iväg nästa gång du är online.</p>
     </section>
 
@@ -337,7 +343,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=152"></script>
+  <script src="app.js?v=153"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

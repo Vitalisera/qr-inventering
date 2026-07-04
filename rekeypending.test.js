@@ -108,6 +108,34 @@ const CO = { sheetName: 'Verktygslåda', rowNum: 12 };
   eq(m.has('111222333'), true, 'pendingTagLinks: map-nyckeln (scannedTag) oförändrad');
 }
 
+// --- v153: _inflightBatch re-keyas via updateQueue.concat(_inflightBatch) ---
+// Save.linkTag skickar den konkatenerade arrayen. concat kopierar ARRAYEN men
+// inte jobbobjekten — mutationerna ska därför landa i originalobjekten i BÅDE
+// updateQueue och _inflightBatch (så _applyBatchResults_ facit, batch[i].args.tag,
+// matchar serverns writtenTag-eko efter att addTag landat). Payloaden mot
+// servern är redan serialiserad när gasCall startade och påverkas inte.
+{
+  const updateQueue = [
+    { fnName: 'updateMeta', args: { tag: S, comment: 'köad', sheetName: null, rowNum: null } }
+  ];
+  const inflight = [
+    { fnName: 'updateCount', args: { tag: S, newCount: 7, sheetName: null, rowNum: null } },
+    { fnName: 'updateMeta',  args: { tag: 'ANNAN', comment: 'x', sheetName: 'A', rowNum: 1 } }
+  ];
+  const n = rekeyPendingJobs(S, T, CO, updateQueue.concat(inflight), new Map(), new Map());
+  eq(n.queue, 2, 'concat: ett kö-jobb + ett inflight-jobb re-keyade');
+  eq(updateQueue[0].args.tag, T, 'concat: originalobjektet i updateQueue muterat');
+  eq(inflight[0].args, { tag: T, newCount: 7, sheetName: 'Verktygslåda', rowNum: 12 },
+     'concat: originalobjektet i _inflightBatch muterat + koordinater ifyllda');
+  eq(inflight[1].args.tag, 'ANNAN', 'concat: andra taggar i inflight orörda');
+}
+{
+  // Tom/null _inflightBatch: samma callsite-mönster (concat(_inflightBatch || []))
+  const q = [{ fnName: 'updateMeta', args: { tag: S, sheetName: null, rowNum: null } }];
+  const n = rekeyPendingJobs(S, T, CO, q.concat(null || []), new Map(), new Map());
+  eq(n.queue, 1, 'concat med null-inflight (|| []) → kö-jobbet re-keyas ändå');
+}
+
 // --- Felfall: tomt/null kraschar inte, no-op vid samma tagg ---
 {
   eq(rekeyPendingJobs(S, T, null, null, null, null), { queue: 0, singles: 0, links: 0 },

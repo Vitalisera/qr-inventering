@@ -1,6 +1,16 @@
 {
-  "latest": 152,
+  "latest": 153,
   "versions": [
+    {
+      "version": 153,
+      "date": "2026-07-04",
+      "notes": [
+        "Har du slagit på Inventera vid koppling kommer inventeringsfrågan nu direkt när du kopplar en tagg, inte en lång stund senare. Det gäller dessutom alla sätt att koppla, även förslagen från OpenFoodFacts.",
+        "Ny liten statusrad under kameran visar när något fortfarande håller på att sparas, till exempel 2 ändringar synkas. Tryck på den för att öppna historiken. Den blir röd om något inte gått att spara.",
+        "Skulle en koppling avvisas i efterhand säger historiken nu till om en inventering hann göras mot den, så att du kan kontrollera artikeln.",
+        "Tydligare text i artikeldialogen: rubrikerna Föregående inventering och Ny inventering har fått bättre kontrast och är lättare att läsa."
+      ]
+    },
     {
       "version": 152,
       "date": "2026-07-04",

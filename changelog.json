@@ -1,6 +1,16 @@
 {
-  "latest": 154,
+  "latest": 155,
   "versions": [
+    {
+      "version": 155,
+      "date": "2026-07-05",
+      "notes": [
+        "Appen hjälper nu till med enheter. Enhetslistan är sorterad i vikt, volym och styck, så det är lättare att hitta rätt.",
+        "Byter du enhet på en artikel, till exempel från kg till g, erbjuder appen sig att räkna om saldot åt dig: 7,2 kg blir 7 200 g. Du väljer själv om siffran ska räknas om eller behållas.",
+        "Ser ett nytt saldo orimligt stort eller litet ut jämfört med förra gången, frågar appen en extra gång innan det sparas. Så fastnar en felskrivning innan den hamnar i arket.",
+        "Väljer du en förpackningsenhet som förp eller paket tipsar appen om att skriva mängden per styck i kommentaren, och en helt ny enhet ber den dig först bekräfta."
+      ]
+    },
     {
       "version": 154,
       "date": "2026-07-05",

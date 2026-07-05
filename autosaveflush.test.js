@@ -219,5 +219,111 @@ console.log("autosaveflush.test.js — bug 5.2 (tyst batch-förlust vid swipe)\n
   ok(app.writes.length === 1, "ingen extra flush-skrivning efter att timern redan committat (ingen dubbelfyrning)");
 }
 
+// --- Test 5: F3 v155 (review-blocker 1) — ny enhet-gatens åter-armering ---
+// app.js-sekvensen som var trasig: "+ Ny enhet" står OBEKRÄFTAD när 300ms-
+// debouncen fyrar. Timern har då redan FÖRBRUKAT _pendingAutoSaveFlush
+// (nollas i scheduleAutoSave-timeouten FÖRE autoSaveExtra-anropet), och
+// gate-grenen returnerar utan commit. Utan åter-armering i gate-grenen har
+// en stängning >300ms senare inget flush-handtag → enheten OCH hela övriga
+// payloaden (kommentar/min-mängd) tappas tyst. Fixen (app.js ~4273):
+// gate-grenen sätter _pendingAutoSaveFlush = flushAutoSave innan return.
+// Harnessen nedan speglar app.js-mekaniken: gate före write, isFlush-bypass,
+// re-arm av gaten när texten redigeras efter bekräftelse (review-minor).
+{
+  console.log("\nF3 v155 — ny enhet-gate × flush-handtag (review-blocker 1):");
+
+  const makeGatedCard = (rearmInGate) => {
+    const app = makeApp();
+    const tag = "8";
+    app.openCard(tag);              // sätter currentDialogTag via resetDialog
+    app.liveDom[tag] = { minQty: 0 };
+    let _autoSaveTimer = null;
+    let unitNewConfirmed = false;
+    const state = { unit: "", comment: "" };
+
+    const autoSaveExtra = (isFlush) => {
+      const d = autoSaveCommitDecision(tag, app.currentDialogTag, isFlush === true);
+      if (!d.commit) return;
+      // Gate-grenen (app.js ~4273): obekräftad ny enhet + interaktiv save →
+      // ingen commit. MED fixen åter-armas handtaget; UTAN fixen inte.
+      if (state.unitIsNew && state.unit && !unitNewConfirmed && isFlush !== true) {
+        if (rearmInGate) app._pendingAutoSaveFlush = flushAutoSave;
+        return;
+      }
+      app.writes.push({ tag, unit: state.unit, comment: state.comment });
+    };
+    const flushAutoSave = () => {
+      if (_autoSaveTimer) { app._cancel(_autoSaveTimer); _autoSaveTimer = null; }
+      autoSaveExtra(true);
+    };
+    const scheduleAutoSave = () => {
+      if (_autoSaveTimer) app._cancel(_autoSaveTimer);
+      app._pendingAutoSaveFlush = flushAutoSave;
+      _autoSaveTimer = app._after(300, () => { app._pendingAutoSaveFlush = null; autoSaveExtra(false); });
+    };
+
+    return {
+      app,
+      typeNewUnit(v) { state.unitIsNew = true; state.unit = v; if (unitNewConfirmed) unitNewConfirmed = false; scheduleAutoSave(); },
+      editComment(v) { state.comment = v; scheduleAutoSave(); },
+      confirmNewUnit() { unitNewConfirmed = true; scheduleAutoSave(); },
+      close() { app.closeDialog(); app.resetDialog(null); },
+    };
+  };
+
+  // FAILING-BEFORE: utan åter-armering i gaten tappas allt vid sen stängning
+  {
+    const c = makeGatedCard(false);
+    c.typeNewUnit("hinkar");
+    c.editComment("halv pall kvar");
+    c.app._tick(300);                 // debounce fyrar: handtag förbrukas, gate skippar
+    ok(c.app.writes.length === 0, "PRE-FIX: gated debounce committar inget (väntat)");
+    ok(c.app._pendingAutoSaveFlush === null, "PRE-FIX: handtaget är FÖRBRUKAT efter timern");
+    c.close();                        // >300ms efter sista input
+    ok(c.app.writes.length === 0, "PRE-FIX: stängning >300ms senare → enhet + kommentar TYST TAPPADE");
+  }
+
+  // PASSING-AFTER: gate-grenen åter-armar handtaget → teardown committar allt
+  {
+    const c = makeGatedCard(true);
+    c.typeNewUnit("hinkar");
+    c.editComment("halv pall kvar");
+    c.app._tick(300);                 // debounce fyrar: gate skippar MEN åter-armar
+    ok(c.app.writes.length === 0, "gated debounce committar inget (gaten håller)");
+    ok(c.app._pendingAutoSaveFlush !== null, "FIX: gate-grenen ÅTER-ARMAR flush-handtaget");
+    c.close();
+    ok(c.app.writes.length === 1 && c.app.writes[0].unit === "hinkar" && c.app.writes[0].comment === "halv pall kvar",
+       "FIX: sen stängning flushar ÄNDÅ — enhet + hela payloaden sparad (isFlush bypassar gaten)");
+  }
+
+  // Stängning INOM 300ms fungerade redan (handtaget ej förbrukat) — regressionsvakt
+  {
+    const c = makeGatedCard(true);
+    c.typeNewUnit("hinkar");
+    c.app._tick(200);
+    c.close();
+    ok(c.app.writes.length === 1 && c.app.writes[0].unit === "hinkar",
+       "stängning inom 300ms committar (som före fixen) — ingen regression");
+    c.app._tick(500);
+    ok(c.app.writes.length === 1, "ingen dubbelskrivning från död timer");
+  }
+
+  // Bekräftad enhet → normal debounce-commit; redigering EFTERÅT re-armar gaten (review-minor)
+  {
+    const c = makeGatedCard(true);
+    c.typeNewUnit("hinkar");
+    c.confirmNewUnit();
+    c.app._tick(300);
+    ok(c.app.writes.length === 1 && c.app.writes[0].unit === "hinkar",
+       "bekräftad ny enhet committas av vanliga debouncen");
+    c.typeNewUnit("hinkar XL");       // redigering efter bekräftelse → gaten re-armas
+    c.app._tick(300);
+    ok(c.app.writes.length === 1, "MINOR-FIX: omskriven enhet autosparas INTE obekräftad (gaten re-armad)");
+    c.close();
+    ok(c.app.writes.length === 2 && c.app.writes[1].unit === "hinkar XL",
+       "…men teardown-flushen committar den omskrivna enheten (mjuk gate)");
+  }
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

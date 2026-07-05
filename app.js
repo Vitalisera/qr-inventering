@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 154;
+const APP_VERSION = 155;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -3389,7 +3389,7 @@ function resetDialog(){
   // kvar dataset._wasDisabled och är fortfarande disablade. Återställ dem
   // vid varje dialog-uppbyggnad så ett läckt fruset state aldrig överlever.
   unfreezeStale(dlg);
-  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";{const _mq=qs('#manualMinQty');if(_mq)_mq.value="";}if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip,.commentBlock').forEach(el=>el.remove());
+  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";{const _mq=qs('#manualMinQty');if(_mq)_mq.value="";}if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip,.commentBlock,.qtyConfirm').forEach(el=>el.remove());
 }
 
 /* ===== Behållare-dialog ===== */
@@ -3556,7 +3556,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // sätter den (openContainerForTag, swipe, koppla-flödet) sätter SAMMA tag
   // före anropet → redundant men ofarligt.
   currentDialogTag = tag;
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade saldo, person och datum. Under <b>Ny inventering</b> registrerar du dagens.<br>Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner. Steget följer siffrans decimaler: 3 blir 4, men 0,5 blir 0,6. Du kan också tappa siffran och skriva in en helt ny total.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade saldo, person och datum. Under <b>Ny inventering</b> registrerar du dagens.<br>Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner. Steget följer siffrans decimaler: 3 blir 4, men 0,5 blir 0,6. Du kan också tappa siffran och skriva in en helt ny total.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).<br>Byter du enhet mellan till exempel kg och g erbjuder appen att räkna om saldot. Ser ett nytt saldo orimligt stort eller litet ut jämfört med förra gången frågar appen en extra gång innan det sparas.';}
 
   const editMode = opts.editMode === true;
   // Reset per dialog: editMode (Egenskaper från singel) öppnar expanderat,
@@ -3801,13 +3801,13 @@ function prepareContainerDialog(item, tag, opts = {}) {
     `<option value="${esc(c)}"${c === currentCat ? " selected" : ""}>${esc(c)}</option>`
   ).join('');
 
-  // Unika enheter för enhets-select.
+  // Unika enheter för enhets-select. F3 (v155): grupperade per familj
+  // (Vikt/Volym/Styck/Övriga) via buildUnitOptionsHTML — innehållet är
+  // fortfarande exakt de enheter som förekommer i datat (collectUnits).
   const currentUnit = (dialogItem.unit || "").trim();
   const unitList = collectUnits();
   if (currentUnit && !unitList.includes(currentUnit)) unitList.unshift(currentUnit);
-  const unitOptions = unitList.map(u =>
-    `<option value="${esc(u)}"${u === currentUnit ? " selected" : ""}>${esc(u)}</option>`
-  ).join('');
+  const unitOptions = buildUnitOptionsHTML(unitList, currentUnit);
 
   // Unika platser (kolumn B) för samma flik.
   const placeSetEdit = new Set();
@@ -3852,6 +3852,18 @@ function prepareContainerDialog(item, tag, opts = {}) {
       <option value="__new__">+ Ny enhet…</option>
     </select>
     <input id="unitNew" type="text" placeholder="Ange ny enhet" style="display:none;margin-top:4px">
+    <div id="unitNewGate" class="unitNote" style="display:none">
+      Ny enhet gör det svårare att tolka saldot senare. Finns ingen passande i listan?
+      <button id="unitNewUseBtn" class="btn" type="button">Använd nya enheten</button>
+    </div>
+    <div id="unitConvOffer" class="unitConv" style="display:none">
+      <div id="unitConvText"></div>
+      <div class="unitConvBtns">
+        <button id="unitConvNo" class="btn cancel" type="button">Nej, behåll siffran</button>
+        <button id="unitConvYes" class="btn" type="button">Ja, räkna om</button>
+      </div>
+    </div>
+    <div id="unitHint" class="unitNote" style="display:none"></div>
 
     <label>Typ</label>
     <select id="typeEdit">
@@ -3925,14 +3937,109 @@ function prepareContainerDialog(item, tag, opts = {}) {
     });
   }
 
-  // Enhet: visa ny-textinput när "+ Ny enhet…" valts
+  // F3 (v155): mjuk gate för "+ Ny enhet". Funktionsnivå-scopad så BÅDE
+  // unitSel-blocket nedan och autoSaveExtra (~4230) ser samma flagga.
+  let unitNewConfirmed = false;
+
+  // Enhet: visa ny-textinput när "+ Ny enhet…" valts.
+  // F3 (v155): dessutom enhetsgovernance — mjuk gate för ny enhet (lager 1),
+  // behållarenhets-avrådan (lager 2 light), omräkningserbjudande inom samma
+  // mätfamilj + varning vid familjebyte (lager 3). Allt klient-side; själva
+  // enhets-committen går oförändrat via autoSaveExtra → queueUpdate.
   const unitSel = extra.querySelector("#unitEdit");
   const unitNew = extra.querySelector("#unitNew");
   if (unitSel && unitNew) {
+    const unitNewGate = extra.querySelector("#unitNewGate");
+    const unitNewUseBtn = extra.querySelector("#unitNewUseBtn");
+    const unitConvOffer = extra.querySelector("#unitConvOffer");
+    const unitConvText = extra.querySelector("#unitConvText");
+    const unitConvYes = extra.querySelector("#unitConvYes");
+    const unitConvNo = extra.querySelector("#unitConvNo");
+    const unitHint = extra.querySelector("#unitHint");
+    // Senast sedda enheten — jämförelsepunkt för familje-/omräkningslogiken.
+    let unitPrev = currentUnit;
+
+    // "Ja, räkna om": konvertera saldot via EXAKT samma optimistiska mönster
+    // och persisterade kö-väg som saveBtn-saldovägen (~4090) — synk-kärnan
+    // orörd. Servern stämplar datum+användare i samma updateCount, så den
+    // lokala spegeln gör detsamma.
+    const applyUnitConversion = (newQty, newUnit) => {
+      setLocalMeta(tag, { qty: newQty, lastMs: Date.now(), user: userName });
+      tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: true });
+      recomputeMaxLast(); renderLists();
+      dialogItem.qty = newQty;
+      const prevQtyEl = dlgInfo.querySelector('.invPrev .metaQty');
+      if (prevQtyEl) prevQtyEl.textContent = `${formatQtySv(newQty)} ${newUnit}`;
+      if (!isSingle) dlgInput.value = String(newQty).replace('.', ',');
+      setMsg(`Saldot omräknat: ${formatQtySv(newQty)} ${newUnit}`, "ok");
+      queueUpdate('updateCount', { tag, newCount: newQty, userName, sheetName: _sn, rowNum: _rn });
+    };
+
+    const evalUnitChange = (newUnitRaw) => {
+      if (unitConvOffer) unitConvOffer.style.display = "none";
+      if (unitHint) { unitHint.style.display = "none"; unitHint.textContent = ""; }
+      const nu = (newUnitRaw || "").trim();
+      if (!nu || nu === unitPrev) return;
+      const old = unitPrev;
+      unitPrev = nu;
+      const hints = [];
+      // Lager 3: samma mätfamilj (massa/volym) + numeriskt saldo > 0 → erbjud omräkning.
+      const curQty = Number(metaCache.get(tag)?.qty);
+      const conv = (isFinite(curQty) && curQty > 0) ? convertQty(curQty, old, nu) : null;
+      if (conv != null && unitConvOffer && unitConvText && unitConvYes && unitConvNo) {
+        unitConvText.textContent = `Räkna om saldot? ${formatQtySv(curQty)} ${old} = ${formatQtySv(conv)} ${nu}`;
+        unitConvOffer.style.display = "block";
+        unitConvYes.onclick = () => { unitConvOffer.style.display = "none"; applyUnitConversion(conv, nu); };
+        unitConvNo.onclick = () => { unitConvOffer.style.display = "none"; };
+      } else if (old && unitFamily(old) !== unitFamily(nu)) {
+        // Familjebyte (kg→l, kg→förp, till/från okänd): tillåtet, men saldot
+        // räknas inte om — säg det så siffran inte feltolkas.
+        hints.push("Enheterna mäter olika saker, saldot räknas inte om.");
+      }
+      // Lager 2 light: behållarenhet utan mängdinformation → mjuk avrådan.
+      if (isContainerUnit(nu)) {
+        hints.push(`En enhet som "${nu}" säger inte hur mycket varje förpackning rymmer. Skriv gärna mängden per styck i kommentaren, så blir saldot lättare att tolka senare.`);
+      }
+      if (hints.length && unitHint) {
+        unitHint.textContent = hints.join(" ");
+        unitHint.style.display = "block";
+      }
+    };
+
     unitSel.addEventListener("change", () => {
       const isNew = unitSel.value === "__new__";
       unitNew.style.display = isNew ? "block" : "none";
-      if (isNew) { unitNew.value = ""; unitNew.focus(); }
+      if (unitNewGate) unitNewGate.style.display = isNew ? "block" : "none";
+      if (isNew) {
+        unitNewConfirmed = false;
+        unitNew.value = "";
+        unitNew.focus();
+        if (unitConvOffer) unitConvOffer.style.display = "none";
+        if (unitHint) { unitHint.style.display = "none"; unitHint.textContent = ""; }
+      } else {
+        evalUnitChange(unitSel.value);
+      }
+    });
+    if (unitNewUseBtn) {
+      unitNewUseBtn.onclick = () => {
+        const typed = (unitNew.value || "").trim();
+        if (!typed) { unitNew.focus(); return; }
+        unitNewConfirmed = true;
+        if (unitNewGate) unitNewGate.style.display = "none";
+        evalUnitChange(typed);
+        scheduleAutoSave();
+      };
+    }
+    // Review-fix (minor): redigeras texten EFTER "Använd nya enheten" måste
+    // gaten armas om — annars autosparas den OMSKRIVNA enheten obekräftad.
+    // Speglar ny artikel-dialogens oninput-mönster. Registreras FÖRE
+    // scheduleAutoSave-input-listenern (loopen längre ner) så re-armeringen
+    // hinner före debounce-schemaläggningen.
+    unitNew.addEventListener("input", () => {
+      if (unitNewConfirmed) {
+        unitNewConfirmed = false;
+        if (unitNewGate) unitNewGate.style.display = "block";
+      }
     });
   }
 
@@ -4066,9 +4173,41 @@ function prepareContainerDialog(item, tag, opts = {}) {
       closeDialog();
       return;
     }
-    // Saldo ÄNDRAT: spara ev. även datum-ändring (no-op om redan committat).
-    if (containerDateInput) commitContainerDate(containerDateInput.value);
+    // F3 lager 4 (v155): rimlighetsspärr FÖRE all commit (datum + saldo +
+    // queueUpdate — synk-kärnan orörd). Avviker nya saldot mer än 100× från
+    // förra (båda > 0) visas ett bekräftelsesteg med båda värdena i stället
+    // för att spara direkt. "Ja, spara" kör exakt samma commit-väg; "Ändra"
+    // lämnar allt ocommittat och fokuserar fältet. 0→stort och tomt→värde
+    // spärras INTE (första inventering är legitim) — se isImplausibleQtyChange.
+    const commitCount = () => {
+      // Spara ev. även datum-ändring (no-op om redan committat).
+      if (containerDateInput) commitContainerDate(containerDateInput.value);
+      doCommitCount();
+    };
+    if (isImplausibleQtyChange(oldCount, newCount)) {
+      dlg.querySelectorAll('.qtyConfirm').forEach(e => e.remove());
+      const u = (metaCache.get(tag)?.unit || dialogItem.unit || "").trim();
+      const box = document.createElement('div');
+      box.className = 'qtyConfirm';
+      box.innerHTML = `
+        <div class="qtyConfirmText">Nytt saldo: <b>${esc(formatQtySv(newCount))}${u ? ' ' + esc(u) : ''}</b>. Förra: <b>${esc(formatQtySv(oldCount))}${u ? ' ' + esc(u) : ''}</b>. Stämmer det?</div>
+        <div class="qtyConfirmBtns">
+          <button type="button" class="btn cancel" id="qtyConfirmEdit">Ändra</button>
+          <button type="button" class="btn" id="qtyConfirmYes">Ja, spara</button>
+        </div>`;
+      dlgBtns.parentNode.insertBefore(box, dlgBtns);
+      box.querySelector('#qtyConfirmYes').onclick = () => { box.remove(); commitCount(); };
+      box.querySelector('#qtyConfirmEdit').onclick = () => { box.remove(); dlgInput.focus(); };
+      setMsg("Kontrollera saldot innan det sparas.", "warn");
+      return;
+    }
+    commitCount();
+    return;
 
+    // doCommitCount är en function declaration och HOISTAS — därför kan
+    // commitCount ovan anropa den trots att definitionen står efter return.
+    // Innehållet är den ORÖRDA v152-saldovägen (flyttad, inte ändrad).
+    function doCommitCount() {
     // #2 (synk-audit 2026-06-30): saldot saknade pendingSync (klobbades av 15s-
     // pollens initData som snapshotar BARA pendingSync-rader), körde bare gasCall
     // UTAN retry, visade success FÖRE serversvar, och assertOk-glipan (#4) lät
@@ -4089,6 +4228,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     closeDialog();
 
     queueUpdate('updateCount', { tag, newCount, userName, sheetName: _sn, rowNum: _rn });
+    }
   };
 
   // Auto-save vid blur/change — moderna apps (Notion, Linear) auto-sparar
@@ -4137,6 +4277,20 @@ function prepareContainerDialog(item, tag, opts = {}) {
     // skickar vi tomt värde direkt vid select-change innan användaren
     // hunnit skriva in det nya namnet.
     if (unitRaw === "__new__" && !unit) return;
+    // F3 (v155): mjuk gate — interaktiva saves väntar tills den nya enheten
+    // uttryckligen bekräftats ("Använd nya enheten"). Teardown-flushen
+    // (isFlush) committar ÄNDÅ, så en ifylld men obekräftad enhet tappas
+    // aldrig vid stängning/kortbyte — gaten är mjuk, inte hård.
+    // Review-fix (blocker 1): timern har redan FÖRBRUKAT _pendingAutoSaveFlush
+    // (nollas i scheduleAutoSave-timeouten FÖRE detta anrop) — utan åter-
+    // armering här skulle en stängning >300ms efter sista tangenttrycket sakna
+    // flush-handtag och tappa HELA payloaden (enhet + kommentar/min-mängd)
+    // tyst. Säkert: gaten ligger efter autoSaveCommitDecision, så vi vet att
+    // closure-dialogen fortfarande är den levande (ingen stale re-arm).
+    if (unitRaw === "__new__" && unit && !unitNewConfirmed && isFlush !== true) {
+      _pendingAutoSaveFlush = flushAutoSave;
+      return;
+    }
     if (catRaw === "__new__" && !category) return;
     if (placeRaw === "__new__" && !sheetPlace) return;
 
@@ -4916,6 +5070,104 @@ function populatePlaceDropdown(){
   const places=[...placeSet].sort((a,b)=>a.localeCompare(b,'sv'));
   for(const p of places){const o=document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o);}
 }
+/* ===== F3 (v155): Enhetsgovernance — familjetabell, konvertering, rimlighet =====
+ * Kanonisk familjetabell byggd från de enheter som FAKTISKT förekommer i Sheetet
+ * (inventerat 2026-07-05 över alla kompatibla flikar): st, rullar, förp, paket,
+ * påsar, säckar, askar, buntar, tuber, flaskor, flaska, burkar, set, Godislåda,
+ * gram, g, hg, kg, ml, dl, liter. Uppslag är skiftlägesokänsligt. En enhet som
+ * inte finns i tabellen får familjen 'okänd' och beter sig som idag (ingen
+ * omräkning, ingen gruppering utöver "Övriga enheter").
+ * Faktorer = basenhet per familj (massa: gram, volym: ml) så omräkning inom
+ * familjen blir from/to-kvot. Testfiler: units.test.js + implausible.test.js
+ * (funktionerna nedan är kopierade ordagrant dit — håll i synk). */
+const UNIT_FACTORS = {
+  massa: { 'g': 1, 'gram': 1, 'hg': 100, 'kg': 1000 },
+  volym: { 'ml': 1, 'cl': 10, 'dl': 100, 'l': 1000, 'liter': 1000 }
+};
+const UNIT_STYCK = ['st','förp','paket','påsar','rullar','askar','buntar','säckar','tuber','flaskor','flaska','burkar','kartonger','set','godislåda'];
+
+function _unitKey(u){ return String(u == null ? '' : u).trim().toLowerCase(); }
+
+function unitFamily(u){
+  const k = _unitKey(u);
+  if (!k) return 'okänd';
+  if (Object.prototype.hasOwnProperty.call(UNIT_FACTORS.massa, k)) return 'massa';
+  if (Object.prototype.hasOwnProperty.call(UNIT_FACTORS.volym, k)) return 'volym';
+  if (UNIT_STYCK.indexOf(k) !== -1) return 'styck';
+  return 'okänd';
+}
+
+// Behållarenheter (lager 2 light): styck-enheter som döljer den verkliga
+// mängden — allt i styck-familjen utom 'st' (som ÄR själva antalet).
+function isContainerUnit(u){
+  const k = _unitKey(u);
+  return k !== 'st' && UNIT_STYCK.indexOf(k) !== -1;
+}
+
+// Omräkning inom SAMMA mätfamilj (massa/volym). null = ej omräkningsbart
+// (styck/okänd, olika familjer, samma enhet, eller icke-numeriskt värde).
+function convertQty(value, fromUnit, toUnit){
+  // Tom/null spärras explicit — Number('') är 0, inte NaN, och 0 vore fel svar.
+  const raw = String(value == null ? '' : value).replace(',', '.').trim();
+  if (raw === '') return null;
+  const v = Number(raw);
+  if (!isFinite(v)) return null;
+  const fk = _unitKey(fromUnit), tk = _unitKey(toUnit);
+  if (fk === tk) return null;
+  const fam = unitFamily(fromUnit);
+  if (fam !== 'massa' && fam !== 'volym') return null;
+  if (unitFamily(toUnit) !== fam) return null;
+  // Avrunda bort flyttalsdrift (0.007 kg → 7 g exakt, inte 6.999…).
+  return Math.round(v * (UNIT_FACTORS[fam][fk] / UNIT_FACTORS[fam][tk]) * 1e6) / 1e6;
+}
+
+// Svensk sifferformatering för dialogtexter: decimalkomma + hårt mellanslag
+// som tusentalsavgränsare ("7 200", "7,2"). Icke-numeriskt → strängen som är.
+function formatQtySv(n){
+  const v = Number(String(n == null ? '' : n).replace(',', '.'));
+  if (!isFinite(v)) return String(n == null ? '' : n);
+  const s = String(Math.round(v * 1e6) / 1e6);
+  const neg = s.charAt(0) === '-';
+  const parts = (neg ? s.slice(1) : s).split('.');
+  const int = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return (neg ? '-' : '') + int + (parts[1] ? ',' + parts[1] : '');
+}
+
+/* Lager 4: rimlighetsspärr. true = nytt saldo avviker mer än 100× från förra
+ * (åt något håll) och BÅDA är > 0. 0→stort, tomt→värde och icke-numeriskt är
+ * legitima (första inventering/nollning) → false. Exakt 100× är tillåtet
+ * (strikt >). Asymmetrin är medveten: falskt positiv kostar ett knapptryck,
+ * falskt negativ kostar korrupt data ("7 200 kg pasta"). */
+function isImplausibleQtyChange(prev, next){
+  const p = Number(String(prev == null ? '' : prev).replace(',', '.'));
+  const n = Number(String(next == null ? '' : next).replace(',', '.'));
+  if (!isFinite(p) || !isFinite(n)) return false;
+  if (p <= 0 || n <= 0) return false;
+  const ratio = n / p;
+  return ratio > 100 || ratio < 0.01;
+}
+
+// Grupperade <option>-rader för enhetsväljarna: en <optgroup> per familj i
+// fast ordning. Bara familjer som faktiskt har enheter i listan renderas.
+// "(ingen)"/"Välj enhet…" och "+ Ny enhet…" läggs av anroparen utanför.
+function buildUnitOptionsHTML(unitList, currentUnit){
+  const groups = { massa: [], volym: [], styck: [], 'okänd': [] };
+  for (const u of unitList) groups[unitFamily(u)].push(u);
+  const byFactor = fam => (a, b) => UNIT_FACTORS[fam][_unitKey(a)] - UNIT_FACTORS[fam][_unitKey(b)];
+  const bySv = (a, b) => a.localeCompare(b, 'sv');
+  groups.massa.sort(byFactor('massa'));
+  groups.volym.sort(byFactor('volym'));
+  groups.styck.sort(bySv);
+  groups['okänd'].sort(bySv);
+  const LABELS = { massa: 'Vikt', volym: 'Volym', styck: 'Styck och förpackningar', 'okänd': 'Övriga enheter' };
+  const opt = u => `<option value="${esc(u)}"${u === currentUnit ? ' selected' : ''}>${esc(u)}</option>`;
+  return ['massa', 'volym', 'styck', 'okänd']
+    .filter(f => groups[f].length)
+    .map(f => `<optgroup label="${LABELS[f]}">${groups[f].map(opt).join('')}</optgroup>`)
+    .join('');
+}
+/* ===== slut F3-modul ===== */
+
 function collectUnits(){
   // Enheten lagras i metaCache (via initData/setLocalMeta), inte tagCache.
   const set = new Set();
@@ -4931,11 +5183,15 @@ function populateNewUnitDropdown(){
   const newInput = qs('#manualUnitNew');
   if (!sel) return;
   const units = collectUnits();
+  // F3 (v155): grupperat per familj (Vikt/Volym/Styck/Övriga), samma
+  // buildUnitOptionsHTML som Egenskaper-dialogen.
   sel.innerHTML =
     '<option value="">Välj enhet…</option>' +
-    units.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join('') +
+    buildUnitOptionsHTML(units, '') +
     '<option value="__new__">+ Ny enhet…</option>';
   if (newInput) { newInput.style.display = 'none'; newInput.value = ''; }
+  const note = qs('#manualUnitNote');
+  if (note) { note.style.display = 'none'; note.textContent = ''; }
 }
 
 function populateSheetPlaceDropdown(forSheet){
@@ -4983,7 +5239,7 @@ function populateNewCategoryDropdown(forPlace){
 function prepareNewItemDialog(scanned){
   let currentTag=scanned;
   lastCode=scanned; resetDialog(); dlgTitle.textContent="Ny artikel";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, flik, plats och kategori. <b>Enhet är obligatorisk.</b><br><b>Flik</b> = vilket Sheet-blad raden skapas i. <b>Plats</b> = fysisk placering (kolumn B).<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Saknas enhet, flik, plats eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, flik, plats och kategori. <b>Enhet är obligatorisk.</b><br><b>Flik</b> = vilket Sheet-blad raden skapas i. <b>Plats</b> = fysisk placering (kolumn B).<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Enhetslistan är grupperad i vikt, volym och styck. Välj helst en befintlig enhet — en ny enhet gör saldot svårare att tolka senare.<br>Saknas enhet, flik, plats eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
 
   const isManual=String(scanned).startsWith('M');
   dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${esc(scanned)}</b>. Ange uppgifter:`;
@@ -5017,14 +5273,31 @@ function prepareNewItemDialog(scanned){
       if (isNew) { catNew.value = ''; catNew.focus(); }
     };
   }
+  // F3 (v155): mjuk gate för ny enhet vid Spara (armas om vid varje enhetsbyte)
+  // + behållarenhets-avrådan i #manualUnitNote (lager 2 light).
+  let newUnitArmed = false;
   const unitSel = qs('#manualUnit');
   const unitNewInput = qs('#manualUnitNew');
+  const unitNote = qs('#manualUnitNote');
+  const setUnitNote = (txt, warn) => {
+    if (!unitNote) return;
+    unitNote.textContent = txt || '';
+    unitNote.classList.toggle('warn', !!warn);
+    unitNote.style.display = txt ? 'block' : 'none';
+  };
   if (unitSel && unitNewInput) {
     unitSel.onchange = () => {
+      newUnitArmed = false;
       const isNew = unitSel.value === '__new__';
       unitNewInput.style.display = isNew ? 'block' : 'none';
       if (isNew) { unitNewInput.value = ''; unitNewInput.focus(); }
+      if (!isNew && isContainerUnit(unitSel.value)) {
+        setUnitNote(`En enhet som "${unitSel.value}" säger inte hur mycket varje förpackning rymmer. Förtydliga gärna mängden per styck i artikelns kommentar.`, false);
+      } else {
+        setUnitNote('', false);
+      }
     };
+    unitNewInput.oninput = () => { newUnitArmed = false; };
   }
 
   // AI-chip: föreslår kategori/enhet/typ baserat på artikelnamn
@@ -5111,6 +5384,14 @@ function prepareNewItemDialog(scanned){
       ? (qs('#manualUnitNew')?.value||'').trim()
       : unitRaw;
     if(!unit){show("Ange enhet","warn");return;}
+    // F3 (v155): mjuk gate för ny enhet — första Spara-trycket visar en
+    // varningstext i dialogen, andra trycket sparar. Armering nollas om
+    // enheten byts eller texten redigeras.
+    if(unitRaw==='__new__'&&!newUnitArmed){
+      newUnitArmed=true;
+      setUnitNote(`Ny enhet ("${unit}") gör det svårare att tolka saldot senare. Finns ingen passande i listan? Tryck Spara igen för att använda den ändå.`, true);
+      return;
+    }
     const place=(qs('#manualPlace')?.value||"").trim()||"Okänd";
     const spRaw=(qs('#manualSheetPlace')?.value||"").trim();
     const sheetPlace = spRaw === '__new__'

@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=26">
+  <link rel="stylesheet" href="style.css?v=27">
 </head>
 
 <body>
@@ -99,6 +99,7 @@
       </select>
       <select id="manualUnit"></select>
       <input id="manualUnitNew" type="text" placeholder="Ange ny enhet" autocomplete="off" style="display:none" />
+      <div id="manualUnitNote" class="unitNote" style="display:none"></div>
       <select id="manualPlace"></select>
       <select id="manualSheetPlace"></select>
       <input id="manualSheetPlaceNew" type="text" placeholder="Ange ny plats" autocomplete="off" style="display:none" />
@@ -247,6 +248,7 @@
       <p class="qr-p">För en behållare räknar du med <b>−</b> och <b>+</b>, eller så trycker du på siffran och skriver in en helt ny total. Knapparna följer siffrans decimaler: står det 3 stegar de till 4, står det 0,5 stegar de till 0,6. Tryck <b>Spara</b> för att bekräfta.</p>
       <p class="qr-p">För en singel-artikel finns i stället knappen <b>Registrera inventering</b>, som bekräftar att den är räknad idag, med ditt namn och datum.</p>
       <p class="qr-p">Hittar du inte artikeln alls trycker du på knappen <b>Saknas</b>. Då sätts saldot till noll, med dagens datum och ditt namn, precis som en vanlig inventering. Artikeln räknas som inventerad idag och blir röd i listan om den borde finnas under kurs. Har du valt att dölja artiklar med saldo 0 försvinner den ur listan tills den fylls på igen.</p>
+      <p class="qr-p">Appen håller också ett öga på rimligheten. Ser det nya saldot ut att vara mer än hundra gånger större eller mindre än det förra, till exempel 7 200 i stället för 7,2, frågar den en extra gång: <b>Stämmer det?</b> Tryck <b>Ja, spara</b> om siffran är rätt, eller <b>Ändra</b> för att rätta den. Så fastnar en felskrivning innan den hamnar i arket.</p>
     </section>
 
     <section class="qr-sec">
@@ -262,6 +264,8 @@
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">9</span> Egenskaper</h3>
       <p class="qr-p">Kugghjulet <b>⚙️ Egenskaper</b> i artikeldialogen öppnar de övriga fälten: kommentar, kategori, enhet, typ, det antal som ska finnas under kurs (min-mängd) och tag. Här skannar eller byter du också etiketten på en rad. Vill du byta namn på artikeln trycker du direkt på rubriken högst upp i dialogen.</p>
+      <p class="qr-p">Enhetslistan är grupperad så att det är lätt att hitta rätt: <b>vikt</b> (g, hg, kg), <b>volym</b> (ml, dl, liter) och <b>styck och förpackningar</b> (st, förp, paket med flera). Byter du mellan två enheter som mäter samma sak, till exempel från kg till g, erbjuder appen sig att räkna om saldot åt dig: <b>7,2 kg = 7 200 g</b>. Svara <b>Ja, räkna om</b> så uppdateras siffran, eller <b>Nej, behåll siffran</b> om du redan räknat i den nya enheten. Byter du mellan enheter som mäter olika saker, till exempel från kg till liter, behålls siffran som den är och appen säger till.</p>
+      <p class="qr-p">Väljer du en förpackningsenhet som förp eller paket påminner appen om att en sådan enhet inte säger hur mycket varje förpackning rymmer. Skriv gärna mängden per styck i kommentaren, så blir saldot lättare att tolka. Hittar du ingen passande enhet alls går det att skriva in en ny, men appen ber dig först bekräfta valet, eftersom varje ny enhet gör listan spretigare.</p>
     </section>
 
     <section class="qr-sec">
@@ -344,7 +348,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=154"></script>
+  <script src="app.js?v=155"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

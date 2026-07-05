@@ -542,6 +542,27 @@ body:has(.dialog:not(.hidden))::after {
 .extraFields .tagRow .btn { flex-shrink: 0; }
 .extraFields #saveMetaBtn { display: block; width: 100%; margin-top: 14px; }
 .extraFields .deleteRow { display: flex; justify-content: center; margin-top: 28px; }
+
+/* === F3 (v155): Enhetsgovernance — noteringar, omräkning, rimlighetsfråga === */
+.unitNote {
+  margin: 6px 0; padding: 8px 10px; border-radius: 8px;
+  background: #fff8e1; color: #6d5200;
+  font-size: 0.85em; line-height: 1.4; text-align: left;
+}
+.unitNote.warn { background: #ffebee; color: #8e2020; }
+.unitNote .btn { display: block; margin: 8px auto 0; font-size: 0.9em; padding: 6px 14px; }
+.unitConv, .qtyConfirm {
+  margin: 8px 0; padding: 10px 12px; border-radius: 8px;
+  background: #e3eff1; color: var(--text);
+  font-size: 0.9em; line-height: 1.4; text-align: left;
+}
+.unitConvBtns, .qtyConfirmBtns { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.unitConvBtns .btn, .qtyConfirmBtns .btn { font-size: 0.9em; padding: 6px 14px; }
+@media (prefers-color-scheme: dark) {
+  .unitNote { background: rgba(255, 213, 79, .14); color: #ffd54f; }
+  .unitNote.warn { background: rgba(239, 83, 80, .16); color: #ef9a9a; }
+  .unitConv, .qtyConfirm { background: rgba(77, 182, 172, .14); }
+}
 .dialog .btn.delete {
   background: #c0392b; color: #fff;
   font-size: 0.8rem; padding: 6px 14px; min-height: 0;

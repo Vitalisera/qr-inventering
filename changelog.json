@@ -1,6 +1,14 @@
 {
-  "latest": 155,
+  "latest": 156,
   "versions": [
+    {
+      "version": 156,
+      "date": "2026-07-30",
+      "notes": [
+        "Listan uppdateras nu direkt när du inventerat en artikel, i stället för att ibland hoppa tillbaka en stund och sedan rätta sig.",
+        "En artikel som aldrig inventerats förut fick tidigare ingen inventeringsstämpel om du sparade utan att ändra saldot. Nu stämplas datum och namn som det ska."
+      ]
+    },
     {
       "version": 155,
       "date": "2026-07-05",

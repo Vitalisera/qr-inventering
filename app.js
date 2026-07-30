@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 155;
+const APP_VERSION = 156;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -1736,6 +1736,10 @@ const Save = {
           // nyckel kan key-swappen (S→riktig tagg) ha hunnit köras under
           // flykten; en villkorslös set skulle då återskapa en spökpost.
           if (tagCache.has(tag)) tagCache.set(tag, { ...tagCache.get(tag), pendingSync: false });
+          // Grace-fönster (fältfynd 2026-07-30): utan detta klobbar en preload som
+          // startade FÖRE writen den optimistiska raden direkt efter verified —
+          // samma mekanism som v147-fixen, som bara täckte batch-vägen.
+          _recentlySynced.set(tag, Date.now());
           markAsDone(le); addUndoButton(le, tag, _undoPrev);
         } else if (cls === 'pending-retry') {
           // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
@@ -3467,6 +3471,7 @@ function prepareSingleDialog(item, tag) {
         const ml2 = qs("#msgLine");
         if (cls === 'verified') {
           tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+          _recentlySynced.set(tag, Date.now()); // grace mot stale in-flight-preload (2026-07-30)
           if (ml2) { ml2.className = 'msgLine ok'; ml2.textContent = newVal ? 'Datum uppdaterat' : 'Datum rensat — artikeln avinventerad'; }
         } else if (cls === 'pending-retry') {
           if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Sparas när du är online igen'; }
@@ -3582,7 +3587,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
     qty: meta.qty ?? 0,
     unit: meta.unit ?? "",
     user: meta.user ?? "",
-    lastMs: meta.lastMs ?? Date.now(),
+    // null (EJ Date.now()) för aldrig inventerad: ?? Date.now() gjorde oldDate=idag →
+    // decideDateCommit 'none' → Spara med oförändrat saldo blev TYST no-op (fältfynd
+    // 2026-07-30, deterministiskt reproducerat). null → oldDate='' → 'set' → stämplas.
+    lastMs: meta.lastMs ?? null,
     minQty: item.minQty ?? cachedRow.minQty ?? 0,
     comment: item.comment ?? cachedRow.comment ?? "",
     sheetPlace: item.sheetPlace ?? cachedRow.sheetPlace ?? "",
@@ -3752,6 +3760,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
           // Server bekräftad → släpp pendingSync så server blir sanningskälla
           // igen vid nästa poll; rensa gul markering direkt.
           tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
+          _recentlySynced.set(tag, Date.now()); // grace mot stale in-flight-preload (2026-07-30)
           recomputeMaxLast(); renderLists();
           markAsDone(le);
         } else if (cls === 'pending-retry') {

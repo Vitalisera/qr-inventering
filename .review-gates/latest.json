@@ -1,38 +1,38 @@
 {
   "approved": true,
   "status": "approved",
-  "reviewer": "code-reviewer subagent — synk-robusthet-fix #1-#5 (v146) 2026-06-30",
-  "reviewed_at": "2026-06-30T18:02:40+0200",
-  "reviewed_sha": "276a98b1a136835c024b9c114d7cebcb3bb965fb",
-  "target": "qr-pwa app.js — synk-fix #1-#5 (kommentar/saldo/singel-datum/assertOk/kö-persistens)",
-  "scope": "app.js (huvudfil), changelog.json, index.html, sw.js. Verifierade frontend mot backend Code.js (doPost/updateMeta/updateCount/batchUpdates/logTag/_staleRowGuard_). vision-poc-v2.html ignorerad enligt instruktion.",
-  "summary": "Fem dataförlust-kritiska synk-fixar granskade rad-för-rad mot backend-kontraktet. Alla anrops-shapes korrekta, pendingSync sätts FÖRE write och rensas BARA vid verifierad bekräftelse, rollback-snapshot tas före optimistisk write utan aliasing, kö-persistensen är idempotent och re-sänder bara idempotenta absolut-writes. Inga blockers. node -c grönt, 19/19 testfiler gröna. Versionsbumpar konsistenta (APP_VERSION/CACHE/?v=/changelog alla 146).",
+  "verdict": "approved",
+  "reviewer": "superpowers:code-reviewer",
+  "reviewed_at": "2026-07-30T00:00:00+0200",
+  "reviewed_sha": "c7b26e665db9010a644ba2bac17564037b6cc104",
+  "staged_hash": "95fecf929553ff7e91d313b4110b9b5208e84e091d400f4de471868d5fed636a",
+  "target": "qr-pwa v156 — synk-grace för tre direkta verified-vägar (Save.logSingle, singleDateEdit, commitContainerDate) + no-op-fix för aldrig inventerad behållare (lastMs ?? null) + versionsbump",
+  "scope": "v156 synk-grace direktvägar + no-op-fix aldrig-inventerad + versionsbump",
+  "summary": "Fix 1 speglar exakt v147-mekanismen (_recentlySynced.set(tag, Date.now()) i verified-grenen, samma rad som pendingSync:false släpps) i de tre direkt-anropsvägar som saknade den; initData-snapshoten (rad 2894) bevarar därmed den lokala raden under SYNC_GRACE_MS=20s mot en preload som startade före writen. Fix 2 ändrar dialogItem.lastMs-fallbacken från Date.now() till null; enda läsaren av dialogItem.lastMs är oldDate=toYMD(...) (rad 3648) och toYMD har !d- och isNaN-guards → oldDate='' → decideDateCommit('', idag, '') → 'set' → aldrig-inventerad artikel stämplas nu vid Spara med oförändrat saldo. Ingen NaN-, Invalid Date- eller oavsiktlig clear-väg funnen: rensat fält på aldrig-inventerad ger cur===''===last → 'none' (ingen falsk avinventering), och Stäng/cancelAction anropar aldrig commitContainerDate. meta.lastMs kan aldrig vara 0 (toDayMs returnerar null för falsy, setLocalMeta normaliserar; ?? släpper dessutom igenom 0) → inventerade artiklar opåverkade. node -c grönt, alla testsviter gröna, versionskvartetten synkad (156×4), changelog-JSON parsar och noterna är korrekt lekmannasvenska som stämmer med fixarna.",
   "checks": {
     "syntax": "PASS — node -c app.js OK.",
-    "tests": "PASS — alla 19 *.test.js gröna (syncresilience, syncrestclass, staleecho, autosaveflush m.fl. inkluderade).",
-    "shape_correctness": "PASS — #1 kommentar (batch): tag inuti args, userName injiceras av _buildBatch_ (rad 1736), updateMeta läser args.comment/args.userName. #2 saldo (batch): updateCount-grenen i batchUpdates (rad 959) läser args.newCount/args.userName/args.sheetName/args.rowNum — payloaden skickar exakt dessa nycklar. #3 singel-datum (direkt): {tag, args:innerArgs} → doPost updateMeta(body.tag, body.args). Alla tre matchar backend.",
-    "username_injection": "PASS — _buildBatch_ injicerar userName ENBART för updateMeta. #2 (updateCount) skickar userName själv i payloaden (key 'userName', läses som args.userName i batch). #3 clear-grenen går DIREKT (gasCallWithRetry), ej batch → ingen userName-klobb; clearUser+userName:'' rensar USER-cellen korrekt (Code.js rad 850).",
-    "assertok_callsites": "PASS — enda kvarvarande .then(assertOk) är rad 4677 (ny artikel/logTag). logTag returnerar {ok:true,...} på BÅDE update- och create-grenen (Code.js 738/776); stale/fel → ok!==true → kastar korrekt. Container-callsitens gamla .then(assertOk).then(markAsDone) är borttagen (går nu via kö). Ingen success-väg utan ok:true når assertOk.",
-    "queue_persistence": "PASS — _buildBatch_ tömmer updateQueue innan _inflightBatch sätts → union-concat i _persistQueue_ ger aldrig dubbletter. Ett jobb ägs av antingen updateQueue ELLER _inflightBatch, aldrig båda; vid fel unshift:as batchen tillbaka och _inflightBatch nollas. Rehydrate idempotent (filtrerar på fnName+args+args.tag, rena primitiv-objekt, JSON-säkra). Kill mitt i flush → re-sändning av idempotenta absolut-writes (updateCount=newCount, updateMeta=absoluta fält) → inga dubblettrader. _persistQueue_/rehydrate/pagehide/visibility alla try/catch-omslutna → kan ej kasta/blockera.",
-    "pendingsync_lifecycle": "PASS — #1/#2/#3 sätter pendingSync:true FÖRE write. #1/#2 rensas enbart i _applyBatchResults_ via _isJobVerifiedOk_ (ok+!stale+matchande writtenTag). #3 rensas bara på classifyLinkResult==='verified'; pending-retry behåller true; rejected rensar efter rollback; .catch behåller true (offline). Ingen för-tidig clear.",
-    "rollback": "PASS — #3 _prevMeta = metaCache.get(tag) snapshot:as FÖRE setLocalMeta. setLocalMeta muterar inte prev (skapar nytt {...prev,...patch}, rad 1901) → ingen aliasing → metaCache.set(tag,_prevMeta) återställer äkta föregående värde vid rejected.",
-    "false_success": "PASS — alla tre vägar visar 'sparas…/rensas…' optimistiskt; #3 visar verifierad text först vid 'verified'. Global synk-banner + gul rad är sanningskälla. assertOk-skärpningen (#4) stänger maskerings-glipan för {error} utan ok-fält.",
-    "regression_risk": "LÅG — Egenskaper-dialogen (rad 3739, queueUpdate updateMeta) delar samma flush-väg, opåverkad; flushUpdates then/catch-ordning bevarad, _inflightBatch-hanteringen additiv. Inga dangling-referenser efter borttagen historik-logg i container (oldCount kvar/använd, le/delta/logText helt borttagna). Versionsbumpar konsistenta."
+    "tests": "PASS — alla *.test.js exit 0 (inga FAIL-rader).",
+    "fix2_nedstroms": "PASS — dialogItem.lastMs läses ENBART på rad 3648 (oldDate=toYMD). toYMD: !d→'' och isNaN→'' → aldrig 'Invalid Date' i UI. Föregående inventering-blocket döljer datum-spannet vid oldDate='' (villkorad template). _lastCommittedDate init = oldDate = ''. Datumfältet prefylls ALLTID med isoDate (idag), oberoende av oldDate → decideDateCommit('', idag, '') = 'set' vid Spara (fixen), och rensat fält = 'none' (ingen oavsiktlig avinventering av aldrig-inventerad).",
+    "fix2_sidoeffekter": "PASS — meta.lastMs är alltid number|null: preload sätter toDayMs(last) (null vid falsy, inkl 0), setLocalMeta normaliserar (även clear-grenens lastMs:0 på rad 3740 blir null via toDayMs). ?? faller bara på null/undefined → inventerade artiklar får exakt samma oldDate som förut. updateDialogWithFreshData skriver metaCache med toDayMs (kan bli null) — kompatibelt.",
+    "fix1_nycklar": "PASS med en low-notering — singleDateEdit och commitContainerDate använder dialogens tag (samma nyckel som pendingSync-hanteringen), korrekt. logSingle: grace sätts på anrops-tag; se issue om B5-key-swap-racet.",
+    "fix1_map_tillvaext": "PASS — _withinSyncGrace_ lazy-prunar utgångna poster och anropas i initData-snapshotloopen för VARJE tagCache-nyckel vid varje poll-rebuild (~15s) → Map:en är i praktiken självstädande. Enda kvarliggarna är nycklar som inte längre finns i tagCache (t.ex. swappad S-nyckel) — några byte per post, försumbart.",
+    "versionskvartett": "PASS — APP_VERSION=156, sw.js CACHE=vitalisera-inv-v156, index.html app.js?v=156, changelog latest=156 (version 156, 2026-07-30). JSON.parse OK.",
+    "changelog_noter": "PASS — båda noterna korrekt svenska, lekmannaspråk utan jargong, inga tankstreck, och beskriver sanningsenligt fix 1 (raden hoppade tillbaka en stund) respektive fix 2 (ingen stämpel vid spara utan saldoändring)."
   },
   "issues": [
-    {"severity":"info","id":"hist-log-removed","where":"prepareContainerDialog saldo-save (~3674)","msg":"Per-rad historik-bock (appendLog/markAsDone) medvetet borttagen för saldo; sanningskälla nu pendingSync-gul + global synk-banner. Konsistent med Egenskaper-edits. Avsiktligt, ej blocker.","blocking":false},
-    {"severity":"info","id":"rehydrate-username","where":"_rehydrateQueue_ + startup-flush","msg":"Rehydrerat updateMeta-jobb som persisterades medan det ännu låg i updateQueue (ej byggt) får userName injicerat vid nästa _buildBatch_ med AKTUELL userName. userName återställs normalt från localStorage/cookie vid start → praktiskt ofarligt; matchar befintligt beteende för köade jobb.","blocking":false}
+    {"severity":"low","id":"logsingle-grace-after-keyswap","where":"app.js ~1742 (Save.logSingle verified)","msg":"tagCache.set har B5-has-guarden men _recentlySynced.set körs villkorslöst: har key-swappen (S→riktig tagg) hunnit köras under flykten sätts grace på den DÖDA S-nyckeln — den riktiga raden får inget grace-skydd (samma exponering som före fixen, inget nytt fel) och den föräldralösa posten prunas aldrig (lazy-prunen rör bara nycklar som finns i tagCache). Sällsynt race, konsekvens = 20s klobb-fönster kvarstår för just den raden + några byte läcka. Uppföljning: flytta in set:en i has-guarden eller slå upp aktuell nyckel efter swap.","blocking":false},
+    {"severity":"info","id":"redundant-date-set-on-qty-change","where":"app.js commitCount (~4192)","msg":"För aldrig-inventerad artikel med ÄNDRAT saldo skickar commitContainerDate nu ett extra updateMeta lastYMD=idag utöver updateCount (som själv stämplar datum server-side) + en extra historikrad 'datum YYYY-MM-DD'. Idempotent och ofarligt (samma dag skrivs två gånger), samma mönster som redan gällde inventerade artiklar med gammalt datum. Endast kosmetiskt brus.","blocking":false},
+    {"severity":"info","id":"changelog-trailing-newline","where":"changelog.json","msg":"Filen tappade sin avslutande radbrytning ('No newline at end of file'). Parsar felfritt — rent kosmetiskt.","blocking":false}
   ],
   "verified": [
-    "node -c app.js → SYNTAX_OK",
-    "19/19 *.test.js gröna",
-    "Code.js doPost updateMeta(body.tag, body.args) — #3 direkt-shape korrekt",
-    "Code.js batchUpdates updateCount-gren läser args.userName — #2 userName-stämpling bevarad",
-    "Code.js updateMeta clearUser → USER-cell = args.userName||'' — #3 clear-grenen rensar användare",
-    "logTag returnerar ok:true på success (738/776) — assertOk-skärpning säker",
-    "setLocalMeta muterar ej prev-objektet → #3 rollback utan aliasing",
-    "_buildBatch_ tömmer updateQueue före _inflightBatch → ingen dubbel-persist/dubbel-send",
-    "Idempotenta absolut-writes (updateCount=newCount, updateMeta=absoluta fält) → re-sändning efter kill skapar inga dubbletter",
-    "Versionsbumpar konsistenta: APP_VERSION=146, CACHE=v146, app.js?v=146, changelog latest=146"
+    "node -c app.js → SYNTAX OK",
+    "for f in *.test.js → 0 FAIL",
+    "grep: dialogItem.lastMs har exakt EN läsare (rad 3648); toYMD-guards utesluter NaN/Invalid Date",
+    "decideDateCommit-matris för oldDate='': (idag→set, ''→none) — ingen oavsiktlig clear; cancelAction committar aldrig datum",
+    "toDayMs(0)=null + setLocalMeta-normalisering → meta.lastMs aldrig 0; ??-fallback påverkar bara null/undefined",
+    "_withinSyncGrace_ prunas i initData-loopen över alla tagCache-nycklar varje rebuild → ingen obegränsad tillväxt",
+    "Grace-set placerad på exakt samma ställe som v147-batchvägen (_applyBatchResults_ rad 2068) i alla tre grenarna",
+    "APP_VERSION=156 / CACHE v156 / ?v=156 / changelog latest=156, JSON.parse OK",
+    "Changelog-noterna stämmer sakligt mot fix 1 och fix 2, lekmannaspråk"
   ]
 }

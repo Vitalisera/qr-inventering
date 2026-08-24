@@ -66,11 +66,13 @@ function _verifyTagInRow_(rawTag, cellValue) {
 function _staleRowGuard_(found, tag) {
   if (!found.viaRowNum) return { echo: { writtenRow: found.row } };
   const tagCol = found.cols && found.cols.TAG;
-  if (!tagCol) return { echo: { writtenRow: found.row } };
-  const cellVal = found.cellVal; // testharness: TAG-cellens värde för found.row
+  if (!tagCol) {
+    return { echo: { writtenRow: found.row } };
+  }
+  const cellVal = found.sh.getRange(found.row, tagCol).getValue();
   const state = _verifyTagInRow_(tag, cellVal);
   if (state === 'mismatch') {
-    return { stale: { ok: false, msg: "stale row", staleRow: true,
+    return { stale: { ok: false, code: 'STALE_ROW', transient: false, msg: "stale row", staleRow: true,
       attemptedRow: found.row, sheetName: found.sheetName } };
   }
   const cellTags = normalizeTags(cellVal);
@@ -85,6 +87,14 @@ function logTagUpdateBranch(found, tag) {
   return { ok: true, updated: true, new: false, row: found.row, ...guard.echo };
 }
 // ---- slut Code.js-kopia ----
+
+/* Mockat Sheet-handtag. Kopian ovan ska vara ORDAGRANN med Code.js — annars kan
+ * testdrift.check.js inte längre bevaka den. Därför får fixturerna leverera
+ * TAG-cellen via samma anropskedja som produktionen använder
+ * (found.sh.getRange(row, col).getValue()) i stället för ett eget cellVal-fält. */
+function mockSh(cellVal) {
+  return { getRange: () => ({ getValue: () => cellVal }) };
+}
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -199,7 +209,7 @@ t('C1: FÖRE-bevis — stale rowNum UTAN guard gav falsk {ok:true}', () => {
 });
 t('C2: EFTER — stale rowNum (TAG-cell ≠ tag) → {ok:false,staleRow:true}', () => {
   const found = { viaRowNum: true, row: 5, sheetName: 'Gosedjur',
-    cols: { TAG: 13 }, cellVal: '111222' };          // raden har ANNAN tag
+    cols: { TAG: 13 }, sh: mockSh('111222') };          // raden har ANNAN tag
   const r = logTagUpdateBranch(found, '959773');
   eq(r.ok, false, 'mismatch → INGEN write, INGEN falsk ok');
   eq(r.staleRow, true, 'staleRow:true → classifyLinkResult rejected');
@@ -207,7 +217,7 @@ t('C2: EFTER — stale rowNum (TAG-cell ≠ tag) → {ok:false,staleRow:true}', 
 });
 t('C3: EFTER — rätt rad (TAG-cell innehåller tag) → ok:true + echo', () => {
   const found = { viaRowNum: true, row: 7, sheetName: 'Gosedjur',
-    cols: { TAG: 13 }, cellVal: '959773' };
+    cols: { TAG: 13 }, sh: mockSh('959773') };
   const r = logTagUpdateBranch(found, '959773');
   eq(r.ok, true, 'matchande rad → write + ok');
   eq(r.writtenRow, 7, 'echo writtenRow');
@@ -223,13 +233,13 @@ t('C4: bakåtkompat — tag-sökt rad (viaRowNum=false) oförändrad, ok', () =>
 });
 t('C5: bakåtkompat — syntetisk tag (S..R..) → skip, ingen falsk stale', () => {
   const found = { viaRowNum: true, row: 9, sheetName: 'Gosedjur',
-    cols: { TAG: 13 }, cellVal: '' };               // tagglös rad
+    cols: { TAG: 13 }, sh: mockSh('') };               // tagglös rad
   const r = logTagUpdateBranch(found, 'SGosedjurR9');
   eq(r.ok, true, 'syntetisk → _verifyTagInRow_ skip → skriv (oförändrat)');
 });
 t('C6: bakåtkompat — flik utan TAG-kolumn → ingen verifiering, skriv', () => {
   const found = { viaRowNum: true, row: 4, sheetName: 'Köksutrustning',
-    cols: {}, cellVal: '' };                         // ingen TAG-kol
+    cols: {}, sh: mockSh('') };                         // ingen TAG-kol
   const r = logTagUpdateBranch(found, '959773');
   eq(r.ok, true, 'ingen TAG-kol → behåll gammalt beteende (bakåtkompat)');
 });
@@ -284,7 +294,7 @@ t('X1: A/B/C/D använder ALLA classifyLinkResult — ingen parallell klassare', 
 });
 t('X2: C:s staleRow → B:s rejected → self-delete (kedjan håller ihop)', () => {
   const found = { viaRowNum: true, row: 5, sheetName: 'S', cols: { TAG: 13 },
-    cellVal: '999' };
+    sh: mockSh('999') };
   const backendRes = logTagUpdateBranch(found, '959773'); // C → staleRow
   const m = new Map([['959773', { tag: '959773' }]]);
   const cls = logSingleApplyResult(m, '959773', m.get('959773'), backendRes);

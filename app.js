@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 156;
+const APP_VERSION = 157;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -3765,10 +3765,17 @@ function prepareContainerDialog(item, tag, opts = {}) {
           markAsDone(le);
         } else if (cls === 'pending-retry') {
           // Offline: behåll pendingSync — optimistisk write överlever poll.
+          // OBS: datumvägen registrerar INTE jobbet för resync (till skillnad
+          // från logSingle via _pendingLogSingle och tag-koppling via
+          // _pendingTagLinks). Det som står här måste därför vara sant: inget
+          // skickas om av sig självt. Att skriva "sparas när du är online igen"
+          // vore samma lögn som logSingle hade före 9.6-fixen (se kommentaren
+          // vid _pendingLogSingle). Rätt lösning är att routa datumvägen genom
+          // kön — det är P4c i fixplanen; tills dess säger vi som det är.
           if (le) {
             const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
             const m = le.querySelector('.msg');
-            if (m) m.textContent += ' – sparas när du är online igen';
+            if (m) m.textContent += ' – datumet nådde inte arket, gör om ändringen';
           }
         } else {
           // Server AVVISADE (t.ex. staleRow) → rulla tillbaka optimistisk write.

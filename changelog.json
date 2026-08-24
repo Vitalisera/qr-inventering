@@ -1,6 +1,17 @@
 {
-  "latest": 156,
+  "latest": 157,
   "versions": [
+    {
+      "version": 157,
+      "date": "2026-08-25",
+      "notes": [
+        "Handboken och introduktionen säger nu som det är: en gul markering betyder att ändringen är på väg, och ☑️ att den ligger i Google-arket. Lita på siffran när det gula släppt.",
+        "Tidigare stod det att ingenting kan gå förlorat. Det stämde inte för nya artiklar och för ändrade datum, så texten är omskriven för att stämma med hur appen faktiskt fungerar.",
+        "Handboken beskriver nu Ångra-knappen, som låter dig ta tillbaka en felregistrering inom femton sekunder, och förklarar när raderingsknappen är permanent.",
+        "När ett ändrat datum inte når arket säger appen nu att du behöver göra om ändringen, i stället för att lova att den sparas senare. Löftet var inte sant.",
+        "Sökningen hittar rätt igen i flikarna Steg 2 & 3 och Mat. Deras sökord hade hamnat på fel artiklar, så en sökning på ballong kunde ge klädställningar."
+      ]
+    },
     {
       "version": 156,
       "date": "2026-07-30",

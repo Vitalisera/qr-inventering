@@ -9,21 +9,38 @@
 
    Fixen: all metadata skickas i SJÄLVA logTag-anropet, inget separat updateMeta.
 
-   buildSaveNewPayload nedan är den rena payload-logiken från #saveNewBtn i
-   app.js (rad ~3413). Håll i synk. (Samma mönster som findtag.test.js —
-   DOM/gasCall kan ej köras lokalt, så vi testar den extraherade rena logiken.) */
+   P2 (2026-08-25): payload-bygget flyttade ut ur #saveNewBtn till de RIKTIGA
+   funktionerna buildCreatePayload/isTaglessCreate i app.js. Kopiorna nedan är
+   ordagranna och bevakas av testdrift.check.js. Samma mönster som
+   findtag.test.js — DOM/gasCall kan ej köras lokalt, så vi testar den rena
+   logiken. Testet fortsätter bevaka Bug A (all metadata i SJÄLVA logTag-
+   anropet) och bevakar nu även att M-nyckeln aldrig läcker ut som en tagg. */
 
-// ---- Extraherad ordagrant från app.js #saveNewBtn payload-konstruktion ----
-// Tar redan-parsade fältvärden (som koden själv extraherar från DOM) och
-// returnerar { payload, separateUpdateMetaCalled }.
+// ---- KOPIERAD ORDAGRANT ur app.js. Håll i synk. ----
+function isTaglessCreate(tag) { return String(tag == null ? '' : tag).startsWith('M'); }
+
+function buildCreatePayload(job, fallbackUser) {
+  const j = job || {};
+  return {
+    tag: isTaglessCreate(j.tag) ? null : j.tag,
+    name: j.name, type: j.type, qty: j.qty,
+    user: j.user || fallbackUser || '',
+    sheetName: j.sheetName || null,
+    unit: j.unit, category: j.category, place: j.sheetPlace, minQty: j.minQty,
+    clientKey: j.ck            // P2d: samma nyckel vid varje försök
+  };
+}
+
+// Harness: bygger jobbet som #saveNewBtn gör och kör den riktiga payload-
+// funktionen. separateUpdateMetaCalled speglar att fixad kod aldrig gör ett
+// separat updateMeta efteråt (rotorsaken i Bug A).
 function buildSaveNewPayload(fields) {
   const { currentTag, name, type, qty, userName, place, sheetPlace, unit, category, minQty } = fields;
-  // Motsvarar gasCall('logTag', {...}) i fixad kod:
-  const payload = {
-    tag: currentTag, name, type, qty, user: userName,
-    sheetName: place || null, unit, category, place: sheetPlace, minQty
+  const job = {
+    ck: 'Ctest1', tag: currentTag, name, type, qty, unit, category,
+    sheetPlace, sheetName: place, minQty, user: userName, retries: 0
   };
-  // Fixad kod gör INGET separat updateMeta-anrop längre:
+  const payload = buildCreatePayload(job, userName);
   const separateUpdateMetaCalled = false;
   return { payload, separateUpdateMetaCalled };
 }
@@ -55,7 +72,10 @@ ok(payload.place === 'Hylla 4', 'payload.place = sheetPlace (fysisk plats kol B)
 ok(payload.minQty === 5, 'payload.minQty skickas i logTag');
 ok(payload.type === 'singel', 'payload.type skickas i logTag');
 ok(payload.sheetName === 'Kurslokal/Reception', 'payload.sheetName = manualPlace (flik)');
-ok(payload.tag === 'M1715000000000', 'payload.tag = currentTag');
+ok(payload.tag === null, 'M-nyckeln skickas INTE som tagg (P2: tagglös create, ingen pseudotagg i TAG-kolumnen)');
+ok(payload.clientKey === 'Ctest1', 'payload.clientKey = jobbets idempotensnyckel');
+const scanned = buildSaveNewPayload({ ...filled, currentTag: '7311070005005' });
+ok(scanned.payload.tag === '7311070005005', 'en SKANNAD tagg skickas som tagg (raden ska bära etiketten)');
 ok(separateUpdateMetaCalled === false, 'INGET separat updateMeta-anrop görs (rotorsak borttagen)');
 
 console.log('\nOptimistisk tagCache-post:');

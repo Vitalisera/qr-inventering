@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 157;
+const APP_VERSION = 158;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -453,8 +453,11 @@ function assertOk(r) {
   // (Sheet-quota, setValue-undantag) → ok===undefined → undefined===false är false
   // → assertOk släppte igenom → serverfel maskerades som framgång på alla
   // .then(assertOk)-callsites (markAsDone). Kräv nu ok:true explicit; allt annat
-  // (ok:false, {error}, null) kastar. Säkert: kvarvarande callsite (logTag, ny
-  // artikel) returnerar ok:true på success.
+  // (ok:false, {error}, null) kastar. P2 (genomlysning 3.0): den sista
+  // callsiten (logTag, ny artikel) gick över till gasCallWithRetry +
+  // classifyLinkResult, som skiljer nätfel från avvisning — något assertOk
+  // aldrig kunde. Funktionen står kvar oanvänd som referens för nya
+  // muterande anrop; välj classifyLinkResult i första hand.
   if (!r || r.ok !== true) throw new Error((r && (r.msg || r.error)) || 'Okänt serverfel');
   return r;
 }
@@ -513,6 +516,24 @@ const _pendingTagLinks = new Map();
 // = tag. Värde = { tag, name, sheetName, rowNum }. Self-delete vid
 // verified/rejected; behålls om fortf. offline.
 const _pendingLogSingle = new Map();
+// P2 (genomlysning 3.0): pending CREATES — nya artiklar som ännu inte
+// bekräftats av servern. Create-vägen var systemets ENDA skrivväg helt utan
+// skydd: ett bart gasCall('logTag') utan omförsök, utan kö och utan
+// persistens. Den 30 juli 2026 försvann fyra artiklar under ett arbetspass
+// MED grön bekräftelse på skärmen — "Bostongurka" skickades med sheetName
+// "Okänd" (tom flikväljare, se validateNewItem) och avvisades hårt av
+// servern utan att något försökte igen. Nu ligger creates i SAMMA
+// localStorage-blob (_PENDING_LS_KEY) som _pendingTagLinks/_pendingLogSingle
+// och dras av SAMMA resync-svep (resyncPendingTagLinks) — ingen parallell
+// mekanism, ingen ny lagringsnyckel, ingen egen retry-slinga.
+// Nyckel = ck (klientgenererad idempotensnyckel, se newCreateKey). Värde =
+// { ck, tag, name, type, qty, unit, category, sheetPlace, sheetName, minQty,
+//   user, retries }. Skillnad mot _pendingLogSingle: jobbet registreras FÖRE
+// anropet, inte först när det failat. En singel-registrering som dör mitt i
+// flykten kan skannas om; en create som dör mitt i flykten finns ingen
+// annanstans — artikeln är då borta utan spår. Samma persist-före-sändning
+// som _inflightBatch i batch-kön (#5), och det är ck som gör en replay säker.
+const _pendingCreates = new Map();
 // v151: efter så här många misslyckade spar-försök byter historikraden text
 // från "sparas när du är online igen" till en uppmaning att skanna om —
 // evig tyst retry ska inte se ut som att allt är på väg att ordna sig.
@@ -613,9 +634,13 @@ function _updateSyncBadge_() {
     let warn = 0;
     for (const j of _pendingLogSingle.values()) if (j && (j.retries || 0) >= RESYNC_WARN_AFTER) warn++;
     for (const j of _pendingTagLinks.values()) if (j && (j.retries || 0) >= RESYNC_WARN_AFTER) warn++;
+    // P2b: creates räknas i samma eskalering och i samma total (som "ändringar",
+    // via singles-facket) — en ny artikel som inte kommit fram ska synas i
+    // statusraden precis som en skanning som inte kommit fram.
+    for (const j of _pendingCreates.values()) if (j && (j.retries || 0) >= RESYNC_WARN_AFTER) warn++;
     const m = buildSyncBadgeModel({
       links: _pendingTagLinks.size,
-      singles: _pendingLogSingle.size,
+      singles: _pendingLogSingle.size + _pendingCreates.size,
       queue: updateQueue.length + (_inflightBatch ? _inflightBatch.length : 0),
       warn
     });
@@ -646,8 +671,21 @@ function _persistPending_() {
         retries: v.retries || 0   // v151: eskaleringsräknaren överlever PWA-kill
       });
     }
-    if (!tagLinks.length && !logSingle.length) { localStorage.removeItem(_PENDING_LS_KEY); _updateSyncBadge_(); return; }
-    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle }));
+    // P2b: creates ligger som TREDJE array i samma blob — samma serialiserings-
+    // regel som ovan: bara data-fält, aldrig _le (DOM-nod) eller _inflight
+    // (runtime-flagga, ska nollställas av en omstart så svepet kan ta jobbet).
+    const creates = [];
+    for (const v of _pendingCreates.values()) {
+      if (v && v.ck) creates.push({
+        ck: v.ck, tag: v.tag ?? null, name: v.name ?? '', type: v.type || 'singel',
+        qty: Number(v.qty) || 1, unit: v.unit ?? '', category: v.category ?? '',
+        sheetPlace: v.sheetPlace ?? '', sheetName: v.sheetName ?? null,
+        minQty: Number(v.minQty) || 0, user: v.user ?? '',
+        retries: v.retries || 0
+      });
+    }
+    if (!tagLinks.length && !logSingle.length && !creates.length) { localStorage.removeItem(_PENDING_LS_KEY); _updateSyncBadge_(); return; }
+    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle, creates }));
   } catch (_) {}
   _updateSyncBadge_();   // U4: badge speglar köerna — samma choke-point som persistering
 }
@@ -662,14 +700,22 @@ function _rehydratePending_() {
     if (d && Array.isArray(d.logSingle)) for (const j of d.logSingle) {
       if (j && j.tag && !_pendingLogSingle.has(j.tag)) _pendingLogSingle.set(j.tag, j);
     }
+    // P2b: creates rehydreras på exakt samma villkor (nyckelfältet måste finnas,
+    // befintlig post vinner). ck följer med ur lagringen → ett omförsök efter
+    // PWA-kill bär SAMMA idempotensnyckel som det ursprungliga försöket.
+    if (d && Array.isArray(d.creates)) for (const j of d.creates) {
+      if (j && j.ck && !_pendingCreates.has(j.ck)) _pendingCreates.set(j.ck, j);
+    }
   } catch (_) {}
 }
 _rehydratePending_();
 if (QA_MODE) window.__qaPending = () => ({
   tagLinks: _pendingTagLinks.size,
   logSingle: _pendingLogSingle.size,
+  creates: _pendingCreates.size,
   tagLinksData: [..._pendingTagLinks.values()],
-  logSingleData: [..._pendingLogSingle.values()]
+  logSingleData: [..._pendingLogSingle.values()],
+  createsData: [..._pendingCreates.values()]
 });
 // __qaSeedTag: deterministisk mock av tagCache + metaCache utan GAS-anslutning,
 // så scan-pipeline-tester (1D-varianter, samma-tagg-spärr) kan köras i ren
@@ -1514,6 +1560,107 @@ function _pruneInventOnLinkState_() {
   for (const [k, v] of _inventOnLinkState) if (!v || v.ts < cutoff) _inventOnLinkState.delete(k);
 }
 
+/* ===== P2 (genomlysning 3.0): rena byggstenar för create-vägen =====
+ * Alla fem funktionerna nedan är DOM- och nätfria, av samma skäl som
+ * classifyLinkResult/selectPendingResync/rekeyPendingJobs: create-vägen är den
+ * väg där ett fel kostar mest (artikeln finns ingen annanstans), och då ska
+ * besluten gå att testa utan webbläsare. Speglas i createguard.test.js.
+ */
+
+// P2a — BEVISAD orsak till att "Bostongurka" försvann 2026-07-30: flikväljaren
+// står på "Välj flik…" (tomt värde) från början, och koden skickade då strängen
+// "Okänd" som sheetName. Servern svarar "Flik finns inte: Okänd" — ett
+// permanent fel som ingenting försöker igen. Enhet var redan obligatorisk i
+// samma dialog; flik ska vara det på exakt samma sätt. Ordningen är medveten:
+// alla HÅRDA krav prövas före F3:s mjuka ny-enhet-gate, annars kan användaren
+// hinna armera enheten och sedan blockeras av flikvalet.
+function validateNewItem(f) {
+  const name = String((f && f.name) ?? '').trim();
+  const unit = String((f && f.unit) ?? '').trim();
+  const sheetName = String((f && f.sheetName) ?? '').trim();
+  if (!name) return { ok: false, field: 'name', msg: 'Ange benämning' };
+  if (!unit) return { ok: false, field: 'unit', msg: 'Ange enhet' };
+  if (!sheetName) return { ok: false, field: 'sheetName', msg: 'Välj vilken flik artikeln ska skapas i' };
+  return { ok: true, field: null, msg: '' };
+}
+
+// P2d — idempotensnyckel. En create som timeoutar kan ha lyckats server-side
+// ändå (30 juli: Oatly och Rårörda lingon skrevs BÅDA, trots timeout) — utan
+// nyckel skapar omförsöket en dubblett. Nyckeln genereras EN gång per artikel,
+// följer med i jobbet och ut i localStorage, och återanvänds vid varje
+// omförsök; en nygenererad nyckel per försök vore lika verkningslös som ingen.
+// Servern ska svara med det redan skapade resultatet när den ser nyckeln igen.
+// Sant medan ett create-Spara redan behandlas (se dubbeltrycksspärren).
+let _createSaveBusy = false;
+
+function newCreateKey() {
+  return 'C' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// Sant när create-jobbet ska skickas TAGGLÖST. "M<Date.now()>" är ingen tagg
+// utan en lokal cache-nyckel för manuellt skapade artiklar. Skickades den som
+// tag ändå strippade backends normalizeTag bort M:et och skrev de 13 siffrorna
+// som en riktig pseudotagg i TAG-kolumnen — trots att koden här intill påstod
+// att artikeln skapas tagglös. Följden: raden fick en tagg som ingen etikett i
+// verkligheten motsvarar, och klientens M→S-nyckelbyte (som förutsätter en
+// tagglös rad) pekade fel. Nu skickas tag: null och påståendet blir sant.
+function isTaglessCreate(tag) { return String(tag == null ? '' : tag).startsWith('M'); }
+
+// Payload till logTag. All metadata går i SJÄLVA create-anropet (Bug A: ett
+// separat updateMeta efteråt hittade aldrig raden och tappade fälten tyst).
+function buildCreatePayload(job, fallbackUser) {
+  const j = job || {};
+  return {
+    tag: isTaglessCreate(j.tag) ? null : j.tag,
+    name: j.name, type: j.type, qty: j.qty,
+    user: j.user || fallbackUser || '',
+    sheetName: j.sheetName || null,
+    unit: j.unit, category: j.category, place: j.sheetPlace, minQty: j.minQty,
+    clientKey: j.ck            // P2d: samma nyckel vid varje försök
+  };
+}
+
+// Optimistisk tagCache-post för en ny artikel. Egen funktion sedan P2b för att
+// resync-svepet ska kunna åter-materialisera raden efter en omstart: tagCache
+// byggs om från servern vid start, så ett rehydrerat create-jobb hade annars
+// synts i statusraden utan att synas i listan.
+function buildOptimisticCacheEntry(fields) {
+  const { name, type, place, sheetPlace, category, minQty } = fields;
+  return { name, type, place, sheetName: place, sheetPlace, category, minQty,
+    comment: '', step: '', rowNum: null, altTags: [], pendingSync: true };
+}
+
+// Vilken cache-nyckel ska artikeln ha EFTER en bekräftad create?
+//   tagglös create  → servern returnerar raden under sin syntetiska nyckel vid
+//                     nästa preload ("S<flik>R<rad>", preloadTagsWithMeta) →
+//                     byt M→S, annars re-applyas M-posten ovanpå S-posten och
+//                     artikeln syns TVÅ gånger.
+//   create med tagg → taggen står i TAG-kolumnen och ÄR nyckeln. Före P2 byttes
+//                     även denna till en S-nyckel, vilket gjorde cache-posten
+//                     till ett spöke: en omskanning av den just skapade taggen
+//                     gav miss → "okänd kod" → användaren skapade en dubblett.
+function createCacheKey(job, res) {
+  const cur = String((job && job.tag != null) ? job.tag : '');
+  if (!isTaglessCreate(cur)) return cur;
+  if (res && res.new && res.row && res.sheetName) {
+    return 'S' + String(res.sheetName).replace(/[^a-zA-Z0-9]/g, '') + 'R' + res.row;
+  }
+  return cur;
+}
+
+// Uppdatera det pending create-jobb som ska ligga kvar för omförsök. Samma
+// eskaleringsräknare som _pendingLogSingle (RESYNC_WARN_AFTER) och samma
+// _inflight-nollning så selectPendingResync tar jobbet vid nästa svep.
+// KRITISKT: ck bevaras — hela idempotensen hänger på det.
+function mergePendingCreate(map, job) {
+  const ck = job && job.ck;
+  const prev = (map instanceof Map && ck) ? map.get(ck) : null;
+  const next = prev || { ...(job || {}) };
+  next.retries = (next.retries || 0) + 1;
+  next._inflight = false;
+  return next;
+}
+
 /* ===== Save — funktion-grupperat objekt för spara-flöden =====
  * Tunn helper: hanterar appendLog + cache-mutation + gasCallWithRetry + rollback + markAsDone.
  * UI-side-effects (closeDialog, cooldown, renderLists, show/setMsg, DOM-update) sköts av callern.
@@ -1803,6 +1950,137 @@ const Save = {
     recomputeMaxLast();
     renderLists();
     return le;
+  },
+
+  /**
+   * Skapa en ny artikel — P2 (genomlysning 3.0).
+   *
+   * Före detta gick create-vägen rakt på ett bart gasCall('logTag'): inget
+   * omförsök, ingen kö, ingen persistens, och "Skapad: …" visades SYNKRONT
+   * innan svaret kommit. Stängdes appen eller svek nätet var artikeln borta
+   * utan spår — det var så fyra artiklar försvann 30 juli 2026 bakom en grön
+   * bekräftelse. Vägen är nu byggd som de skyddade vägarna:
+   *   - gasCallWithRetry (inte gasCall) → nätfel skiljs från server-avvisning
+   *   - classifyLinkResult → SAMMA tre utfall som linkTag/logSingle
+   *   - _pendingCreates i _PENDING_LS_KEY → överlever att PWA:n dödas
+   *   - resyncPendingTagLinks → samma svep, ingen ny listener
+   * Skillnad mot logSingle: jobbet registreras FÖRE anropet. En singel kan
+   * skannas om; en create som dör mitt i flykten finns ingen annanstans.
+   *
+   * job: { ck, tag, name, type, qty, unit, category, sheetPlace, sheetName,
+   *        minQty, user, retries?, _le?, _inflight? }
+   * returnerar: löftet från anropet (callern behöver inte vänta in det)
+   */
+  createItem(job) {
+    // Bältesspänne: utan ck finns ingen idempotens och utan lokal nyckel ingen
+    // rad att visa. Callsiten sätter båda — men ett jobb som når hit utan dem
+    // ska inte tyst hamna på nyckeln "undefined".
+    if (!job.ck) job.ck = newCreateKey();
+    if (job.tag == null || job.tag === '') job.tag = 'M' + Date.now();
+    const cacheKey = String(job.tag);
+    job._inflight = true;                       // svepet ska inte dubbelfyra
+    _pendingCreates.set(job.ck, job);
+    _persistPending_();                         // persistera FÖRE sändning
+
+    // _le: återanvänd samma historik-rad vid omförsök (ingen ⏳-spam per försök,
+    // samma mönster som logSingle:s _resyncLe).
+    const le = job._le || appendLog(`${job.name} – tillagd (${job.qty})`, cacheKey);
+    job._le = le;
+    show("Sparar…");
+
+    // Optimistisk write FÖRE anropet. pendingSync:true gör att initData
+    // preserverar posten om preload-pollen träffar innan svaret hunnit fram,
+    // och gör att ett rehydrerat jobb åter syns som gul rad efter omstart
+    // (tagCache byggs om från servern vid start — utan detta hade artikeln
+    // räknats i statusraden utan att synas i listan).
+    // Finns posten redan kvar rör vi BARA pendingSync-flaggan: ett svep får
+    // inte klobbra en kommentar eller ett saldo som användaren hunnit ändra på
+    // den gula raden medan artikeln väntade på arket.
+    const prevEntry = tagCache.get(cacheKey);
+    tagCache.set(cacheKey, prevEntry ? { ...prevEntry, pendingSync: true } : buildOptimisticCacheEntry({
+      name: job.name, type: job.type, place: job.sheetName,
+      sheetPlace: job.sheetPlace, category: job.category, minQty: job.minQty
+    }));
+    if (!metaCache.has(cacheKey)) {
+      setLocalMeta(cacheKey, { qty: job.qty, unit: job.unit, lastMs: Date.now(), user: job.user || userName });
+    }
+    recomputeMaxLast(); renderLists();
+
+    // Ett enda utfallsblock för både svar och oväntat kast: gasCallWithRetry
+    // kastar normalt INTE (den returnerar {ok:false,exhausted:true}), men om
+    // den gör det ska utfallet behandlas likadant som ett uttömt försök —
+    // aldrig som en avvisning, och aldrig som en framgång.
+    const applyCreateResult = (res) => {
+        const cls = classifyLinkResult(res);
+        if (cls === 'verified') {
+          _pendingCreates.delete(job.ck);
+          _persistPending_();
+          markAsDone(le);
+          const newKey = createCacheKey(job, res);
+          const cur = tagCache.get(cacheKey);
+          if (cur) {
+            const updated = { ...cur, rowNum: (res && res.row) || cur.rowNum, pendingSync: false };
+            if (newKey !== cacheKey && !tagCache.has(newKey)) {
+              tagCache.delete(cacheKey);
+              tagCache.set(newKey, updated);
+              const m = metaCache.get(cacheKey);
+              if (m) { metaCache.delete(cacheKey); metaCache.set(newKey, m); }
+              // B4 (v151): köade jobb mot den gamla nyckeln måste följa med,
+              // annars får de cache-miss vid flush → evig gulmarkering. Med P2b
+              // kan pending-fönstret bli långt nog att användaren hinner
+              // redigera den gula raden innan nyckelbytet — då finns det
+              // faktiskt jobb att flytta. Create-vägen gjorde aldrig detta.
+              rekeyPendingJobs(cacheKey, newKey,
+                { sheetName: job.sheetName, rowNum: (res && res.row) || null },
+                updateQueue, _pendingLogSingle, _pendingTagLinks);
+              _persistQueue_(); _persistPending_();
+            } else {
+              tagCache.set(cacheKey, updated);
+            }
+          }
+          // Grace-fönster (fältfynd 2026-07-30): skydda den färska raden mot en
+          // preload som startade FÖRE writen. Samma mönster som logSingle.
+          _recentlySynced.set(newKey, Date.now());
+          recomputeMaxLast(); renderLists();
+          show(`Skapad: ${job.name}`, "ok");    // P2c: först NU, och först här
+        } else if (cls === 'pending-retry') {
+          // Ej bekräftat (offline/uttömt). Jobbet ligger redan i
+          // _pendingCreates → meddelandet nedan är SANT, till skillnad från
+          // före P2 då det inte fanns någon som helst kö att vänta på.
+          const j = mergePendingCreate(_pendingCreates, job);
+          _pendingCreates.set(job.ck, j);
+          _persistPending_();
+          const _gaveUpHope = (j.retries || 0) >= RESYNC_WARN_AFTER;
+          if (le) {
+            const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
+            const m = le.querySelector('.msg');
+            if (m) m.textContent = _gaveUpHope
+              ? `${job.name} – kunde inte skapas, lägg in artikeln igen`
+              : `${job.name} – sparas när du är online igen`;
+          }
+          show(_gaveUpHope
+            ? "En ny artikel kunde inte sparas – lägg in den igen"
+            : "Ingen kontakt — artikeln sparas när du är online igen", "warn");
+        } else {
+          // Äkta server-avvisning (trasig rubrikrad, flik saknas, validering).
+          // Omförsök är meningslöst → avregistrera. Rulla dessutom tillbaka den
+          // optimistiska posten: en rad med pendingSync:true överlever varje
+          // initData-ombygge, så utan detta blev en avvisad create ett
+          // PERMANENT spöke i listan — en artikel som ser sparad ut men inte
+          // finns i arket. Exakt den lögnen som kostade oss 30 juli.
+          _pendingCreates.delete(job.ck);
+          _persistPending_();
+          if (tagCache.has(cacheKey)) tagCache.delete(cacheKey);
+          if (metaCache.has(cacheKey)) metaCache.delete(cacheKey);
+          recomputeMaxLast(); renderLists();
+          markLogFail(le, new Error((res && (res.msg || res.error)) || 'serverfel'));
+          show((res && res.msg) || `${job.name} kunde inte skapas`, "warn");
+        }
+        return cls;
+    };
+    return gasCallWithRetry('logTag', buildCreatePayload(job, userName))
+      .then(applyCreateResult)
+      .catch(err => applyCreateResult({ ok: false, exhausted: true, msg: err && err.message }));
   }
 };
 
@@ -1888,7 +2166,10 @@ async function resyncPendingTagLinks() {
   // INGEN parallell mekanism, INGEN ny listener: en och samma sweep drar
   // båda map:arna under samma _resyncInFlight-guard.
   const singleJobs = selectPendingResync(_pendingLogSingle);
-  if (!linkJobs.length && !singleJobs.length) return;
+  // P2b: creates dras av SAMMA svep, med samma idempotenta urval och under
+  // samma _resyncInFlight-guard. Ingen ny listener, ingen parallell mekanism.
+  const createJobs = selectPendingResync(_pendingCreates);
+  if (!linkJobs.length && !singleJobs.length && !createJobs.length) return;
   _resyncInFlight = true;
   try {
     for (const { key, job } of linkJobs) {
@@ -1924,6 +2205,21 @@ async function resyncPendingTagLinks() {
         job._inflight = false; // oväntat → nästa event försöker igen
       }
     }
+    for (const { key, job } of createJobs) {
+      job._inflight = true;   // markera FÖRE (selectPendingResync hoppar då över)
+      try {
+        // Re-kör EXAKT samma Save.createItem-väg (ingen separat gasCall-path).
+        // createItem self-delete:ar _pendingCreates vid verified/rejected och
+        // nollar _inflight + behåller posten vid pending-retry. Idempotensen
+        // vilar på job.ck, som bevaras genom både persistering och omförsök:
+        // en create som i själva verket lyckades men vars svar tappades ska
+        // ge tillbaka den befintliga raden, inte en dubblett (30 juli: Oatly
+        // och Rårörda lingon skrevs båda efter timeout).
+        Save.createItem(job);
+      } catch (_) {
+        job._inflight = false; // oväntat → nästa event försöker igen
+      }
+    }
     if (typeof renderLists === 'function') renderLists();
   } finally {
     _resyncInFlight = false;
@@ -1932,6 +2228,20 @@ async function resyncPendingTagLinks() {
 if (typeof window !== 'undefined' && window.addEventListener) {
   // EN enda online-listener (idempotent via _resyncInFlight + _inflight-guard).
   window.addEventListener('online', resyncPendingTagLinks);
+  // Startknuff, samma som updateQueue redan får. Utan den syns ett rehydrerat
+  // create i synk-badgen men INTE i listan förrän nästa svep — uppmätt upp till
+  // 60 s, eftersom checkForUpdate bara hänger på setInterval(60000) och
+  // visibilitychange, och ingen av dem fyrar vid start. En användare som inte ser
+  // sin artikel skapar den igen, vilket ger exakt den dubblett resten av denna
+  // release finns till för att stänga.
+  // ⚠ TÄCKER BARA ONLINE-FALLET. resyncPendingTagLinks returnerar direkt när
+  // navigator.onLine är falskt, före både urval och renderLists — ett rehydrerat
+  // create OFFLINE räknas alltså fortfarande av badgen utan att synas i listan.
+  // Den fixen kräver att den optimistiska posten materialiseras när tagCache är
+  // fylld (buildOptimisticCacheEntry), inte här i startsekvensen där cachen ännu
+  // är tom. Skriv inte om detta som om offline vore löst.
+  // Idempotent: _resyncInFlight + _inflight-guarden gör en extra körning ofarlig.
+  setTimeout(function () { try { resyncPendingTagLinks(); } catch (_) {} }, 1500);
 }
 
 /* ===== Bundlad uppdateringskö ===== */
@@ -5255,7 +5565,7 @@ function populateNewCategoryDropdown(forPlace){
 function prepareNewItemDialog(scanned){
   let currentTag=scanned;
   lastCode=scanned; resetDialog(); dlgTitle.textContent="Ny artikel";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, flik, plats och kategori. <b>Enhet är obligatorisk.</b><br><b>Flik</b> = vilket Sheet-blad raden skapas i. <b>Plats</b> = fysisk placering (kolumn B).<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Enhetslistan är grupperad i vikt, volym och styck. Välj helst en befintlig enhet — en ny enhet gör saldot svårare att tolka senare.<br>Saknas enhet, flik, plats eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, flik, plats och kategori. <b>Benämning, enhet och flik är obligatoriska</b> — utan flik vet arket inte var raden ska hamna.<br><b>Flik</b> = vilket Sheet-blad raden skapas i. <b>Plats</b> = fysisk placering (kolumn B).<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Enhetslistan är grupperad i vikt, volym och styck. Välj helst en befintlig enhet — en ny enhet gör saldot svårare att tolka senare.<br>Saknas enhet, flik, plats eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
 
   const isManual=String(scanned).startsWith('M');
   dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${esc(scanned)}</b>. Ange uppgifter:`;
@@ -5392,14 +5702,23 @@ function prepareNewItemDialog(scanned){
   dlgBtns.innerHTML=`<button id="cancelNewBtn" class="btn cancel">Avbryt</button><button id="saveNewBtn" class="btn">Spara</button>`;
   qs("#saveNewBtn").onclick=()=>{
     const name=manualName.value.trim();
-    if(!name){show("Ange benämning","warn");return;}
     const type=manualType.value;
     const qty=parseFloat((manualQty.value||"1").replace(",","."))||1;
     const unitRaw=(qs('#manualUnit')?.value||"").trim();
     const unit = unitRaw === '__new__'
       ? (qs('#manualUnitNew')?.value||'').trim()
       : unitRaw;
-    if(!unit){show("Ange enhet","warn");return;}
+    // P2a: flikvalet är lika obligatoriskt som enheten. Tidigare föll ett tomt
+    // val tillbaka på strängen "Okänd", som servern avvisar med "Flik finns
+    // inte: Okänd" — permanent, utan omförsök. Så förlorades "Bostongurka"
+    // 2026-07-30. Alla hårda krav prövas FÖRE F3:s mjuka ny-enhet-gate.
+    const place=(qs('#manualPlace')?.value||"").trim();
+    const v = validateNewItem({ name, unit, sheetName: place });
+    if(!v.ok){
+      show(v.msg,"warn");
+      if(v.field==='sheetName') qs('#manualPlace')?.focus();
+      return;
+    }
     // F3 (v155): mjuk gate för ny enhet — första Spara-trycket visar en
     // varningstext i dialogen, andra trycket sparar. Armering nollas om
     // enheten byts eller texten redigeras.
@@ -5408,7 +5727,6 @@ function prepareNewItemDialog(scanned){
       setUnitNote(`Ny enhet ("${unit}") gör det svårare att tolka saldot senare. Finns ingen passande i listan? Tryck Spara igen för att använda den ändå.`, true);
       return;
     }
-    const place=(qs('#manualPlace')?.value||"").trim()||"Okänd";
     const spRaw=(qs('#manualSheetPlace')?.value||"").trim();
     const sheetPlace = spRaw === '__new__'
       ? (qs('#manualSheetPlaceNew')?.value||'').trim()
@@ -5418,51 +5736,36 @@ function prepareNewItemDialog(scanned){
       ? (qs('#manualCategoryNew')?.value||'').trim()
       : catRaw;
     const minQty=parseFloat((qs('#manualMinQty')?.value||'0').replace(',','.'))||0;
-    const le=appendLog(`${name} – tillagd (${qty})`,currentTag);
-    show("Sparar…");
-    // Optimistisk write FÖRE gasCall. pendingSync:true gör att initData preserverar posten
-    // om preload-pollen råkar träffa innan logTag-svaret hunnit fram.
-    tagCache.set(currentTag,{name,type,place,sheetName:place,sheetPlace,category,minQty,comment:'',step:'',rowNum:null,altTags:[],pendingSync:true});
-    setLocalMeta(currentTag,{qty,unit,lastMs:Date.now(),user:userName});
-    recomputeMaxLast();renderLists();
-    // Skicka all metadata i SJÄLVA logTag-anropet. Tidigare gjordes unit/category/
-    // place i ett separat updateMeta efteråt — det misslyckades tyst eftersom
-    // currentTag ("M…") strippas av normalizeTag och raden ej hittades. Nu skriver
-    // backend metadata direkt i nya raden via cols-guards.
-    gasCall('logTag', {
-      tag: currentTag, name, type, qty, user: userName,
-      sheetName: place||null, unit, category, place: sheetPlace, minQty
-    })
-      .then(assertOk)
-      .then((res) => {
-        markAsDone(le);
-        const cur=tagCache.get(currentTag);
-        if(cur){
-          // Manuell artikel skapas TAGGLÖS → vid nästa preload returnerar servern
-          // den under sin syntetiska nyckel "S<flik>R<rad>" (preloadTagsWithMeta).
-          // Behåller vi M-nyckeln re-applyar initData M-posten OVANPÅ S-posten →
-          // artikeln syns TVÅ gånger. Byt därför M→S med EXAKT samma formel som
-          // backend, rekonstruerad från res.sheetName + res.row (backend
-          // returnerar nu sheetName så vi slipper gissa fliknamnet).
-          const updated={...cur,rowNum:res?.row||cur.rowNum,pendingSync:false};
-          let newKey=currentTag;
-          if(res&&res.new&&res.row&&res.sheetName){
-            newKey="S"+String(res.sheetName).replace(/[^a-zA-Z0-9]/g,'')+"R"+res.row;
-          }
-          if(newKey!==currentTag&&!tagCache.has(newKey)){
-            tagCache.delete(currentTag);
-            tagCache.set(newKey,updated);
-            const m=metaCache.get(currentTag);
-            if(m){metaCache.delete(currentTag);metaCache.set(newKey,m);}
-          }else{
-            tagCache.set(currentTag,updated);
-          }
-        }
-        renderLists();
-      })
-      .catch(err => markLogFail(le, err));
+    // P2b/P2d: hela create-jobbet byggs som ETT objekt med en idempotensnyckel
+    // och lämnas till Save.createItem, som registrerar det i _pendingCreates
+    // (persisterat) innan den skickar. Bygget här gör bara DOM-avläsningen.
+    // job.tag = currentTag: "M<ms>" för en manuellt skapad artikel (skickas
+    // TAGGLÖS till servern, se isTaglessCreate) eller den skannade taggen —
+    // "Skanna tag"-knappen kan ha ersatt currentTag, därför läses den här och
+    // inte från dialogens ursprungliga argument.
+    // Spärr mot dubbeltryck. closeDialog döljer dialogen först i en rAF, så två
+    // tryck inom ~16 ms hann tidigare bygga VAR SIN ck och därmed skapa två rader.
+    // Serverns idempotens hjälper inte: skilda nycklar är per definition skilda
+    // skapanden. Detta är en dubblettväg i den release som stänger dubbletter.
+    if (_createSaveBusy) return;
+    _createSaveBusy = true;
+    setTimeout(function () { _createSaveBusy = false; }, 1500);
+    const ck = newCreateKey();
+    Save.createItem({
+      ck,
+      tag: currentTag, name, type, qty, unit, category,
+      sheetPlace, sheetName: place, minQty, user: userName, retries: 0
+    });
+    // P2c: ingen "Skapad: …" här. Den sattes tidigare SYNKRONT, före svaret —
+    // grön bekräftelse på en artikel som kunde vara på väg ingenstans. Nu säger
+    // createItem "Sparar…" och byter till "Skapad: …" först i den verifierade
+    // grenen (eller till en ärlig varning i de andra två).
     closeDialog();cooldown(currentTag);
-    show(`Skapad: ${name}`, "ok");
+    // closeDialog nollställer statusraden i en egen requestAnimationFrame, som
+    // annars skulle radera "Sparar…" direkt. Skriv därför om texten i en rAF
+    // som registreras EFTER den — men bara om artikeln fortfarande väntar på
+    // svar, så ett redan anlänt utfall inte skrivs över med "Sparar…".
+    requestAnimationFrame(()=>{ if(_pendingCreates.has(ck)) show("Sparar…"); });
   };
   qs("#cancelNewBtn").onclick=()=>{closeDialog();show("Avbrutet","warn");cooldown(currentTag);};
   openDialog(manualName);

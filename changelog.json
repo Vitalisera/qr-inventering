@@ -1,6 +1,16 @@
 {
-  "latest": 157,
+  "latest": 158,
   "versions": [
+    {
+      "version": 158,
+      "date": "2026-08-25",
+      "notes": [
+        "Nya artiklar sparas nu på samma säkra sätt som allt annat. Tidigare skickades en ny artikel iväg en enda gång, utan att appen försökte igen om nätet svek. Nu läggs den i kön, försöker om av sig själv, och ligger kvar även om du stänger appen mitt i.",
+        "Du måste välja vilken flik artikeln ska hamna i. Förut kunde valet lämnas tomt, och då avvisade arket artikeln utan att någon märkte det. Det var så en artikel försvann i somras.",
+        "\"Skapad\" visas först när arket har bekräftat. Innan dess står det att artikeln sparas, så du ser skillnad på ett löfte och ett kvitto.",
+        "Skapas samma artikel av misstag två gånger, till exempel för att appen försökte igen efter en timeout, blir det inte längre två rader i arket."
+      ]
+    },
     {
       "version": 157,
       "date": "2026-08-25",

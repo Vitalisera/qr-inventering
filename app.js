@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 158;
+const APP_VERSION = 159;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -430,7 +430,16 @@ async function gasCallWithRetry(fn, params = {}, opts = {}) {
       const res = timeoutMs == null ? await gasCall(fn, params) : await gasCall(fn, params, timeoutMs);
       // Success
       if (res?.ok) return res;
-      // Specifika permanent-fel: returnera direkt utan retry
+      // Specifika permanent-fel: returnera direkt utan retry.
+      // FÖRST felkontraktet från @122: backend märker varje ok:false med
+      // transient true/false. Läses det inte fastnar ett PERMANENT fel i
+      // retry-loopen och kommer ut som det syntetiska exhausted-svaret nedan —
+      // där både res.code och res.staleRow är BORTA. classifyLinkResult tolkar
+      // det som 'pending-retry' och användaren får "sparas när du är online
+      // igen" om en skrivning som aldrig kan lyckas (rowNum är fortfarande
+      // stale). Exakt den falska-löfte-klass hela detta arbete stänger.
+      // Regexen nedan är kvar som fallback för svar från en äldre backend.
+      if (res && res.ok === false && res.transient === false) return res;
       if (res?.collision) return res;
       if (res?.msg && /Ogiltig|sheetName.*krävs|Flik finns inte|saknas/i.test(res.msg)) return res;
       lastErr = res?.msg || 'Okänt server-fel';
@@ -608,15 +617,94 @@ function shouldFireInventOnLink(enabled, dialogIsOpen, clickTs, nowMs, windowMs 
   return (nowMs - ts) <= windowMs;
 }
 
+// P3a (felsynlighet): beständig räknare för skrivningar som ALDRIG kom fram
+// och som ingen mekanism kommer att försöka om. Skild från `warn`-facket i
+// badgen: warn = jobb som fortfarande ligger i en kö men gett upp hoppet
+// (retries >= RESYNC_WARN_AFTER), _failedWrites = jobb som är slutgiltigt
+// avvisade eller tappade och därmed avregistrerade. Räknaren persisteras i
+// SAMMA localStorage-blob som köerna (_PENDING_LS_KEY, fältet `failed`) —
+// ingen ny nyckelfamilj — och nollas först när användaren tryckt på badgen.
+// Varför beständig: fram till nu bars felet enbart av en historikrad (som
+// MAX_LOG vräkte ut inom ~30 s) och en statusbanner (som självrensade efter
+// 5 s). Ett fel kunde alltså inträffa och vara spårlöst borta innan någon
+// tittade upp från etiketten.
+let _failedWrites = 0;
+
+// P3a, ren och testbar (speglad ordagrant i failcount.test.js — håll i synk).
+// REGELN, i en mening: en misslyckad skrivning räknas som förlorad ENDAST om
+// ingen kö/resync kommer att försöka om den. Skälet är att räknaren annars
+// larmar vid normal drift — en skanning som görs offline hamnar i
+// _pendingLogSingle och skickas vid nästa 'online'-event; den är fördröjd,
+// inte förlorad, och har redan sin egen eskalering via RESYNC_WARN_AFTER.
+//   cls              = utfallet från classifyLinkResult ('verified' |
+//                      'pending-retry' | 'rejected')
+//   retryRegistered  = true om jobbet ligger kvar i en kö som faktiskt
+//                      re-försöker (updateQueue, _pendingLogSingle,
+//                      _pendingTagLinks, _pendingCreates).
+function countsAsLostWrite(cls, retryRegistered) {
+  if (cls === 'verified') return false;      // skrivningen är bekräftad i arket
+  if (retryRegistered === true) return false; // fördröjd, inte förlorad
+  return true;                                // avvisad, eller tappad utan kö
+}
+
+// P3b, ren och testbar (speglad ordagrant i failcount.test.js — håll i synk).
+// Råa feltexter nådde skärmen: "stale row" (Code.js _staleRowGuard_) och
+// "Failed to fetch" (webbläsarens nätverkslager) säger ingenting om vad
+// användaren ska göra. Servern sätter en stabil `code` på varje avvisning —
+// den går före meddelandetexten, som kan formuleras om i backend när som
+// helst. Tonen följer den som redan finns i Save.logSingle ("skanna om
+// artikeln"): säg vad som hände OCH vad man gör åt det.
+// Okänd kod med ett svenskt server-meddelande (t.ex. tag-krock) släpps
+// igenom oförändrad — det är redan begripligt, och att svälja det vore att
+// byta information mot en tomhet.
+function humanizeSaveError(raw, code) {
+  const c = String(code == null ? '' : code).toUpperCase();
+  const s = String(raw == null ? '' : raw).trim();
+  const low = s.toLowerCase();
+  if (c === 'STALE_ROW' || low.includes('stale row'))
+    return 'raden hade flyttat sig i arket, skanna om artikeln';
+  if (c === 'NOT_FOUND' || low.startsWith('tagg ej hittad'))
+    return 'artikeln hittades inte i arket, skanna om den';
+  if (c === 'SHEET_MISSING' || low.startsWith('flik finns inte'))
+    return 'fliken finns inte längre i arket, kontrollera artikelns plats';
+  if (c === 'SHEET_HEADER_BROKEN' || c === 'NO_NAME_COL' || low.includes('rubrikrad'))
+    return 'arkets rubrikrad känns inte igen, välj en annan flik';
+  if (c === 'LOCK_TIMEOUT' || low.includes('server upptagen'))
+    return 'arket var upptaget, gör om ändringen';
+  if (c === 'BAD_ARGS' || c === 'BAD_TAG')
+    return 'uppgifterna kunde inte tolkas, gör om ändringen';
+  // Transportfel. Safari/iOS-PWA är huvudklienten och har egna texter
+  // ("Load failed", "The network connection was lost") — Chromes "Failed to
+  // fetch" ensam räcker alltså inte som mönster.
+  if (/failed to fetch|load failed|networkerror|network connection was lost|network request failed/.test(low))
+    return 'ingen kontakt med arket, gör om ändringen när du är online';
+  if (/timeout|timed out|tidsgräns/.test(low))
+    return 'arket svarade inte i tid, gör om ändringen';
+  if (c === 'SERVER_ERROR' || low === 'serverfel')
+    return 'arket svarade med ett fel, gör om ändringen';
+  if (!s) return 'okänt fel, skanna om artikeln';
+  return s;
+}
+
 // U4 (v153), ren och testbar: modell för synk-badgen vid statusraden.
-// counts = { links, singles, queue, warn } där warn = antal jobb som nått
-// retries >= RESYNC_WARN_AFTER. Returnerar { visible, warn, text }.
+// counts = { links, singles, queue, warn, failed } där warn = antal jobb som
+// nått retries >= RESYNC_WARN_AFTER och failed = _failedWrites (P3a).
+// Returnerar { visible, warn, text }.
 function buildSyncBadgeModel(counts) {
   const c = counts || {};
   const links = c.links || 0, singles = c.singles || 0, queue = c.queue || 0, warn = c.warn || 0;
+  const failed = c.failed || 0;
   const total = links + singles + queue;
+  // P3a: rött har FÖRETRÄDE och kräver INTE att något ligger kvar i köerna.
+  // Den gamla ordningen ("total <= 0 → dold" FÖRE warn-grenen) gjorde varje
+  // avvisad skrivning osynlig, eftersom rejected-grenarna i Save.logSingle /
+  // Save.create / Save.linkTag avregistrerar jobbet i SAMMA andetag som de
+  // failar — total är alltså noll precis i det ögonblick felet uppstår.
+  // warn + failed summeras: båda betyder "nådde inte arket", och båda kräver
+  // samma sak av användaren (titta i historiken).
+  const red = warn + failed;
+  if (red > 0) return { visible: true, warn: true, text: red + ' kunde inte sparas – tryck här' };
   if (total <= 0) return { visible: false, warn: false, text: '' };
-  if (warn > 0) return { visible: true, warn: true, text: warn + ' kunde inte sparas' };
   const noun = (links === total)
     ? (total === 1 ? 'koppling' : 'kopplingar')
     : (total === 1 ? 'ändring' : 'ändringar');
@@ -642,11 +730,20 @@ function _updateSyncBadge_() {
       links: _pendingTagLinks.size,
       singles: _pendingLogSingle.size + _pendingCreates.size,
       queue: updateQueue.length + (_inflightBatch ? _inflightBatch.length : 0),
-      warn
+      warn,
+      // P3a: permanenta fel överlever att köerna töms — de ligger inte kvar
+      // någonstans annars, och det är exakt därför de behöver en egen post.
+      failed: _failedWrites
     });
     el.classList.toggle('hidden', !m.visible);
     el.classList.toggle('warn', m.warn);
     el.textContent = m.visible ? (m.warn ? '⚠️ ' + m.text : '⏳ ' + m.text) : '';
+    // P3a: den statiska aria-label:n ("Visa vad som väntar på att sparas")
+    // döljer textinnehållet för skärmläsare och blev direkt missvisande när
+    // badgen kan betyda "kunde inte sparas". Följ texten i stället.
+    el.setAttribute('aria-label', m.visible
+      ? (m.warn ? m.text + ', visa historiken' : m.text)
+      : 'Inget väntar på att sparas');
   } catch (_) {}
 }
 
@@ -684,10 +781,26 @@ function _persistPending_() {
         retries: v.retries || 0
       });
     }
-    if (!tagLinks.length && !logSingle.length && !creates.length) { localStorage.removeItem(_PENDING_LS_KEY); _updateSyncBadge_(); return; }
-    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle, creates }));
+    // P3a: `failed` hör hemma i samma blob (ingen ny nyckel) och måste därför
+    // hålla blobben vid liv även när alla tre köerna är tomma — annars raderas
+    // felräknaren av nästa lyckade jobb, vilket är precis den tystnad P3
+    // ska ta bort.
+    if (!tagLinks.length && !logSingle.length && !creates.length && !_failedWrites) { localStorage.removeItem(_PENDING_LS_KEY); _updateSyncBadge_(); return; }
+    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle, creates, failed: _failedWrites }));
   } catch (_) {}
   _updateSyncBadge_();   // U4: badge speglar köerna — samma choke-point som persistering
+}
+// P3a: enda vägen att räkna upp felräknaren. Persisterar via _persistPending_
+// (samma choke-point som köerna) — nödvändigt eftersom flera fail-grenar, bl.a.
+// datumvägen i commitContainerDate, inte anropar någon persistering alls; en
+// ren minnesvariabel hade då dött med appen. Expanderar dessutom historiken:
+// ett fel som landar i en kollapsad panel är i praktiken osynligt.
+function _bumpFailedWrites_(n) {
+  const add = Number(n) || 0;
+  if (add <= 0) return;
+  _failedWrites += add;
+  _persistPending_();
+  _expandLog_();
 }
 function _rehydratePending_() {
   try {
@@ -706,6 +819,10 @@ function _rehydratePending_() {
     if (d && Array.isArray(d.creates)) for (const j of d.creates) {
       if (j && j.ck && !_pendingCreates.has(j.ck)) _pendingCreates.set(j.ck, j);
     }
+    // P3a: felräknaren rehydreras ur samma blob. En användare som stänger
+    // appen efter ett fel ska mötas av den röda badgen nästa gång hon startar
+    // — annars räckte det att låsa telefonen för att felet skulle försvinna.
+    if (d && Number(d.failed) > 0) _failedWrites = Number(d.failed);
   } catch (_) {}
 }
 _rehydratePending_();
@@ -828,12 +945,21 @@ async function aiSearch(query, candidates) {
   return null;
 }
 
-function markLogFail(le, err) {
-  if (!le) return;
-  const icon = le.querySelector(".icon"); if (icon) icon.textContent = "⚠️";
-  const msg = le.querySelector(".msg");
-  if (msg) msg.textContent += " – " + (err?.message || 'fel');
-  show("Kunde inte spara", "warn");
+// P3 (felsynlighet): gemensam slutstation för en misslyckad skrivning.
+// opts.code       = serverns felkod (res.code) — grunden för klarspråket.
+// opts.retryable  = true om jobbet ligger kvar i en kö som re-försöker; då
+//                   ska det INTE räknas som förlorat (se countsAsLostWrite).
+function markLogFail(le, err, opts) {
+  const o = opts || {};
+  const human = humanizeSaveError(err && err.message, o.code);
+  if (le) {
+    const msg = le.querySelector(".msg");
+    const base = msg ? msg.textContent : '';
+    markLogWarn(le, base + " – " + human);
+  }
+  show("Kunde inte spara – " + human, "warn");
+  // P3a: den enda grenen som räknas här är den där ingen kö tar över.
+  if (countsAsLostWrite('rejected', o.retryable === true)) _bumpFailedWrites_(1);
 }
 
 /* ===== Utils ===== */
@@ -1383,18 +1509,72 @@ const MAX_LOG = 5;
 const undoData = new Map();
 const UNDO_WINDOW_MS = 15000;
 
+// P3b: klass som gör en historikrad immun mot MAX_LOG-vräkningen. Fyndet:
+// MAX_LOG är 5, och i ett inventeringspass skrivs fem vanliga rader på runt
+// trettio sekunder — en varning kunde alltså rulla ut ur historiken innan
+// användaren ens hann titta dit. Vanliga rader får fortsätta rulla.
+const LOG_WARN_CLASS = 'logWarn';
+
 function appendLog(msg, tag, icon = "⏳") {
   const e = document.createElement("button");
   e.type = "button";
-  e.className = "logEntry clickable";
+  // Rader som föds som varningar (t.ex. retro-varningen vid avvisad koppling)
+  // ska vara immuna direkt, inte först om någon råkar köra dem via markLogWarn.
+  e.className = "logEntry clickable" + (icon === "⚠️" ? " " + LOG_WARN_CLASS : "");
   e.innerHTML = `<span class="icon">${esc(icon)}</span><span class="msg">${esc(msg)}</span>`;
   e.onclick = () => openContainerForTag(tag);
   logList.prepend(e);
-  while (logList.children.length > MAX_LOG) logList.removeChild(logList.lastChild);
+  _evictLog_();
   // Visa toggle-knappen så snart vi har minst en logg-post
   const tog = qs('#logToggleBtn');
   if (tog) tog.classList.remove('hidden');
   return e;
+}
+
+// P3b: vräk bara rader UTAN varningsmarkering, och börja underifrån (äldst).
+// Består listan enbart av varningar får den hellre växa förbi MAX_LOG än att
+// tysta ett fel — historiken är sista spåret av en skrivning som inte kom fram.
+function _evictLog_() {
+  if (!logList) return;
+  // Övre gräns på varven: ren säkerhetssele mot en oväntad DOM (removeChild
+  // som inte minskar barnantalet) — inte en förväntad situation.
+  let spins = 0;
+  while (logList.children.length > MAX_LOG && spins++ < 200) {
+    let victim = null;
+    for (let i = logList.children.length - 1; i >= 0; i--) {
+      const c = logList.children[i];
+      if (!c.classList.contains(LOG_WARN_CLASS)) { victim = c; break; }
+    }
+    if (!victim) break;          // bara varningar kvar → låt listan växa
+    logList.removeChild(victim);
+  }
+}
+
+// P3b: expandera historiken om den är kollapsad. Går via toggle-knappens egen
+// click-handler i stället för att manipulera 'collapsed' direkt, så att
+// knappens text och aria-expanded aldrig hamnar ur synk med listan.
+function _expandLog_() {
+  try {
+    const list = document.getElementById('logList');
+    const tog = document.getElementById('logToggleBtn');
+    if (list && tog && list.classList.contains('collapsed')) tog.click();
+  } catch (_) {}
+}
+
+// P3b: EN väg att göra en historikrad till varning. Sätter ⚠️, gör raden
+// eviction-immun och — viktigast — ser till att raden faktiskt sitter kvar i
+// DOM:en. Innan detta kunde en ⏳-rad hinna vräkas ut av MAX_LOG medan svaret
+// var i flykten, varpå varningen skrevs in i en frikopplad nod som ingen
+// någonsin fick se. Räknar INTE upp felräknaren: den avgörs av
+// countsAsLostWrite på callsiten, eftersom en ⚠️-rad lika gärna kan betyda
+// "ligger i kö, skickas när du är online".
+function markLogWarn(le, text) {
+  if (!le) return le;
+  le.classList.add(LOG_WARN_CLASS);
+  const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
+  if (text != null) { const m = le.querySelector('.msg'); if (m) m.textContent = String(text); }
+  if (logList && le.isConnected === false) { logList.prepend(le); _evictLog_(); }
+  return le;
 }
 
 // Toggle-knapp för historik (default kollapsad)
@@ -1411,9 +1591,13 @@ qs('#logToggleBtn')?.addEventListener('click', () => {
 // raderna blir synliga. Återanvänder toggle-knappens handler (klick) i stället
 // för en parallell expander-väg — men bara när listan är kollapsad.
 qs('#syncBadge')?.addEventListener('click', () => {
-  const list = qs('#logList');
-  const tog = qs('#logToggleBtn');
-  if (list && list.classList.contains('collapsed') && tog) tog.click();
+  _expandLog_();
+  // P3a: användaren har nu sett historiken → kvittera de permanenta felen.
+  // Badgen kan mycket väl förbli röd efteråt: jobb som gett upp hoppet
+  // (retries >= RESYNC_WARN_AFTER) ligger fortfarande osparade i köerna, och
+  // att nolla dem här vore falsk trygghet. Bara det som redan är slutgiltigt
+  // och nu läst kvitteras.
+  if (_failedWrites > 0) { _failedWrites = 0; _persistPending_(); }
 });
 function markAsDone(e) {
   const icon = e.querySelector(".icon");
@@ -1472,10 +1656,16 @@ function addUndoButton(logEntry, tag, prevOverride) {
     show("Ångrad", "warn");
     gasCallWithRetry('updateMeta', {tag, args: payload})
       .then(res => {
-        if (classifyLinkResult(res) !== 'verified') {
-          if (icon) icon.textContent = '⚠️';
-          if (msg) msg.textContent += ' – ångra ej bekräftad';
+        const _cls = classifyLinkResult(res);
+        if (_cls !== 'verified') {
+          // P3: ångra-vägen registrerar INGET jobb för resync — varken kön
+          // eller pending-mapparna tar över. Både avvisning och uttömt nätfel
+          // är därför slutgiltiga här, och arket står kvar med det värde
+          // användaren just backade ur. Det är en äkta divergens och räknas.
+          markLogWarn(logEntry, (msg ? msg.textContent : '') +
+            ' – ångra nådde inte arket, kontrollera artikeln');
           show("Ångra kunde inte bekräftas", "warn");
+          if (countsAsLostWrite(_cls, false)) _bumpFailedWrites_(1);
         } else {
           // §1.3-fix (b cleanup): undo verified → rensa pendingSync så raden
           // INTE permanent gulmarkeras (b) satte true:n bara som tillfälligt
@@ -1486,9 +1676,11 @@ function addUndoButton(logEntry, tag, prevOverride) {
         }
       })
       .catch(err => {
-        if (icon) icon.textContent = '⚠️';
-        if (msg) msg.textContent += ' – ' + (err?.message || 'fel');
+        // Samma resonemang som i .then-grenen: inget re-försök finns.
+        markLogWarn(logEntry, (msg ? msg.textContent : '') +
+          ' – ' + humanizeSaveError(err && err.message));
         show("Ångra kunde inte bekräftas", "warn");
+        _bumpFailedWrites_(1);
       });
   };
   logEntry.appendChild(undoBtn);
@@ -1723,11 +1915,11 @@ const Save = {
       });
       _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name });
       _persistPending_();
-      if (le) {
-        const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
-        const m = le.querySelector('.msg');
-        if (m) m.textContent = `${name} – ej bekräftat – försöker igen${msgTail ? ' (' + msgTail + ')' : ''}`;
-      }
+      // P3b: eviction-immun (raden ska finnas kvar tills resyncen svarat), men
+      // INGEN uppräkning av felräknaren — jobbet ligger i _pendingTagLinks och
+      // re-försöks vid nästa 'online'. Det är fördröjt, inte förlorat; skulle
+      // det ge upp hoppet fångas det av warn-facket (RESYNC_WARN_AFTER).
+      markLogWarn(le, `${name} – ej bekräftat – försöker igen${msgTail ? ' (' + msgTail + ')' : ''}`);
     };
 
     let res;
@@ -1804,11 +1996,14 @@ const Save = {
     });
     const failMsg = res && res.collision
       ? `redan kopplad till "${res.existingName}"`
-      : ((res && res.msg) || 'misslyckades');
-    if (le) {
-      const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
-      le.querySelector('.msg').textContent = `${name} – ${failMsg}`;
-    }
+      : humanizeSaveError(res && res.msg, res && res.code);
+    // P3b: markLogWarn i stället för inline-ikon — raden blir eviction-immun
+    // och räddas tillbaka in i DOM:en om MAX_LOG hann vräka ut den medan
+    // addTag var i flykten (kopplingar tar sekunder på mobilt nät).
+    markLogWarn(le, `${name} – ${failMsg}`);
+    // P3a: kopplingen är avvisad OCH avregistrerad ur _pendingTagLinks (raden
+    // ovan) — ingen resync tar över, taggen sitter inte i arket. Räknas.
+    if (countsAsLostWrite(cls, false)) _bumpFailedWrites_(1);
     // B5 (v153): kopplingen avvisades. Avboka en ännu ej fyrad optimistisk
     // inventering, och retro-varna (⚠️-historikrad, samma kanal som avvisningen
     // ovan) om inventeringen redan hann göras mot den koppling som nu rullats
@@ -1903,13 +2098,15 @@ const Save = {
           _pendingLogSingle.set(tag, job);
           _persistPending_();
           const _gaveUpHope = job.retries >= RESYNC_WARN_AFTER;
-          if (le) {
-            const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
-            const m = le.querySelector('.msg');
-            if (m) m.textContent = _gaveUpHope
-              ? `${name} – kunde inte sparas, skanna om artikeln`
-              : `${name} – sparas när du är online igen`;
-          }
+          // P3b: eviction-immun rad. Ingen uppräkning av felräknaren — jobbet
+          // ligger i _pendingLogSingle och re-försöks; warn-facket i badgen
+          // täcker eskaleringen när det gett upp hoppet.
+          markLogWarn(le, _gaveUpHope
+            ? `${name} – kunde inte sparas, skanna om artikeln`
+            : `${name} – sparas när du är online igen`);
+          // Först vid eskaleringen är det värt att bryta användarens flöde och
+          // fälla ut historiken; ett enstaka offline-försök är normal drift.
+          if (_gaveUpHope) _expandLog_();
           show(_gaveUpHope
             ? "En artikel kunde inte sparas – skanna om den"
             : "Ingen kontakt — sparas när du är online igen", "warn");
@@ -1925,7 +2122,7 @@ const Save = {
           if (metaCache.has(tag)) metaCache.set(tag, _prevMeta);
           if (tagCache.has(tag)) tagCache.set(tag, { ...tagCache.get(tag), pendingSync: false });
           recomputeMaxLast(); renderLists();
-          markLogFail(le, new Error((res && res.msg) || 'serverfel'));
+          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code });
         }
         if (typeof onResult === 'function') { try { onResult(cls); } catch (_) {} }
       })
@@ -1938,7 +2135,9 @@ const Save = {
         job.retries = (job.retries || 0) + 1;  // v151: räknas mot RESYNC_WARN_AFTER
         _pendingLogSingle.set(tag, job);
         _persistPending_();
-        markLogFail(le, err);
+        // P3a: retryable — jobbet ligger kvar i _pendingLogSingle (raden ovan)
+        // och tas av resync-svepet, så det får INTE räknas som förlorat.
+        markLogFail(le, err, { retryable: true });
         if (typeof onResult === 'function') { try { onResult('pending-retry'); } catch (_) {} }
       });
     setLocalMeta(tag, { lastMs: Date.now(), user: userName });
@@ -2051,13 +2250,13 @@ const Save = {
           _pendingCreates.set(job.ck, j);
           _persistPending_();
           const _gaveUpHope = (j.retries || 0) >= RESYNC_WARN_AFTER;
-          if (le) {
-            const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
-            const m = le.querySelector('.msg');
-            if (m) m.textContent = _gaveUpHope
-              ? `${job.name} – kunde inte skapas, lägg in artikeln igen`
-              : `${job.name} – sparas när du är online igen`;
-          }
+          // P3b: samma resonemang som i logSingle — immun rad, ingen
+          // uppräkning (jobbet ligger i _pendingCreates), utfällning först
+          // vid eskalering.
+          markLogWarn(le, _gaveUpHope
+            ? `${job.name} – kunde inte skapas, lägg in artikeln igen`
+            : `${job.name} – sparas när du är online igen`);
+          if (_gaveUpHope) _expandLog_();
           show(_gaveUpHope
             ? "En ny artikel kunde inte sparas – lägg in den igen"
             : "Ingen kontakt — artikeln sparas när du är online igen", "warn");
@@ -2073,8 +2272,10 @@ const Save = {
           if (tagCache.has(cacheKey)) tagCache.delete(cacheKey);
           if (metaCache.has(cacheKey)) metaCache.delete(cacheKey);
           recomputeMaxLast(); renderLists();
-          markLogFail(le, new Error((res && (res.msg || res.error)) || 'serverfel'));
-          show((res && res.msg) || `${job.name} kunde inte skapas`, "warn");
+          // markLogFail skriver redan klarspråk i BÅDE historikraden och bannern.
+          // Ett show() här skrev över bannern med den råa servertexten — och
+          // bannern är just det man ser utan att expandera historiken.
+          markLogFail(le, new Error((res && (res.msg || res.error)) || 'serverfel'), { code: res && res.code });
         }
         return cls;
     };
@@ -2389,6 +2590,12 @@ function _renderBatchOutcome_(failedTags) {
     const label = `⚠️ ${failedTags.length} ${failedTags.length === 1 ? 'rad' : 'rader'} kunde inte sparas`;
     if (msgLine) { msgLine.className = "msgLine warn"; msgLine.textContent = label; }
     show(label, "warn", { autoreset: false });
+    // P3a: batch-vägen re-köar INTE misslyckade jobb (känt, ALLVARLIG #10) —
+    // andra argumentet till countsAsLostWrite är därför false, och ska bli
+    // true först den dag #10 är fixad. Fram till dess är varje failedTag en
+    // slutgiltigt osparad rad, och den ska överleva att banner-texten
+    // självrensar efter 5 s och att appen stängs.
+    if (countsAsLostWrite('rejected', false)) _bumpFailedWrites_(failedTags.length);
   } else {
     if (msgLine) { msgLine.className = "msgLine ok"; msgLine.textContent = "☑️ Synkroniserad med Google Sheets"; }
     show("☑️ Synkroniserad med Google Sheets", "ok", { autoreset: false });
@@ -3775,6 +3982,13 @@ function prepareSingleDialog(item, tag) {
     tagCache.set(tag, { ...cur, pendingSync: true });
     recomputeMaxLast(); renderLists();
     const ml = qs("#msgLine"); if (ml) { ml.className = 'msgLine ok'; ml.textContent = newVal ? 'Datum sparas…' : 'Avinventeras…'; }
+    // Historikrad, precis som commitContainerDate gör. Utan den fäller ett
+    // misslyckat datum ut historiken och räknar upp den röda statusraden — men
+    // där finns ingen rad att se. Handboken lovar på tre ställen att man ska
+    // kunna trycka på raden och se vad som hände; det måste vara sant.
+    const le = appendLog(newVal
+      ? `${item.name} – datum ${newVal}`
+      : `${item.name} – datum rensat (avinventerad)`, tag);
     gasCallWithRetry('updateMeta', { tag, args: innerArgs })
       .then(res => {
         const cls = classifyLinkResult(res);
@@ -3782,19 +3996,36 @@ function prepareSingleDialog(item, tag) {
         if (cls === 'verified') {
           tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
           _recentlySynced.set(tag, Date.now()); // grace mot stale in-flight-preload (2026-07-30)
-          if (ml2) { ml2.className = 'msgLine ok'; ml2.textContent = newVal ? 'Datum uppdaterat' : 'Datum rensat — artikeln avinventerad'; }
+          // Utan detta står historikraden kvar med ⏳ för alltid, även när datumet
+          // gick fram — en lyckad skrivning som ser ut att hänga.
+          markAsDone(le);
+          if (ml2) { ml2.className = 'msgLine ok'; ml2.textContent = newVal ? 'Datum uppdaterat' : 'Datum rensat, artikeln avinventerad'; }
         } else if (cls === 'pending-retry') {
-          if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Sparas när du är online igen'; }
+          // Singel-dialogens datumväg har INGEN kö — ingenting försöker om av sig
+          // självt. Här stod tidigare "Sparas när du är online igen", ett löfte som
+          // aldrig kunde infrias, och räknaren bumpades inte. Samma väg i
+          // commitContainerDate gjorde redan båda rätt; singel är dessutom
+          // STANDARDTYPEN, så felet gällde det vanligaste fallet.
+          markLogWarn(le, `${item.name} – datumet nådde inte arket, gör om ändringen`);
+          if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Datumet nådde inte arket, gör om ändringen'; }
+          if (countsAsLostWrite(cls, false)) _bumpFailedWrites_(1);
         } else {
           metaCache.set(tag, _prevMeta);
           tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
           recomputeMaxLast(); renderLists();
+          // markLogFail skriver klarspråk i både historikrad och banner OCH räknar
+          // själv (countsAsLostWrite inuti funktionen). Ingen extra bump här —
+          // annars räknas ett och samma fel två gånger.
+          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code });
           if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Kunde inte spara datumet'; }
         }
       })
       .catch(() => {
+        // Ingen kö här heller → default är rätt: räknas.
         const ml2 = qs("#msgLine");
-        if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Sparas när du är online igen'; }
+        markLogWarn(le, `${item.name} – datumet nådde inte arket, gör om ändringen`);
+        if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Datumet nådde inte arket, gör om ändringen'; }
+        _bumpFailedWrites_(1);
       });
   });
 
@@ -3853,8 +4084,10 @@ function markSingleMissing(tag, name, payload) {
     } else {
       // Offline/avvisad: jobbet ligger kvar i den persisterade kön (gul rad),
       // online-flushen tar det vidare — meddelandet är SANT, ingen falsk bock.
-      if (ic) ic.textContent = '⚠️';
-      if (m) m.textContent = `${name} – markerad som saknad – sparas när du är online igen`;
+      // P3b: eviction-immun rad. Ingen uppräkning av felräknaren här (kön
+      // re-försöker); blev jobbet däremot AVVISAT har _renderBatchOutcome_
+      // redan räknat det, så en uppräkning här vore dubbelräkning.
+      markLogWarn(le, `${name} – markerad som saknad – sparas när du är online igen`);
     }
   })();
   return le;
@@ -4082,19 +4315,22 @@ function prepareContainerDialog(item, tag, opts = {}) {
           // vore samma lögn som logSingle hade före 9.6-fixen (se kommentaren
           // vid _pendingLogSingle). Rätt lösning är att routa datumvägen genom
           // kön — det är P4c i fixplanen; tills dess säger vi som det är.
-          if (le) {
-            const ic = le.querySelector('.icon'); if (ic) ic.textContent = '⚠️';
-            const m = le.querySelector('.msg');
-            if (m) m.textContent += ' – datumet nådde inte arket, gör om ändringen';
-          }
+          // P3: eftersom inget re-försök finns är även 'pending-retry' ett
+          // slutgiltigt tapp här — därför räknas den, till skillnad från
+          // motsvarande gren i logSingle/create/linkTag där en kö tar över.
+          const _msg = le && le.querySelector('.msg');
+          markLogWarn(le, (_msg ? _msg.textContent : '') +
+            ' – datumet nådde inte arket, gör om ändringen');
+          if (countsAsLostWrite(cls, false)) _bumpFailedWrites_(1);
         } else {
           // Server AVVISADE (t.ex. staleRow) → rulla tillbaka optimistisk write.
           metaCache.set(tag, _prevMeta);
           tagCache.set(tag, { ..._prevItem, pendingSync: false });
           recomputeMaxLast(); renderLists();
-          markLogFail(le, new Error((res && res.msg) || 'serverfel'));
+          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code });
         }
       })
+      // Datumvägen har ingen kö → default (retryable saknas) är rätt: räknas.
       .catch(err => markLogFail(le, err));
     return true;
   };
@@ -4104,7 +4340,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     containerDateInput.addEventListener('change', () => {
       if (commitContainerDate(containerDateInput.value)) {
         setMsg(containerDateInput.value
-          ? 'Datum uppdaterat' : 'Datum rensat — artikeln avinventerad', 'ok');
+          ? 'Datum uppdaterat' : 'Datum rensat, artikeln avinventerad', 'ok');
       }
     });
   }

@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=27">
+  <link rel="stylesheet" href="style.css?v=28">
 </head>
 
 <body>
@@ -58,6 +58,7 @@
         <b>Röd bakgrund</b> = mängden understiger "ska finnas under kurs".<br>
         <b>Gul markering</b> = ändring väntar på synk mot Sheetet.<br>
         Den gula statusraden under kameran (t.ex. "⏳ 2 ändringar synkas") visar hur mycket som väntar; tryck på den för att öppna historiken.<br>
+        Blir statusraden <b>röd</b> ("⚠️ 1 kunde inte sparas – tryck här") har något inte kommit fram till arket. Tryck på den, läs historiken och gör om ändringen. Siffran ligger kvar tills du tryckt.<br>
         Tryck på en rad för att öppna artikeln. Tryck på rubrikerna för att byta ordning.
       </div>
       <div id="listInventerat" class="list"></div>
@@ -125,7 +126,7 @@
   <div class="help-box" id="help-settings">
     <b>Visa endast ... lågt saldo</b> döljer artiklar där mängden räcker.<br>
     <b>Gruppera efter kategori</b> delar upp listan i kategori-block.<br>
-    <b>Visa enhet istället för datum</b> byter höger-kolumnen mot enheten (st, kg, l) — användbart vid t.ex. matbeställning.<br>
+    <b>Visa enhet istället för datum</b> byter höger-kolumnen mot enheten (st, kg, l), användbart vid t.ex. matbeställning.<br>
     <b>Dölj artiklar med saldo 0</b> döljer allt som är slut. Kombinera med plats=Kursgården för att se all mat som finns.<br>
     <b>Dölj Min-kolumnen</b> kompakterar listan när min-värdet inte är intressant (t.ex. vid matbeställning).<br>
     <b>Inventera vid koppling</b> öppnar inventeringssteget direkt när du kopplar en kod till en artikel, så att du slipper skanna om den.<br>
@@ -186,7 +187,7 @@
     <section class="qr-block">
       <h3 class="qr-h"><span class="qr-n">3</span> Listorna och att spara</h3>
       <p class="qr-p"><b>Inventerat</b> visar allt som rörts de senaste fem dagarna, <b>Ej inventerat</b> visar resten. Röd bakgrund betyder att saldot är lägre än vad som ska finnas under kurs.</p>
-      <p class="qr-p">Allt sparas först på din telefon och visas då med en <b>gul markering</b>. När ändringen nått Google-arket blir markeringen en <b>☑️</b>. En liten gul statusrad under kameran visar hur mycket som fortfarande är på väg. Saldon, kommentarer, egenskaper och nya artiklar klarar sig även utan nät och ligger kvar om appen stängs. En sak gör inte det: ett <b>ändrat inventeringsdatum</b> skickas bara medan appen är öppen, så stäng inte appen direkt efter en datumändring.</p>
+      <p class="qr-p">Allt sparas först på din telefon och visas då med en <b>gul markering</b>. När ändringen nått Google-arket blir markeringen en <b>☑️</b>. En liten gul statusrad under kameran visar hur mycket som fortfarande är på väg. Skulle något inte komma fram blir samma statusrad röd och räknar upp hur många ändringar det gäller. Tryck på den, så fälls historiken ut och du ser vad som hände. Saldon, kommentarer, egenskaper och nya artiklar klarar sig även utan nät och ligger kvar om appen stängs. En sak gör inte det: ett <b>ändrat inventeringsdatum</b> skickas bara medan appen är öppen, så stäng inte appen direkt efter en datumändring.</p>
     </section>
 
     <p class="qr-safe">Varje ändring loggas med ditt namn och datum, och går att rätta i efterhand. Gul markering betyder att ändringen är på väg till arket, ☑️ att den är framme. Lita på siffran när det gula släppt.</p>
@@ -231,8 +232,8 @@
 
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">4</span> När koden är okänd</h3>
-      <p class="qr-p">Om koden inte finns i arket sedan tidigare öppnas en dialog där du kan <b>skapa en ny artikel</b>. Du fyller i benämning, typ, plats, enhet och mängd. Tre fält måste vara ifyllda: <b>benämning</b>, <b>enhet</b> och <b>flik</b>. Fliken avgör vilket blad i arket raden hamnar i, och lämnas den tom kan artikeln inte skapas — appen säger till i stället för att spara. För matvaror med streckkod slår appen dessutom upp namnet automatiskt via OpenFoodFacts, så du slipper skriva.</p>
-      <p class="qr-p">En ny artikel sparas på samma sätt som allt annat: först på telefonen, sedan till arket. Kasta ett öga på <b>▾ Historik</b> under kameran. Raden ska få en <b>✅</b>, och då står artikeln i arket. Står det i stället att artikeln <b>sparas när du är online igen</b> ligger den kvar i kön, även om du stänger appen, och skickas när nätet är tillbaka. Får raden en <b>⚠️</b> med ett felmeddelande har arket avvisat artikeln — då försvinner den ur listan igen och du får lägga in den på nytt.</p>
+      <p class="qr-p">Om koden inte finns i arket sedan tidigare öppnas en dialog där du kan <b>skapa en ny artikel</b>. Du fyller i benämning, typ, plats, enhet och mängd. Tre fält måste vara ifyllda: <b>benämning</b>, <b>enhet</b> och <b>flik</b>. Fliken avgör vilket blad i arket raden hamnar i, och lämnas den tom kan artikeln inte skapas. Appen säger till i stället för att spara. För matvaror med streckkod slår appen dessutom upp namnet automatiskt via OpenFoodFacts, så du slipper skriva.</p>
+      <p class="qr-p">En ny artikel sparas på samma sätt som allt annat: först på telefonen, sedan till arket. Kasta ett öga på <b>▾ Historik</b> under kameran. Raden ska få en <b>✅</b>, och då står artikeln i arket. Står det i stället att artikeln <b>sparas när du är online igen</b> ligger den kvar i kön, även om du stänger appen, och skickas när nätet är tillbaka. Får raden en <b>⚠️</b> med ett felmeddelande har arket avvisat artikeln, och då försvinner den ur listan igen och du får lägga in den på nytt.</p>
       <p class="qr-p">Ibland vill du hellre <b>koppla den skannade koden till en artikel som redan finns</b> i listan, i stället för att skapa en dubblett. Tryck <b>Koppla till befintlig</b> och sök upp artikeln, eller öppna artikeln via sök eller listan, tryck på kugghjulet <b>⚙️ Egenskaper</b> och skanna koden där, så fästs etiketten på rätt rad.</p>
       <p class="qr-p">Har du slagit på <b>Inventera vid koppling</b> i inställningarna kommer inventeringssteget direkt när du kopplat: en singel registreras på en gång, och för en behållare öppnas mängdrutan. Du behöver alltså inte skanna om artikeln efteråt. Sparandet sköts som vanligt i bakgrunden, och skulle kopplingen mot förmodan avvisas av arket säger historiken till så att du kan kontrollera artikeln.</p>
     </section>
@@ -256,7 +257,7 @@
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">7</span> Datum och avinventering</h3>
       <p class="qr-p">I artikeldialogen kan du ändra inventeringsdatum under <b>Nytt datum</b>. Vill du markera att en artikel inte längre är inventerad så <b>rensar du datumfältet</b>, då flyttas den tillbaka till Ej inventerat.</p>
-      <p class="qr-p">Datumändringar köas inte på telefonen på samma sätt som saldon och kommentarer. De skickas medan appen är öppen, så vänta tills raden i historiken fått sin ✅ innan du stänger appen. Står den kvar med ⚠️ gör du om ändringen när du har nät igen.</p>
+      <p class="qr-p">Datumändringar köas inte på telefonen på samma sätt som saldon och kommentarer. De skickas medan appen är öppen, så vänta tills raden i historiken fått sin ✅ innan du stänger appen. Står den kvar med ⚠️ gör du om ändringen när du har nät igen, och eftersom ingen automatik försöker om åt dig räknas en sådan datumändring in i den röda statusraden.</p>
     </section>
 
     <section class="qr-sec">
@@ -302,7 +303,9 @@
       <h3 class="qr-h"><span class="qr-n">13</span> Allt sparas automatiskt</h3>
       <p class="qr-p">Appen är byggd för att fungera även med dålig eller ingen uppkoppling. Varje ändring sparas först på din telefon och visas med en <b>gul markering</b>. Så snart det går synkas den till Google-arket, och markeringen blir en <b>☑️</b>. Det är ☑️ som betyder att siffran finns i arket, så det är den du ska lita på.</p>
       <p class="qr-p">Saldon, kommentarer och egenskaper läggs i en kö på telefonen, och detsamma gäller registreringar av skannade artiklar, kopplingar av etiketter och nya artiklar. Kön ligger kvar även om appen stängs, och så länge det bara är nätet som saknas fortsätter appen försöka av sig själv. Blir en ändring däremot avvisad av arket står det <b>⚠️ 1 rad kunde inte sparas</b> under kameran, och raden förblir gul. Då gör du om ändringen på artikeln.</p>
-      <p class="qr-p">Under kameran finns en liten <b>gul statusrad</b> som visar när något fortfarande håller på att sparas, till exempel <b>⏳ 2 ändringar synkas</b>. Tryck på den för att öppna historiken och se exakt vad som väntar. Statusraden försvinner när allt är bekräftat. Har en <b>skannad registrering, en etikettkoppling eller en ny artikel</b> misslyckats många gånger blir statusraden i stället röd, <b>⚠️ 1 kunde inte sparas</b>, och då är det värt att skanna om artikeln eller lägga in den igen. Den röda räknaren gäller skanningar, kopplingar och nya artiklar. För saldon, kommentarer och egenskaper är den <b>gula markeringen i listan</b> facit: släpper den inte, så öppna artikeln och kontrollera siffran.</p>
+      <p class="qr-p">Under kameran finns en liten <b>gul statusrad</b> som visar när något fortfarande håller på att sparas, till exempel <b>⏳ 2 ändringar synkas</b>. Tryck på den för att öppna historiken och se exakt vad som väntar. Statusraden försvinner när allt är bekräftat.</p>
+      <p class="qr-p">Gick något däremot inte fram blir statusraden i stället röd: <b>⚠️ 1 kunde inte sparas – tryck här</b>. Den räknaren gäller allt du kan ändra: skanningar, kopplingar, nya artiklar, saldon, kommentarer, egenskaper, inventeringsdatum och ångra. Den räknar bara sådant som appen <i>inte</i> försöker om av sig själv. Ett saldo eller en skanning som ligger i kön och väntar på nät hamnar alltså inte där, men ett ångra gör det, eftersom den vägen saknar kö och inte försöks om. Siffran ligger kvar även om du stänger appen och startar den igen, och nollställs först när du tryckt på statusraden. Har ett köat jobb försökt om och om igen utan att lyckas förblir statusraden röd även efter att du tryckt, för då är det fortfarande osparat, och du behöver skanna om artikeln eller göra om ändringen.</p>
+      <p class="qr-p">Går något fel <b>fäller historiken ut sig själv</b>, så du slipper upptäcka det i efterhand. Rader med <b>⚠️</b> ligger dessutom kvar i historiken även när du fortsätter skanna. Vanliga rader rullas bort av nyare, men en varning gör det inte.</p>
       <p class="qr-p">Du behöver inte trycka Spara mot servern någonstans. Stänger du appen mitt i en inventering ligger det som köats kvar och skickas iväg nästa gång du är online. Det gäller numera även <b>nya artiklar</b>: en artikel du lagt in ligger kvar i kön tills arket bekräftat den. Ett <b>ändrat eller rensat inventeringsdatum</b> väntar däremot fortfarande inte in nästa gång, utan skickas bara medan appen är öppen. Efter en datumändring, vänta tills raden i historiken fått sin ✅ innan du stänger appen. Gjorde den inte det, gör om ändringen när du har nät igen.</p>
     </section>
 
@@ -353,7 +356,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=158"></script>
+  <script src="app.js?v=159"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

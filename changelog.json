@@ -1,6 +1,17 @@
 {
-  "latest": 158,
+  "latest": 159,
   "versions": [
+    {
+      "version": 159,
+      "date": "2026-08-25",
+      "notes": [
+        "Statusraden blir nu röd och räknar upp om något inte kom fram till arket. Tryck på den, så fälls historiken ut och du ser vad som hände. Tidigare räknade den bara det som var på väg, aldrig det som misslyckats.",
+        "Räkningen överlever att appen stängs, och nollställs först när du tittat på den.",
+        "Varningar i historiken ligger kvar. Förut kunde de skrivas över av vanliga rader inom en halv minut, så ett fel hann försvinna innan någon såg det.",
+        "Historiken fäller ut sig själv när något går fel, i stället för att vänta på att du öppnar den.",
+        "Feltexterna säger nu vad som hänt och vad du kan göra, i stället för tekniska uttryck som \"stale row\"."
+      ]
+    },
     {
       "version": 158,
       "date": "2026-08-25",

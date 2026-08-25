@@ -35,6 +35,10 @@ let _pendingTagLinks = new Map();
 let _pendingLogSingle = new Map();
 let _pendingCreates = new Map();
 const _PENDING_LS_KEY = 'vitaliseraPendingSync';
+// P3a: den beständiga felräknaren ligger i SAMMA blob som köerna, så
+// _persistPending_/_rehydratePending_ läser och skriver den. Harnessen måste
+// därför ha den — se failcount.test.js för räknarens egen logik.
+let _failedWrites = 0;
 
 /* ---------- KOPIERAD ORDAGRANT ur app.js. Håll i synk. ---------- */
 function validateNewItem(f) {
@@ -116,8 +120,12 @@ function _persistPending_() {
         retries: v.retries || 0
       });
     }
-    if (!tagLinks.length && !logSingle.length && !creates.length) { localStorage.removeItem(_PENDING_LS_KEY); _updateSyncBadge_(); return; }
-    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle, creates }));
+    // P3a: `failed` hör hemma i samma blob (ingen ny nyckel) och måste därför
+    // hålla blobben vid liv även när alla tre köerna är tomma — annars raderas
+    // felräknaren av nästa lyckade jobb, vilket är precis den tystnad P3
+    // ska ta bort.
+    if (!tagLinks.length && !logSingle.length && !creates.length && !_failedWrites) { localStorage.removeItem(_PENDING_LS_KEY); _updateSyncBadge_(); return; }
+    localStorage.setItem(_PENDING_LS_KEY, JSON.stringify({ tagLinks, logSingle, creates, failed: _failedWrites }));
   } catch (_) {}
   _updateSyncBadge_();   // U4: badge speglar köerna — samma choke-point som persistering
 }
@@ -139,6 +147,10 @@ function _rehydratePending_() {
     if (d && Array.isArray(d.creates)) for (const j of d.creates) {
       if (j && j.ck && !_pendingCreates.has(j.ck)) _pendingCreates.set(j.ck, j);
     }
+    // P3a: felräknaren rehydreras ur samma blob. En användare som stänger
+    // appen efter ett fel ska mötas av den röda badgen nästa gång hon startar
+    // — annars räckte det att låsa telefonen för att felet skulle försvinna.
+    if (d && Number(d.failed) > 0) _failedWrites = Number(d.failed);
   } catch (_) {}
 }
 
@@ -286,6 +298,61 @@ ok(createCacheKey({ tag: 'M1756000000000' }, { ok: true, updated: true, new: fal
 ok(createCacheKey({ tag: 'M1' }, null) === 'M1', 'inget svar → ingen nyckelbyte, ingen krasch');
 ok(isTaglessCreate('M1756000000000') === true && isTaglessCreate('7311070005005') === false,
    'M-prefix skiljer lokal cache-nyckel från riktig tagg');
+
+/* ================================================================== *
+ * 5. P3a — felräknaren överlever att appen dödas
+ *
+ * VARFÖR HÄR: räknaren delar blob med köerna, så det är _persistPending_ /
+ * _rehydratePending_ (speglade ovan, driftvaktade) som bär den — inte någon
+ * egen mekanism. Den punkt där en regression tystar den utan att något test
+ * blir rött är removeItem-grenen: köerna är TOMMA precis när ett permanent
+ * fel finns (rejected-grenarna avregistrerar jobbet), så en villkorslös
+ * removeItem hade raderat felet i samma ögonblick det uppstod.
+ * failcount.test.js bevisar räknandets REGEL; det här bevisar att siffran
+ * faktiskt tar sig igenom en PWA-kill.
+ * ================================================================== */
+console.log('\nP3a — felräknaren överlever att appen dödas:');
+
+_store.clear();
+_pendingTagLinks = new Map();
+_pendingLogSingle = new Map();
+_pendingCreates = new Map();
+
+// Tomma köer + noll fel → blobben ska INTE finnas (oförändrat beteende).
+_failedWrites = 0;
+_persistPending_();
+ok(localStorage.getItem(_PENDING_LS_KEY) === null,
+   'tomma köer utan fel → ingen blob (som förr)');
+
+// Tomma köer MEN två permanenta fel → blobben måste skrivas ändå.
+_failedWrites = 2;
+_persistPending_();
+const _blob = localStorage.getItem(_PENDING_LS_KEY);
+ok(_blob !== null, 'tomma köer MEN fel → blobben skrivs (annars raderas felet direkt)');
+eq(JSON.parse(_blob).failed, 2, 'felräknaren ligger i blobben');
+
+// Simulera PWA-kill: allt minne försvinner, bara localStorage finns kvar.
+_failedWrites = 0;
+_rehydratePending_();
+eq(_failedWrites, 2, 'felräknaren är tillbaka efter omstart');
+
+// Kvittering (användaren tryckte på badgen) → nollas OCH blobben städas bort.
+_failedWrites = 0;
+_persistPending_();
+ok(localStorage.getItem(_PENDING_LS_KEY) === null,
+   'efter kvittering utan köade jobb → blobben städas bort igen');
+_rehydratePending_();
+eq(_failedWrites, 0, 'kvitterat fel kommer inte tillbaka vid nästa start');
+
+// Fel + köat jobb samtidigt: båda måste överleva, inget får skriva över det andra.
+_pendingCreates.set('Cboth', { ck: 'Cboth', name: 'Rödbetor', qty: 1, retries: 3 });
+_failedWrites = 1;
+_persistPending_();
+_failedWrites = 0;
+_pendingCreates = new Map();
+_rehydratePending_();
+eq(_failedWrites, 1, 'fel överlever tillsammans med ett köat jobb');
+ok(_pendingCreates.has('Cboth'), 'det köade jobbet överlever tillsammans med felet');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

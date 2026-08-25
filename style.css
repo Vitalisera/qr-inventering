@@ -163,6 +163,13 @@ header h1 {
   border: none; background: transparent; text-align: left; width: 100%;
 }
 .logEntry .icon { font-size: 1.2em; width: 1.2em; text-align: center; }
+/* P3b: varningsrader ligger kvar när vanliga rader rullas ut ur historiken.
+   En röd kantlinje skiljer dem från de nyare raderna runt omkring — annars är
+   ⚠️-ikonen enda signalen, och en gammal varning ser ut som en färsk rad. */
+.logEntry.logWarn { border-left: 3px solid #c62828; background: rgba(198, 40, 40, .06); }
+@media (prefers-color-scheme: dark) {
+  .logEntry.logWarn { border-left-color: #ef9a9a; background: rgba(239, 83, 80, .10); }
+}
 .undoLink {
   margin-left: auto; color: var(--accent); font-size: 0.85em;
   text-decoration: underline; cursor: pointer; white-space: nowrap;
@@ -478,6 +485,17 @@ body:has(.dialog:not(.hidden))::after {
   box-shadow: none;
 }
 .dialog .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Knappar i knappRADEN krymper aldrig under sin egen text: får en knapp inte plats
+   lägger flexbox den på egen rad i stället (actions har flex-wrap: wrap). Utan detta
+   fick alla knappar lika andel och "Registrera inventering" radbröts INUTI knappen
+   (Roberts skärmdump 2026-08-25; uppmätt knapphöjd 59 px → 46 px efter fixen).
+   ⚠ Regeln är avsiktligt scope:ad till .actions och får INTE flyttas upp till
+   .dialog .btn: den träffar då även .offMatchBtn i okänd tag-dialogen, som är
+   width:100% och bär ett artikelnamn. Den måste kunna radbryta — ett 60 tecken
+   långt namn gav annars 433 px innehåll i en 340 px bred dialog (uppmätt). */
+.dialog .actions .btn { min-width: max-content; white-space: nowrap; }
+/* Ikonknappen ska ta sin ikonbredd, inte en lika stor andel som en textknapp. */
+.dialog .actions .icon-btn { flex: 0 0 auto; min-width: 0; }
 
 /* F1 (v154): "Saknas" i singel-dialogen — sekundär varnande stil, tydligt
    skild från både primärknappen (fylld teal) och Stäng (teal-kontur). Samma

@@ -465,8 +465,40 @@ function _refreshAfterIdentityError_(code) {
   try { preloadShared().then(initData); } catch (_) {}
 }
 
+// Namnbyte och skrivning nästan samtidigt (tagglös artikel utan id): båda
+// fångade det GAMLA namnet som expectedName. Hinner namnbytet först nekar
+// servern skrivningen, eftersom arket då har det nya namnet. Därför väntar
+// varje skrivning på samma artikel tills appens eget namnbyte har fått svar,
+// och bär sedan det nya namnet om bytet bekräftades. Servern behöver inte
+// godta något nytt bevis (B1 orörd), och inget skickas på en gissning.
+const _renamesInFlight_ = new Map();
+function _beginRename_(tag, oldName, newName) {
+  let settle; const done = new Promise(r => { settle = r; });
+  const entry = { oldName, newName, done };
+  _renamesInFlight_.set(tag, entry);
+  return ok => { if (_renamesInFlight_.get(tag) === entry) _renamesInFlight_.delete(tag); settle(!!ok); };
+}
+function _identityTargets_(fn, params) {
+  if (!params || fn === 'updateName') return [];
+  if (fn === 'batch') return (params.batch || []).filter(j => j && j.args).map(j => [j.args.tag, j.args]);
+  if (fn === 'updateMeta') return params.args ? [[params.tag, params.args]] : [];
+  if (fn === 'logTag' || fn === 'addTag' || _IDENTITY_DIRECT_FNS_[fn]) return [[params.tag, params]];
+  return [];
+}
+async function _awaitRenames_(fn, params, capMs = 45000) {
+  for (const [tag, o] of _identityTargets_(fn, params)) {
+    const e = _renamesInFlight_.get(tag);
+    if (!e) continue;
+    let timer;
+    const ok = await Promise.race([e.done, new Promise(r => { timer = setTimeout(() => r(false), capMs); })]);
+    clearTimeout(timer);
+    if (ok && o.expectedName === e.oldName) o.expectedName = e.newName;
+  }
+}
+
 async function gasCall(fn, params = {}, timeoutMs = 30000) {
   _attachIdentityForSend_(fn, params);
+  await _awaitRenames_(fn, params);
   // Per-anrop-timeout (default 30s, oförändrat för alla anropare som inte
   // skickar timeoutMs): GAS cold-start kan ta ~10s, mobilnät-tap kan tappa
   // förbindelsen helt utan native error. Utan timeout hänger UI:n i evighet.
@@ -744,13 +776,13 @@ function countsAsLostWrite(cls, retryRegistered) {
 // Okänd kod med ett svenskt server-meddelande (t.ex. tag-krock) släpps
 // igenom oförändrad — det är redan begripligt, och att svälja det vore att
 // byta information mot en tomhet.
-function humanizeSaveError(raw, code) {
+function humanizeSaveError(raw, code, ambiguousName) {
   const c = String(code == null ? '' : code).toUpperCase();
   const s = String(raw == null ? '' : raw).trim();
   const low = s.toLowerCase();
   // A03–A06 (v160): servern kunde inte bevisa att raden är rätt artikel, eller
   // artikeln finns inte längre. Inget skrevs. Ny lista behövs innan nästa försök.
-  if (c === 'ROW_UNVERIFIED' && low.includes('heter likadant'))
+  if (c === 'ROW_UNVERIFIED' && ambiguousName === true)
     return 'två artiklar utan kod heter likadant på fliken, ge artikeln ett eget namn eller en kod';
   if (c === 'ROW_UNVERIFIED')
     return 'artikeln har flyttats i arket, ladda om listan och försök igen';
@@ -1049,11 +1081,12 @@ async function aiSearch(query, candidates) {
 
 // P3 (felsynlighet): gemensam slutstation för en misslyckad skrivning.
 // opts.code       = serverns felkod (res.code) — grunden för klarspråket.
+// opts.ambiguousName = serverns flagga för två tagglösa artiklar med samma namn.
 // opts.retryable  = true om jobbet ligger kvar i en kö som re-försöker; då
 //                   ska det INTE räknas som förlorat (se countsAsLostWrite).
 function markLogFail(le, err, opts) {
   const o = opts || {};
-  const human = humanizeSaveError(err && err.message, o.code);
+  const human = humanizeSaveError(err && err.message, o.code, o.ambiguousName === true);
   _refreshAfterIdentityError_(o.code);
   if (le) {
     const msg = le.querySelector(".msg");
@@ -2106,7 +2139,7 @@ const Save = {
     });
     const failMsg = res && res.collision
       ? `redan kopplad till "${res.existingName}"`
-      : humanizeSaveError(res && res.msg, res && res.code);
+      : humanizeSaveError(res && res.msg, res && res.code, !!(res && res.ambiguousName));
     _refreshAfterIdentityError_(res && res.code);
     // P3b: markLogWarn i stället för inline-ikon — raden blir eviction-immun
     // och räddas tillbaka in i DOM:en om MAX_LOG hann vräka ut den medan
@@ -2237,7 +2270,7 @@ const Save = {
           if (metaCache.has(tag)) metaCache.set(tag, _prevMeta);
           if (tagCache.has(tag)) tagCache.set(tag, { ...tagCache.get(tag), pendingSync: false });
           recomputeMaxLast(); renderLists();
-          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code });
+          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code, ambiguousName: !!(res && res.ambiguousName) });
         }
         if (typeof onResult === 'function') { try { onResult(cls); } catch (_) {} }
       })
@@ -2419,7 +2452,7 @@ const Save = {
           // markLogFail skriver redan klarspråk i BÅDE historikraden och bannern.
           // Ett show() här skrev över bannern med den råa servertexten — och
           // bannern är just det man ser utan att expandera historiken.
-          markLogFail(le, new Error((res && (res.msg || res.error)) || 'serverfel'), { code: res && res.code });
+          markLogFail(le, new Error((res && (res.msg || res.error)) || 'serverfel'), { code: res && res.code, ambiguousName: !!(res && res.ambiguousName) });
         }
         return cls;
     };
@@ -2727,7 +2760,7 @@ function _applyBatchResults_(batch, res) {
     const r = results[i];
     if (!_isJobVerifiedOk_(tag, r)) {
       failedTags.push(tag);
-      failedTags.details.push({ tag, fnName: batch[i].fnName, code: r && r.code, msg: r && r.msg });
+      failedTags.details.push({ tag, fnName: batch[i].fnName, code: r && r.code, msg: r && r.msg, ambiguousName: !!(r && r.ambiguousName) });
     } else {
       const cur = tagCache.get(tag);
       if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
@@ -2755,7 +2788,7 @@ function _renderBatchOutcome_(failedTags) {
     // saldot (t.ex. för att artikeln flyttats i arket) syns tills man sett den.
     let reason = '';
     for (const d of details) {
-      const human = humanizeSaveError(d.msg || '', d.code);
+      const human = humanizeSaveError(d.msg || '', d.code, d.ambiguousName === true);
       if (!reason && (d.code === 'ROW_UNVERIFIED' || d.code === 'ITEM_NOT_FOUND')) reason = human;
       try {
         const nm = (tagCache.get(d.tag) || {}).name || d.tag;
@@ -4221,7 +4254,7 @@ function prepareSingleDialog(item, tag) {
           // markLogFail skriver klarspråk i både historikrad och banner OCH räknar
           // själv (countsAsLostWrite inuti funktionen). Ingen extra bump här —
           // annars räknas ett och samma fel två gånger.
-          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code });
+          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code, ambiguousName: !!(res && res.ambiguousName) });
           if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Kunde inte spara datumet'; }
         }
       })
@@ -4376,6 +4409,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (n && n !== dialogItem.name) {
       const _oldName = dialogItem.name;
       const _ident = { ..._dlgIdent };   // expectedName = det gamla namnet i arket
+      // Skrivningar på samma artikel väntar in svaret (se _awaitRenames_).
+      const _endRename = _beginRename_(tag, _oldName, n);
+      if (_ident.expectedName && _ident.expectedName !== _oldName) {
+        // Det gamla namnet i arket (serverName) kan skilja sig från det visade.
+        _renamesInFlight_.get(tag).oldName = _ident.expectedName;
+      }
       dialogItem.name = n;
       tagCache.set(tag, { ...tagCache.get(tag), name: n });
       // D (samma klass): .catch(console.log) svalde fel TYST — användaren såg
@@ -4385,6 +4424,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
       gasCallWithRetry('updateName', {tag, newName: n, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum, ..._ident})
         .then(res => {
           const _cls = classifyLinkResult(res);
+          _endRename(_cls === 'verified');
           if (_cls === 'verified') {
             // Arket heter nu n → kommande skrivningar ska förvänta sig n.
             const c = tagCache.get(tag);
@@ -4400,12 +4440,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
             if (dlgTitle && dlgTitle.textContent.trim() === n) dlgTitle.textContent = _oldName;
             renderLists();
             _refreshAfterIdentityError_(res && res.code);
-            show("Namnbytet sparades inte: " + humanizeSaveError((res && res.msg) || '', res && res.code), "warn");
+            show("Namnbytet sparades inte: " + humanizeSaveError((res && res.msg) || '', res && res.code, !!(res && res.ambiguousName)), "warn");
           } else {
             show("Namnbyte kunde inte bekräftas — försök igen", "warn");
           }
         })
-        .catch(() => show("Namnbyte kunde inte bekräftas — försök igen", "warn"));
+        .catch(() => { _endRename(false); show("Namnbyte kunde inte bekräftas — försök igen", "warn"); });
       renderLists();
     }
   };
@@ -4555,7 +4595,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
           metaCache.set(tag, _prevMeta);
           tagCache.set(tag, { ..._prevItem, pendingSync: false });
           recomputeMaxLast(); renderLists();
-          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code });
+          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code, ambiguousName: !!(res && res.ambiguousName) });
         }
       })
       // Datumvägen har ingen kö → default (retryable saknas) är rätt: räknas.

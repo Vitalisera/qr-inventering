@@ -45,6 +45,31 @@ function _attachIdentityForSend_(fn, params) {
   _attachIdentity_(params, params.tag, false);
 }
 
+const _renamesInFlight_ = new Map();
+function _beginRename_(tag, oldName, newName) {
+  let settle; const done = new Promise(r => { settle = r; });
+  const entry = { oldName, newName, done };
+  _renamesInFlight_.set(tag, entry);
+  return ok => { if (_renamesInFlight_.get(tag) === entry) _renamesInFlight_.delete(tag); settle(!!ok); };
+}
+function _identityTargets_(fn, params) {
+  if (!params || fn === 'updateName') return [];
+  if (fn === 'batch') return (params.batch || []).filter(j => j && j.args).map(j => [j.args.tag, j.args]);
+  if (fn === 'updateMeta') return params.args ? [[params.tag, params.args]] : [];
+  if (fn === 'logTag' || fn === 'addTag' || _IDENTITY_DIRECT_FNS_[fn]) return [[params.tag, params]];
+  return [];
+}
+async function _awaitRenames_(fn, params, capMs = 45000) {
+  for (const [tag, o] of _identityTargets_(fn, params)) {
+    const e = _renamesInFlight_.get(tag);
+    if (!e) continue;
+    let timer;
+    const ok = await Promise.race([e.done, new Promise(r => { timer = setTimeout(() => r(false), capMs); })]);
+    clearTimeout(timer);
+    if (ok && o.expectedName === e.oldName) o.expectedName = e.newName;
+  }
+}
+
 console.log('Identitet fångas vid handlingen:');
 tagCache.set('SMatR5', { name: 'Krattor', serverName: 'Krattor', id: 'id-A' });
 const job = { tag: 'SMatR5', newCount: 3 };
@@ -143,5 +168,41 @@ console.log('B3: dialog öppen, raden flyttas, listan byggs om, radera:');
   ok((src.match(/const _dlgIdent = _identityOfItem_\(item\);/g) || []).length === 2, 'identiteten fångas när båda artikeldialogerna öppnas');
 }
 
-console.log(`\n${pass} pass, ${fail} fail`);
-process.exit(fail ? 1 : 0);
+(async () => {
+  console.log('Namnbyte och registrering nästan samtidigt (tagglös artikel utan id):');
+  // Användaren döper om Gammal → Ny och trycker Registrera direkt. Båda anropen
+  // fångade expectedName = Gammal. Registreringen ska vänta på namnbytet.
+  const settle = _beginRename_('STR2', 'Gammal', 'Ny');
+  const reg = { tag: 'STR2', name: 'Ny', expectedName: 'Gammal' };
+  let sent = false;
+  const p = _awaitRenames_('logTag', reg).then(() => { sent = true; });
+  await Promise.resolve(); await Promise.resolve();
+  ok(!sent, 'registreringen skickas inte medan namnbytet är på väg');
+  settle(true);
+  await p;
+  ok(sent && reg.expectedName === 'Ny', 'bekräftat namnbyte → registreringen förväntar sig det nya namnet');
+  const settle2 = _beginRename_('STR2', 'Ny', 'Nyare');
+  const cnt = { tag: 'STR2', batch: [{ fnName: 'updateCount', args: { tag: 'STR2', newCount: 2, expectedName: 'Ny' } }] };
+  const p2 = _awaitRenames_('batch', cnt);
+  settle2(false);
+  await p2;
+  ok(cnt.batch[0].args.expectedName === 'Ny', 'nekat namnbyte → jobbet behåller det gamla namnet (arket heter fortfarande så)');
+  const settle3 = _beginRename_('STR3', 'A', 'B');
+  const meta = { tag: 'STR3', args: { comment: 'x', expectedName: 'A' } };
+  const p3 = _awaitRenames_('updateMeta', meta); settle3(true); await p3;
+  ok(meta.args.expectedName === 'B', 'updateMeta väntar också (identiteten i args)');
+  const ren = { tag: 'STR3', newName: 'C', expectedName: 'B' };
+  _beginRename_('STR3', 'B', 'C');
+  let renSent = false; await _awaitRenames_('updateName', ren).then(() => { renSent = true; });
+  ok(renSent, 'namnbytet självt väntar aldrig på sig själv');
+  const slow = { tag: 'STR4', expectedName: 'X' };
+  _beginRename_('STR4', 'X', 'Y');
+  await _awaitRenames_('logTag', slow, 20);
+  ok(slow.expectedName === 'X', 'svarar namnbytet aldrig skickas registreringen ändå efter en gräns, med det gamla namnet');
+  const src = require('fs').readFileSync(__dirname + '/app.js', 'utf8');
+  ok(/async function gasCall\([^)]*\) \{\n  _attachIdentityForSend_\(fn, params\);\n  await _awaitRenames_\(fn, params\);/.test(src),
+     'gasCall väntar in pågående namnbyten före varje skrivning');
+  ok(src.includes("const _endRename = _beginRename_(tag, _oldName, n);"), 'commitName anmäler namnbytet innan det skickas');
+  console.log(`\n${pass} pass, ${fail} fail`);
+  process.exit(fail ? 1 : 0);
+})();

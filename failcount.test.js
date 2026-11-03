@@ -30,13 +30,13 @@ function countsAsLostWrite(cls, retryRegistered) {
   return true;                                // avvisad, eller tappad utan kö
 }
 
-function humanizeSaveError(raw, code) {
+function humanizeSaveError(raw, code, ambiguousName) {
   const c = String(code == null ? '' : code).toUpperCase();
   const s = String(raw == null ? '' : raw).trim();
   const low = s.toLowerCase();
   // A03–A06 (v160): servern kunde inte bevisa att raden är rätt artikel, eller
   // artikeln finns inte längre. Inget skrevs. Ny lista behövs innan nästa försök.
-  if (c === 'ROW_UNVERIFIED' && low.includes('heter likadant'))
+  if (c === 'ROW_UNVERIFIED' && ambiguousName === true)
     return 'två artiklar utan kod heter likadant på fliken, ge artikeln ett eget namn eller en kod';
   if (c === 'ROW_UNVERIFIED')
     return 'artikeln har flyttats i arket, ladda om listan och försök igen';
@@ -215,8 +215,10 @@ eq(buildSyncBadgeModel({ links: 0, singles: 1, queue: 0, warn: 1, failed: 0 }),
  * ================================================================== */
 console.log('\n4. Klarspråk');
 
-eq(humanizeSaveError('Två artiklar utan kod heter likadant på fliken och går inte att skilja åt. Ge artikeln ett eget namn eller en kod.', 'ROW_UNVERIFIED'),
-   'två artiklar utan kod heter likadant på fliken, ge artikeln ett eget namn eller en kod', 'B1: dubblettnamn får ett eget besked');
+eq(humanizeSaveError('Valfri text från servern', 'ROW_UNVERIFIED', true),
+   'två artiklar utan kod heter likadant på fliken, ge artikeln ett eget namn eller en kod', 'B1: beskedet för dubblettnamn styrs av fältet ambiguousName');
+eq(humanizeSaveError('Två artiklar utan kod heter likadant på fliken.', 'ROW_UNVERIFIED'),
+   'artikeln har flyttats i arket, ladda om listan och försök igen', 'B1: texten i msg styr inte beskedet utan fältet');
 eq(humanizeSaveError('stale row', 'STALE_ROW'),
    'raden hade flyttat sig i arket, skanna om artikeln', '"stale row" → klarspråk');
 eq(humanizeSaveError('stale row'),

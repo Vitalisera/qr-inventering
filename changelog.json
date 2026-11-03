@@ -1,6 +1,16 @@
 {
-  "latest": 159,
+  "latest": 160,
   "versions": [
+    {
+      "version": 160,
+      "date": "2026-11-04",
+      "notes": [
+        "Appen kontrollerar nu att raden i arket är den artikel du valt innan den sparar. Kan den inte se det, till exempel för att någon har lagt till eller tagit bort rader sedan listan hämtades, sparas ingenting. Du får i stället beskedet att artikeln har flyttats och att du ska ladda om listan. Två artiklar utan kod som heter likadant på samma flik går inte att skilja åt, så ge dem olika namn eller en egen kod.",
+        "Om du skapar en ny artikel och anslutningen bryts, känner appen oftast igen artikeln när den försöker igen, så att den inte läggs in två gånger. Har artikeln en kod blir det alltid bara en.",
+        "Skannar två personer samma nya kod samtidigt blir det en artikel, inte två. Den som kom sist får se den som redan finns.",
+        "Ett antal som inte kunde sparas syns nu som en egen rad i historiken, med orsaken i klartext."
+      ]
+    },
     {
       "version": 159,
       "date": "2026-08-25",

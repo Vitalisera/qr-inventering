@@ -34,6 +34,16 @@ function humanizeSaveError(raw, code) {
   const c = String(code == null ? '' : code).toUpperCase();
   const s = String(raw == null ? '' : raw).trim();
   const low = s.toLowerCase();
+  // A03–A06 (v160): servern kunde inte bevisa att raden är rätt artikel, eller
+  // artikeln finns inte längre. Inget skrevs. Ny lista behövs innan nästa försök.
+  if (c === 'ROW_UNVERIFIED' && low.includes('heter likadant'))
+    return 'två artiklar utan kod heter likadant på fliken, ge artikeln ett eget namn eller en kod';
+  if (c === 'ROW_UNVERIFIED')
+    return 'artikeln har flyttats i arket, ladda om listan och försök igen';
+  if (c === 'ITEM_NOT_FOUND')
+    return 'artikeln finns inte längre i arket, ladda om listan';
+  if (c === 'TAG_EXISTS')
+    return 'koden används redan av en annan artikel, ingen ny artikel skapades';
   if (c === 'STALE_ROW' || low.includes('stale row'))
     return 'raden hade flyttat sig i arket, skanna om artikeln';
   if (c === 'NOT_FOUND' || low.startsWith('tagg ej hittad'))
@@ -205,6 +215,8 @@ eq(buildSyncBadgeModel({ links: 0, singles: 1, queue: 0, warn: 1, failed: 0 }),
  * ================================================================== */
 console.log('\n4. Klarspråk');
 
+eq(humanizeSaveError('Två artiklar utan kod heter likadant på fliken och går inte att skilja åt. Ge artikeln ett eget namn eller en kod.', 'ROW_UNVERIFIED'),
+   'två artiklar utan kod heter likadant på fliken, ge artikeln ett eget namn eller en kod', 'B1: dubblettnamn får ett eget besked');
 eq(humanizeSaveError('stale row', 'STALE_ROW'),
    'raden hade flyttat sig i arket, skanna om artikeln', '"stale row" → klarspråk');
 eq(humanizeSaveError('stale row'),
@@ -229,6 +241,12 @@ eq(humanizeSaveError(''),
    'okänt fel, skanna om artikeln', 'tom text → begripligt fallback');
 eq(humanizeSaveError(null, null),
    'okänt fel, skanna om artikeln', 'null → ingen krasch');
+eq(humanizeSaveError('Artikeln har flyttats i arket. Ladda om listan och försök igen.', 'ROW_UNVERIFIED'),
+   'artikeln har flyttats i arket, ladda om listan och försök igen', 'ROW_UNVERIFIED → klarspråk');
+eq(humanizeSaveError('Artikeln finns inte längre i arket. Ladda om listan.', 'ITEM_NOT_FOUND'),
+   'artikeln finns inte längre i arket, ladda om listan', 'ITEM_NOT_FOUND → klarspråk');
+eq(humanizeSaveError('Koden används redan av en annan artikel i arket. Ingen ny artikel skapades.', 'TAG_EXISTS'),
+   'koden används redan av en annan artikel, ingen ny artikel skapades', 'TAG_EXISTS → klarspråk');
 // Servern skickar redan läsbar svenska i vissa fall — den ska INTE svälјas.
 eq(humanizeSaveError('Taggen är redan kopplad till: Yogamatta', 'TAG_COLLISION'),
    'Taggen är redan kopplad till: Yogamatta', 'begripligt server-meddelande släpps igenom');

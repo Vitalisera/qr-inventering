@@ -97,14 +97,19 @@ function _persistPending_() {
     for (const v of _pendingTagLinks.values()) {
       if (v && v.scannedTag) tagLinks.push({
         scannedTag: v.scannedTag, sheetName: v.sheetName ?? null,
-        rowNum: v.rowNum ?? null, currentTag: v.currentTag ?? null, name: v.name ?? ''
+        rowNum: v.rowNum ?? null, currentTag: v.currentTag ?? null, name: v.name ?? '',
+        // v160: identiteten som fångades när användaren agerade följer med jobbet.
+        ...(v.id !== undefined ? { id: v.id } : {}),
+        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
       });
     }
     const logSingle = [];
     for (const v of _pendingLogSingle.values()) {
       if (v && v.tag) logSingle.push({
         tag: v.tag, name: v.name ?? '', sheetName: v.sheetName ?? null, rowNum: v.rowNum ?? null,
-        retries: v.retries || 0   // v151: eskaleringsräknaren överlever PWA-kill
+        retries: v.retries || 0,  // v151: eskaleringsräknaren överlever PWA-kill
+        ...(v.id !== undefined ? { id: v.id } : {}),
+        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
       });
     }
     // P2b: creates ligger som TREDJE array i samma blob — samma serialiserings-
@@ -353,6 +358,24 @@ _pendingCreates = new Map();
 _rehydratePending_();
 eq(_failedWrites, 1, 'fel överlever tillsammans med ett köat jobb');
 ok(_pendingCreates.has('Cboth'), 'det köade jobbet överlever tillsammans med felet');
+
+
+// v160 (A03–A06): identiteten som fångades vid handlingen överlever en omstart.
+// Utan den skulle ett köat jobb på en syntetisk nyckel slå upp identitet i
+// efterhand och kunna träffa en ANNAN artikel efter en radförskjutning.
+_pendingCreates = new Map(); _pendingLogSingle = new Map(); _pendingTagLinks = new Map();
+_pendingLogSingle.set('SMatR7', { tag: 'SMatR7', name: 'Krattor', sheetName: 'Mat', rowNum: 7, id: 'abc-1', expectedName: 'Krattor' });
+_pendingTagLinks.set('123', { scannedTag: '123', sheetName: 'Mat', rowNum: 7, currentTag: 'SMatR7', name: 'Krattor', id: 'abc-1', expectedName: 'Krattor' });
+_pendingLogSingle.set('SMatR8', { tag: 'SMatR8', name: 'Gammalt jobb', sheetName: 'Mat', rowNum: 8 });
+_persistPending_();
+_pendingLogSingle = new Map(); _pendingTagLinks = new Map();
+_rehydratePending_();
+eq([_pendingLogSingle.get('SMatR7').id, _pendingLogSingle.get('SMatR7').expectedName], ['abc-1', 'Krattor'],
+   'logSingle-jobbets id och förväntade namn överlever omstart');
+eq([_pendingTagLinks.get('123').id, _pendingTagLinks.get('123').expectedName], ['abc-1', 'Krattor'],
+   'kopplingsjobbets id och förväntade namn överlever omstart');
+ok(!('id' in _pendingLogSingle.get('SMatR8')) && !('expectedName' in _pendingLogSingle.get('SMatR8')),
+   'ett äldre jobb utan identitet får ingen påhittad identitet vid omstart');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

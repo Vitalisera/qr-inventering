@@ -45,7 +45,7 @@ function makeCollect(tagCache, metaCache) {
 }
 
 // ---- Kopierat ORDAGRANT från Code.js ----
-const PT = { TAG: 0, NAME: 1, UNIT: 4, SHEET: 7, ROW: 11, ALTTAGS: 12, CATEGORY: 13 };
+const PT = { TAG: 0, NAME: 1, UNIT: 4, SHEET: 7, ROW: 11, ALTTAGS: 12, CATEGORY: 13, ID: 16 };
 
 function _deriveCatsUnitsFromPreload_(rows) {
   const catBySheet = {};

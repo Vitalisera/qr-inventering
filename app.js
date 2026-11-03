@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 159;
+const APP_VERSION = 160;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -381,7 +381,92 @@ maybeShowWhatsNew();
 /* ===== GAS API wrapper ===== */
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYTZvZbkjD6nyPzaUIU20zqmGKl7POxrMbax657CwUnpkHPOeqvqkLwJsS2eUOZ6gbaw/exec';
 
+/* ===== Artikelidentitet (v160, A03–A06) =====
+ * Varje skrivning bär artikelns beständiga ID (preload-index 16) och det namn
+ * servern senast visade (serverName). Servern skriver bara om raden kan bevisas
+ * vara den artikeln, annars ROW_UNVERIFIED / ITEM_NOT_FOUND och ingenting skrivs.
+ * Identiteten FÅNGAS när användaren agerar och följer sedan med jobbet genom kö,
+ * omförsök och omstart. Den slås ALDRIG upp i efterhand för en syntetisk nyckel
+ * ("S<flik>R<rad>"): en sådan nyckel är en radposition, och efter en ny lista kan
+ * samma nyckel peka på en annan artikel. En gammal backend ignorerar fälten. */
+function _isSynthKey_(tag) { return /^S[A-Za-z]/.test(String(tag == null ? '' : tag)); }
+// Identitet ur en ögonblicksbild (dialogens item, popupens tk). initData bygger
+// NYA objekt i tagCache och muterar aldrig gamla, så en referens tagen när
+// dialogen öppnades beskriver artikeln användaren faktiskt ser, även om en ny
+// lista hunnit lägga en annan artikel under samma syntetiska nyckel.
+function _identityOfItem_(e) {
+  const out = {};
+  if (e && e.id) out.id = e.id;
+  const nm = e ? (e.serverName != null ? e.serverName : e.name) : null;
+  if (nm) out.expectedName = String(nm).trim();
+  return out;
+}
+function _captureIdentity_(tag) {
+  const e = tagCache.get(tag);
+  const out = {};
+  if (e && e.id) out.id = e.id;
+  const nm = e ? (e.serverName != null ? e.serverName : e.name) : null;
+  if (nm) out.expectedName = String(nm).trim();
+  return out;
+}
+// Får en lokal (gul) post ta över serverns identitet efter en ny lista? Bara
+// när det bevisligen är SAMMA artikel. Under en syntetisk nyckel kan servern nu
+// ha en annan artikel; att då ta dess namn som förväntat namn vore exakt den
+// tysta felskrivning v160 stänger. Hellre ett synligt ROW_UNVERIFIED.
+function _adoptServerIdentity_(key, item, server) {
+  if (!server) return false;
+  if (!_isSynthKey_(key)) return true;                       // riktig tagg = beständig
+  if (item.id && server.id) return item.id === server.id;    // båda har ID
+  if (item.serverName == null) return true;                  // optimistisk post, aldrig sett arket
+  return String(item.serverName) === String(server.serverName);
+}
+function _hasIdentity_(o) { return !!o && (o.id !== undefined || o.expectedName !== undefined); }
+// Fyller i identitet på ett payload-objekt som saknar den. Muterar objektet, så
+// att gasCallWithRetrys omförsök återanvänder EXAKT samma fångade identitet.
+function _attachIdentity_(o, tag, allowSynthetic) {
+  if (!o || _hasIdentity_(o)) return o;
+  if (!allowSynthetic && _isSynthKey_(tag)) return o;
+  Object.assign(o, _captureIdentity_(tag));
+  return o;
+}
+// Efter bekräftat namnbyte: köade jobb som fångade det gamla namnet ska bära det
+// nya, annars nekas de (servern ser ju nu det nya namnet).
+function _renameIdentityInQueues_(tag, oldName, newName) {
+  const fix = o => { if (o && o.expectedName === oldName) o.expectedName = newName; };
+  try {
+    for (const j of updateQueue) if (j && j.args && j.args.tag === tag) fix(j.args);
+    for (const j of (_inflightBatch || [])) if (j && j.args && j.args.tag === tag) fix(j.args);
+    const ls = _pendingLogSingle.get(tag); if (ls) fix(ls);
+    for (const j of _pendingTagLinks.values()) if (j && j.currentTag === tag) fix(j);
+    _persistQueue_(); _persistPending_();
+  } catch (_) {}
+}
+// Direkta (icke-köade) skrivanrop sker i samma ögonblick som användarens
+// handling → identiteten fångas här om callsiten inte redan gjort det.
+const _IDENTITY_DIRECT_FNS_ = { updateMeta: 1, updateName: 1, deleteItem: 1, updateCount: 1 };
+function _attachIdentityForSend_(fn, params) {
+  if (!params || !_IDENTITY_DIRECT_FNS_[fn]) return;
+  // Syntetiska nycklar slås ALDRIG upp vid sändning: cachen kan ha byggts om
+  // sedan användaren agerade. Callsiten ska ha skickat identiteten uttryckligen;
+  // har den inte det nekar servern (ROW_UNVERIFIED) i stället för att gissa.
+  if (fn === 'updateMeta') { if (params.args) _attachIdentity_(params.args, params.tag, false); return; }
+  _attachIdentity_(params, params.tag, false);
+}
+
+// Servern kunde inte bevisa raden (ROW_UNVERIFIED) eller artikeln är borta
+// (ITEM_NOT_FOUND) → listan är inaktuell. Hämta en ny direkt, så användaren kan
+// göra om ändringen mot rätt rad utan att behöva leta efter en uppdatera-knapp.
+let _identityRefreshAt_ = 0;
+function _refreshAfterIdentityError_(code) {
+  if (code !== 'ROW_UNVERIFIED' && code !== 'ITEM_NOT_FOUND') return;
+  const now = Date.now();
+  if (now - _identityRefreshAt_ < 10000) return;   // en gång per 10 s räcker
+  _identityRefreshAt_ = now;
+  try { preloadShared().then(initData); } catch (_) {}
+}
+
 async function gasCall(fn, params = {}, timeoutMs = 30000) {
+  _attachIdentityForSend_(fn, params);
   // Per-anrop-timeout (default 30s, oförändrat för alla anropare som inte
   // skickar timeoutMs): GAS cold-start kan ta ~10s, mobilnät-tap kan tappa
   // förbindelsen helt utan native error. Utan timeout hänger UI:n i evighet.
@@ -393,7 +478,9 @@ async function gasCall(fn, params = {}, timeoutMs = 30000) {
   try {
     const res = await fetch(GAS_URL, {
       method: 'POST',
-      body: JSON.stringify({ fn, ...params }),
+      // cv = klientversion i VARJE anrop (v160). Backend använder den för att inte
+      // ge äldre klienter svar de skulle läsa som framgång (TAG_EXISTS i st. f. existed).
+      body: JSON.stringify({ fn, ...params, cv: APP_VERSION }),
       redirect: 'follow',
       signal: ac.signal
     });
@@ -661,6 +748,16 @@ function humanizeSaveError(raw, code) {
   const c = String(code == null ? '' : code).toUpperCase();
   const s = String(raw == null ? '' : raw).trim();
   const low = s.toLowerCase();
+  // A03–A06 (v160): servern kunde inte bevisa att raden är rätt artikel, eller
+  // artikeln finns inte längre. Inget skrevs. Ny lista behövs innan nästa försök.
+  if (c === 'ROW_UNVERIFIED' && low.includes('heter likadant'))
+    return 'två artiklar utan kod heter likadant på fliken, ge artikeln ett eget namn eller en kod';
+  if (c === 'ROW_UNVERIFIED')
+    return 'artikeln har flyttats i arket, ladda om listan och försök igen';
+  if (c === 'ITEM_NOT_FOUND')
+    return 'artikeln finns inte längre i arket, ladda om listan';
+  if (c === 'TAG_EXISTS')
+    return 'koden används redan av en annan artikel, ingen ny artikel skapades';
   if (c === 'STALE_ROW' || low.includes('stale row'))
     return 'raden hade flyttat sig i arket, skanna om artikeln';
   if (c === 'NOT_FOUND' || low.startsWith('tagg ej hittad'))
@@ -758,14 +855,19 @@ function _persistPending_() {
     for (const v of _pendingTagLinks.values()) {
       if (v && v.scannedTag) tagLinks.push({
         scannedTag: v.scannedTag, sheetName: v.sheetName ?? null,
-        rowNum: v.rowNum ?? null, currentTag: v.currentTag ?? null, name: v.name ?? ''
+        rowNum: v.rowNum ?? null, currentTag: v.currentTag ?? null, name: v.name ?? '',
+        // v160: identiteten som fångades när användaren agerade följer med jobbet.
+        ...(v.id !== undefined ? { id: v.id } : {}),
+        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
       });
     }
     const logSingle = [];
     for (const v of _pendingLogSingle.values()) {
       if (v && v.tag) logSingle.push({
         tag: v.tag, name: v.name ?? '', sheetName: v.sheetName ?? null, rowNum: v.rowNum ?? null,
-        retries: v.retries || 0   // v151: eskaleringsräknaren överlever PWA-kill
+        retries: v.retries || 0,  // v151: eskaleringsräknaren överlever PWA-kill
+        ...(v.id !== undefined ? { id: v.id } : {}),
+        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
       });
     }
     // P2b: creates ligger som TREDJE array i samma blob — samma serialiserings-
@@ -952,6 +1054,7 @@ async function aiSearch(query, candidates) {
 function markLogFail(le, err, opts) {
   const o = opts || {};
   const human = humanizeSaveError(err && err.message, o.code);
+  _refreshAfterIdentityError_(o.code);
   if (le) {
     const msg = le.querySelector(".msg");
     const base = msg ? msg.textContent : '';
@@ -1613,7 +1716,10 @@ function addUndoButton(logEntry, tag, prevOverride) {
   // metaCache här innehåller redan det NYSS satta (dagens) värdet.
   // Fallback till metaCache bara om ingen snapshot skickades (bakåtkompat).
   const meta = prevOverride || metaCache.get(tag) || {};
-  const prev = { lastMs: meta.lastMs ?? null, user: meta.user || "", sheetName: cached?.sheetName, rowNum: cached?.rowNum };
+  const prev = { lastMs: meta.lastMs ?? null, user: meta.user || "", sheetName: cached?.sheetName, rowNum: cached?.rowNum,
+    // v160: ångra gäller artikeln som registrerades. Identiteten kommer från
+    // registreringen (prevOverride.ident), aldrig från en cache som byggts om.
+    ident: (prevOverride && prevOverride.ident) || (_isSynthKey_(tag) ? {} : _captureIdentity_(tag)) };
   undoData.set(tag, prev);
 
   const undoBtn = document.createElement("span");
@@ -1634,7 +1740,7 @@ function addUndoButton(logEntry, tag, prevOverride) {
     if (cur) tagCache.set(tag, { ...cur, pendingSync: true });
     recomputeMaxLast();
     renderLists();
-    const payload = { clearUser: true, userName: prev.user || "", sheetName: prev.sheetName, rowNum: prev.rowNum };
+    const payload = { clearUser: true, userName: prev.user || "", sheetName: prev.sheetName, rowNum: prev.rowNum, ...(prev.ident || {}) };
     if (prev.lastMs) {
       const d = new Date(prev.lastMs);
       payload.lastYMD = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
@@ -1872,6 +1978,10 @@ const Save = {
    */
   async linkTag(scannedTag, target) {
     const { name, sheetName, rowNum, currentTag } = target;
+    // v160: identitet från jobbet (resync) eller fångad nu (användarens handling).
+    const ident = _hasIdentity_(target)
+      ? { ...(target.id !== undefined ? { id: target.id } : {}), ...(target.expectedName !== undefined ? { expectedName: target.expectedName } : {}) }
+      : (target._resync && _isSynthKey_(currentTag) ? {} : _captureIdentity_(currentTag));
     const isSynthetic = String(currentTag || '').startsWith('S');
     const le = appendLog(`${name} – tag ${scannedTag} kopplas`, currentTag);
 
@@ -1913,7 +2023,7 @@ const Save = {
           : [...(cur.altTags || []), scannedTag],
         pendingSync: true
       });
-      _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name });
+      _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name, ...ident });
       _persistPending_();
       // P3b: eviction-immun (raden ska finnas kvar tills resyncen svarat), men
       // INGEN uppräkning av felräknaren — jobbet ligger i _pendingTagLinks och
@@ -1925,7 +2035,7 @@ const Save = {
     let res;
     try {
       res = await gasCallWithRetry('addTag',
-        { sheetName, rowNum, newTag: scannedTag },
+        { sheetName, rowNum, newTag: scannedTag, tag: currentTag, ...ident },
         { onAttempt: (n, total) => {
             if (n > 1 && le) le.querySelector('.msg').textContent =
               `${name} – tag ${scannedTag} kopplas (försök ${n}/${total})`;
@@ -1997,6 +2107,7 @@ const Save = {
     const failMsg = res && res.collision
       ? `redan kopplad till "${res.existingName}"`
       : humanizeSaveError(res && res.msg, res && res.code);
+    _refreshAfterIdentityError_(res && res.code);
     // P3b: markLogWarn i stället för inline-ikon — raden blir eviction-immun
     // och räddas tillbaka in i DOM:en om MAX_LOG hann vräka ut den medan
     // addTag var i flykten (kopplingar tar sekunder på mobilt nät).
@@ -2044,6 +2155,10 @@ const Save = {
   logSingle(tag, target) {
     if(QA_MODE)_qaLogSingleCount++;
     const { name, sheetName, rowNum, onResult } = target;
+    // v160: identitet från jobbet (resync) eller fångad nu (användarens handling).
+    const ident = _hasIdentity_(target)
+      ? { ...(target.id !== undefined ? { id: target.id } : {}), ...(target.expectedName !== undefined ? { expectedName: target.expectedName } : {}) }
+      : (target._resync && _isSynthKey_(tag) ? {} : _captureIdentity_(tag));
     // Undo-fix: fånga FÖREGÅENDE meta-tillstånd SYNKRONT, FÖRE den
     // optimistiska setLocalMeta nedan klobbrar metaCache med Date.now().
     // addUndoButton anropas i .then() (efter server-svar) — då har
@@ -2059,7 +2174,7 @@ const Save = {
     show("Sparar…");
     gasCallWithRetry('logTag', {
       tag, name, type: "singel", qty: 1, user: userName,
-      sheetName: sheetName ?? null, rowNum: rowNum ?? null
+      sheetName: sheetName ?? null, rowNum: rowNum ?? null, ...ident
     })
       .then(res => {
         // gasCallWithRetry kastar normalt INTE — den returnerar
@@ -2082,14 +2197,14 @@ const Save = {
           // startade FÖRE writen den optimistiska raden direkt efter verified —
           // samma mekanism som v147-fixen, som bara täckte batch-vägen.
           _recentlySynced.set(tag, Date.now());
-          markAsDone(le); addUndoButton(le, tag, _undoPrev);
+          markAsDone(le); addUndoButton(le, tag, { ..._undoPrev, ident });
         } else if (cls === 'pending-retry') {
           // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
           // status — optimistisk lokal write står kvar (gul rad via
           // pendingSync-mönstret i renderLists). 9.6: REGISTRERA jobbet så
           // resyncPendingTagLinks faktiskt re-försöker det vid online —
           // meddelandet blir SANT. _inflight nollas så nästa event kan ta det.
-          const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum };
+          const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident };
           job._inflight = false;
           job._le = le;                 // återanvänd samma rad vid resync
           // v151: räkna misslyckade försök (persisteras) → synlig eskalering
@@ -2129,7 +2244,7 @@ const Save = {
       .catch(err => {
         // gasCallWithRetry kastar bara vid oväntat fel (ej server-avvisning) →
         // behandla som ej bekräftat (pending-retry), ingen falsk bock.
-        const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum };
+        const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident };
         job._inflight = false;
         job._le = le;                   // återanvänd samma rad vid resync
         job.retries = (job.retries || 0) + 1;  // v151: räknas mot RESYNC_WARN_AFTER
@@ -2211,6 +2326,23 @@ const Save = {
     // aldrig som en avvisning, och aldrig som en framgång.
     const applyCreateResult = (res) => {
         const cls = classifyLinkResult(res);
+        if (cls === 'verified' && res && res.existed === true) {
+          // v160 (A06): koden fanns redan i arket (någon annan hann före). Servern
+          // skrev INGENTING. Ta bort vår optimistiska post och hämta listan, så att
+          // den artikel som faktiskt finns visas i stället för vår påhittade.
+          _pendingCreates.delete(job.ck);
+          _persistPending_();
+          if (tagCache.has(cacheKey)) tagCache.delete(cacheKey);
+          if (metaCache.has(cacheKey)) metaCache.delete(cacheKey);
+          recomputeMaxLast(); renderLists();
+          markLogWarn(le, `${job.name} – koden fanns redan i arket, ingen ny artikel skapades`);
+          // Det användaren skrev in (antal, egenskaper) nådde inte arket och
+          // ingen kö försöker om → räknas i den röda statusraden.
+          if (countsAsLostWrite('rejected', false)) _bumpFailedWrites_(1);
+          show("Koden fanns redan i arket – listan uppdateras", "warn");
+          try { preloadShared().then(initData); } catch (_) {}
+          return cls;
+        }
         if (cls === 'verified') {
           _pendingCreates.delete(job.ck);
           _persistPending_();
@@ -2218,7 +2350,9 @@ const Save = {
           const newKey = createCacheKey(job, res);
           const cur = tagCache.get(cacheKey);
           if (cur) {
-            const updated = { ...cur, rowNum: (res && res.row) || cur.rowNum, pendingSync: false };
+            const updated = { ...cur, rowNum: (res && res.row) || cur.rowNum, pendingSync: false,
+              // v160: artikelns beständiga ID och namnet i arket, för kommande skrivningar.
+              ...(res && res.id ? { id: String(res.id) } : {}), serverName: String(job.name || '').trim() };
             if (newKey !== cacheKey && !tagCache.has(newKey)) {
               tagCache.delete(cacheKey);
               tagCache.set(newKey, updated);
@@ -2232,10 +2366,20 @@ const Save = {
               rekeyPendingJobs(cacheKey, newKey,
                 { sheetName: job.sheetName, rowNum: (res && res.row) || null },
                 updateQueue, _pendingLogSingle, _pendingTagLinks);
+
               _persistQueue_(); _persistPending_();
             } else {
               tagCache.set(cacheKey, updated);
             }
+          }
+          // v160: jobb köade medan artikeln var gul saknade ID (det fanns inget
+          // ännu). Ge dem det nu, så de inte nekas efter en radförskjutning.
+          if (res && res.id) {
+            for (const k of [cacheKey, newKey]) {
+              for (const j of updateQueue) if (j && j.args && j.args.tag === k && j.args.id === undefined) j.args.id = String(res.id);
+              const ls = _pendingLogSingle.get(k); if (ls && ls.id === undefined) ls.id = String(res.id);
+            }
+            _persistQueue_(); _persistPending_();
           }
           // Grace-fönster (fältfynd 2026-07-30): skydda den färska raden mot en
           // preload som startade FÖRE writen. Samma mönster som logSingle.
@@ -2380,7 +2524,10 @@ async function resyncPendingTagLinks() {
           name: job.name,
           sheetName: job.sheetName,
           rowNum: job.rowNum,
-          currentTag: job.currentTag
+          currentTag: job.currentTag,
+          ...(job.id !== undefined ? { id: job.id } : {}),
+          ...(job.expectedName !== undefined ? { expectedName: job.expectedName } : {}),
+          _resync: true
         });
         // verified/rejected → Save.linkTag har redan _pendingTagLinks.delete:at.
         // pending igen (fortf. offline) → posten finns kvar, _inflight nollas.
@@ -2400,6 +2547,9 @@ async function resyncPendingTagLinks() {
         // befintlig rad); appendRow sker bara om ingen rad finns ännu.
         Save.logSingle(job.tag, {
           name: job.name, sheetName: job.sheetName, rowNum: job.rowNum,
+          ...(job.id !== undefined ? { id: job.id } : {}),
+          ...(job.expectedName !== undefined ? { expectedName: job.expectedName } : {}),
+          _resync: true,
           _resyncLe: job._le || null
         });
       } catch (_) {
@@ -2478,6 +2628,10 @@ function _rehydrateQueue_() {
   } catch (_) {}
 }
 function queueUpdate(fnName, args) {
+  // v160: callsiten skickar identiteten från sin ögonblicksbild (dialog/popup).
+  // Saknas den fylls den bara i för riktiga taggar; en syntetisk nyckel slås
+  // aldrig upp här, eftersom cachen kan ha byggts om sedan dialogen öppnades.
+  if (args && args.tag != null) _attachIdentity_(args, args.tag, false);
   updateQueue.push({ fnName, args });
   _persistQueue_();
   if (!updateTimer) updateTimer = setTimeout(flushUpdates, 1000);
@@ -2490,6 +2644,10 @@ async function waitForPendingSync() {
 // så nya queueUpdate under flight hamnar i nästa batch, inte denna).
 // updateMeta-jobb får userName injicerat här (övriga skickar det själva).
 function _buildBatch_() {
+  // Jobb från en äldre version (rehydrerade utan identitet) får identitet bara
+  // för riktiga taggar. En syntetisk nyckel kan nu peka på en annan artikel →
+  // skickas utan identitet och nekas synligt av servern (ROW_UNVERIFIED).
+  for (const job of updateQueue) if (job && job.args) _attachIdentity_(job.args, job.args.tag, false);
   const batch = updateQueue.map(job =>
     job.fnName === "updateMeta"
       ? { fnName: job.fnName, args: { ...job.args, userName } }
@@ -2561,11 +2719,15 @@ function _withinSyncGrace_(tag) {
 function _applyBatchResults_(batch, res) {
   const results = Array.isArray(res?.results) ? res.results : [];
   const failedTags = [];
+  // v160: varför varje jobb nekades (för en synlig historikrad per jobb).
+  // Egenskap på arrayen → signaturen är oförändrad för alla befintliga anropare.
+  failedTags.details = [];
   for (let i = 0; i < batch.length; i++) {
     const tag = batch[i].args.tag;
     const r = results[i];
     if (!_isJobVerifiedOk_(tag, r)) {
       failedTags.push(tag);
+      failedTags.details.push({ tag, fnName: batch[i].fnName, code: r && r.code, msg: r && r.msg });
     } else {
       const cur = tagCache.get(tag);
       if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
@@ -2587,7 +2749,35 @@ function _applyBatchResults_(batch, res) {
 function _renderBatchOutcome_(failedTags) {
   const msgLine = document.querySelector("#msgLine");
   if (failedTags.length > 0) {
-    const label = `⚠️ ${failedTags.length} ${failedTags.length === 1 ? 'rad' : 'rader'} kunde inte sparas`;
+    const details = Array.isArray(failedTags.details) ? failedTags.details : [];
+    // v160: en historikrad per nekat jobb med orsaken i klartext. Bannern
+    // försvinner efter 5 s; historikraden ligger kvar, så en nekad ändring av
+    // saldot (t.ex. för att artikeln flyttats i arket) syns tills man sett den.
+    let reason = '';
+    for (const d of details) {
+      const human = humanizeSaveError(d.msg || '', d.code);
+      if (!reason && (d.code === 'ROW_UNVERIFIED' || d.code === 'ITEM_NOT_FOUND')) reason = human;
+      try {
+        const nm = (tagCache.get(d.tag) || {}).name || d.tag;
+        const what = d.fnName === 'updateCount' ? 'antal' : 'ändring';
+        const le = appendLog(`${nm} – ${what} sparades inte – ${human}`, d.tag, "⚠️");
+        markLogWarn(le, `${nm} – ${what} sparades inte – ${human}`);
+      } catch (_) {}
+    }
+    if (details.length) _expandLog_();
+    for (const d of details) {
+      if (d.code === 'ROW_UNVERIFIED' || d.code === 'ITEM_NOT_FOUND') {
+        // Inget skrevs, och raden bakom nyckeln kan vara en annan artikel nu.
+        // Släpp den gula lokala versionen så att den nya listan visar arkets
+        // sanning; vad som inte sparades står kvar i historiken ovan.
+        const c = tagCache.get(d.tag);
+        if (c && c.pendingSync) tagCache.set(d.tag, { ...c, pendingSync: false });
+        _recentlySynced.delete(d.tag);
+      }
+      _refreshAfterIdentityError_(d.code);
+    }
+    const label = `⚠️ ${failedTags.length} ${failedTags.length === 1 ? 'rad' : 'rader'} kunde inte sparas` +
+      (reason ? ` – ${reason}` : '');
     if (msgLine) { msgLine.className = "msgLine warn"; msgLine.textContent = label; }
     show(label, "warn", { autoreset: false });
     // P3a: batch-vägen re-köar INTE misslyckade jobb (känt, ALLVARLIG #10) —
@@ -3146,6 +3336,7 @@ document.addEventListener('click', function(e) {
 
   const tag = icon.dataset.tag;
   const tk = tagCache.get(tag) || {};
+  const _popIdent = _identityOfItem_(tk);   // v160: artikeln som visas NU
   const current = (tk.comment || "").trim();
 
   overlay.classList.add("blurred");
@@ -3192,7 +3383,7 @@ document.addEventListener('click', function(e) {
     const cur = tagCache.get(tag) || tk;
     tagCache.set(tag, { ...cur, comment: val, pendingSync: true });
     renderLists();
-    queueUpdate('updateMeta', { tag, comment: val, sheetName: cur.sheetName ?? null, rowNum: cur.rowNum ?? null });
+    queueUpdate('updateMeta', { tag, comment: val, sheetName: tk.sheetName ?? cur.sheetName ?? null, rowNum: tk.rowNum ?? cur.rowNum ?? null, ..._popIdent });
     show(val ? "Kommentar sparas…" : "Kommentar rensas…", "ok");
     closeDialogLocal();
   };
@@ -3416,7 +3607,8 @@ function initData(records, { fromCache = false } = {}) {
   placeSet.clear();
 
   records.forEach(rec => {
-    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags, category, synonyms, sheetPlace] = rec;
+    // Index 16 = beständigt artikel-ID (v160). Saknas hos äldre backend → undefined.
+    const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags, category, synonyms, sheetPlace, articleId] = rec;
     if (!name) return;
     const nt = normTag(t);
     const plc = normPlace(place);
@@ -3434,7 +3626,9 @@ function initData(records, { fromCache = false } = {}) {
       rowNum: rowNum || null,
       sheetName: plc,
       altTags: Array.isArray(altTags) ? altTags : [],
-      synonyms: Array.isArray(synonyms) ? synonyms : []
+      synonyms: Array.isArray(synonyms) ? synonyms : [],
+      id: articleId ? String(articleId) : null,
+      serverName: String(name).trim()
     });
 
     placeSet.add(plc);
@@ -3450,7 +3644,15 @@ function initData(records, { fromCache = false } = {}) {
   // Re-applyera pending edits ovanpå server-data
   for (const { t, item, meta } of pendingSnapshot) {
     const server = tagCache.get(t);
-    tagCache.set(t, server ? { ...server, ...item } : item);
+    let merged = server ? { ...server, ...item } : item;
+    // Identiteten: servern vet bäst vad artikeln heter i arket NU (någon kan ha
+    // bytt namn direkt i arket). Men bara om det är SAMMA artikel: under en
+    // syntetisk nyckel kan servern nu ha en annan artikel, och då behåller den
+    // lokala posten sin egen identitet.
+    if (server && _adoptServerIdentity_(t, item, server)) {
+      merged = { ...merged, id: server.id, serverName: server.serverName };
+    }
+    tagCache.set(t, merged);
     if (meta) metaCache.set(t, meta);
   }
 
@@ -3918,6 +4120,9 @@ function resetDialog(){
 function prepareSingleDialog(item, tag) {
   resetDialog();
   currentDialogTag = tag;
+  // v160 (A03): identiteten fångas när dialogen ÖPPNAS och följer med varje
+  // skrivning härifrån. Pollern kan bygga om cachen medan dialogen är öppen.
+  const _dlgIdent = _identityOfItem_(item);
   const meta = metaCache.get(tag) || {};
   const toYMD = d => { if (!d) return ""; const dt = new Date(d); if (isNaN(dt)) return ""; return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`; };
 
@@ -3989,7 +4194,7 @@ function prepareSingleDialog(item, tag) {
     const le = appendLog(newVal
       ? `${item.name} – datum ${newVal}`
       : `${item.name} – datum rensat (avinventerad)`, tag);
-    gasCallWithRetry('updateMeta', { tag, args: innerArgs })
+    gasCallWithRetry('updateMeta', { tag, args: { ...innerArgs, ..._dlgIdent } })
       .then(res => {
         const cls = classifyLinkResult(res);
         const ml2 = qs("#msgLine");
@@ -4031,7 +4236,7 @@ function prepareSingleDialog(item, tag) {
 
   qs("#confirmSingle").onclick = () => {
     dlg.classList.add("hidden");
-    Save.logSingle(tag, { name: item.name, sheetName: item.sheetName, rowNum: item.rowNum });
+    Save.logSingle(tag, { name: item.name, sheetName: item.sheetName, rowNum: item.rowNum, ..._dlgIdent });
     statusDefault();
   };
 
@@ -4044,7 +4249,7 @@ function prepareSingleDialog(item, tag) {
   qs("#missingSingle").onclick = () => {
     dlg.classList.add("hidden");
     markSingleMissing(tag, item.name || "Okänd artikel",
-      buildMissingPayload(tag, item, userName));
+      { ...buildMissingPayload(tag, item, userName), ..._dlgIdent });
     statusDefault();
   };
 
@@ -4104,6 +4309,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // sätter den (openContainerForTag, swipe, koppla-flödet) sätter SAMMA tag
   // före anropet → redundant men ofarligt.
   currentDialogTag = tag;
+  // v160 (A03): identiteten fångas när dialogen ÖPPNAS och skickas uttryckligen
+  // från varje skrivning nedan (saldo, datum, egenskaper, namn, koppling,
+  // radering). Muteras bara av ett bekräftat namnbyte i SAMMA dialog.
+  const _dlgIdent = _identityOfItem_(item);
   const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade saldo, person och datum. Under <b>Ny inventering</b> registrerar du dagens.<br>Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner. Steget följer siffrans decimaler: 3 blir 4, men 0,5 blir 0,6. Du kan också tappa siffran och skriva in en helt ny total.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).<br>Byter du enhet mellan till exempel kg och g erbjuder appen att räkna om saldot. Ser ett nytt saldo orimligt stort eller litet ut jämfört med förra gången frågar appen en extra gång innan det sparas.';}
 
   const editMode = opts.editMode === true;
@@ -4165,15 +4374,34 @@ function prepareContainerDialog(item, tag, opts = {}) {
   const commitName = () => {
     const n = (pendingName || "").trim();
     if (n && n !== dialogItem.name) {
+      const _oldName = dialogItem.name;
+      const _ident = { ..._dlgIdent };   // expectedName = det gamla namnet i arket
       dialogItem.name = n;
       tagCache.set(tag, { ...tagCache.get(tag), name: n });
       // D (samma klass): .catch(console.log) svalde fel TYST — användaren såg
       // det nya namnet i UI:t men det kunde aldrig ha sparats. Verifierat via
       // classifyLinkResult; ej-bekräftat → ⚠️-banner (ingen tyst förlust).
       // gasCallWithRetry → exhausted/nätfel skiljs från äkta server-avvisning.
-      gasCallWithRetry('updateName', {tag, newName: n, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum})
+      gasCallWithRetry('updateName', {tag, newName: n, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum, ..._ident})
         .then(res => {
-          if (classifyLinkResult(res) !== 'verified') {
+          const _cls = classifyLinkResult(res);
+          if (_cls === 'verified') {
+            // Arket heter nu n → kommande skrivningar ska förvänta sig n.
+            const c = tagCache.get(tag);
+            if (c) tagCache.set(tag, { ...c, serverName: n });
+            _dlgIdent.expectedName = n;   // dialogens följande skrivningar
+            if (_ident.expectedName) _renameIdentityInQueues_(tag, _ident.expectedName, n);
+          } else if (_cls === 'rejected') {
+            // Servern sa nej (raden kunde inte bekräftas eller finns inte) →
+            // visa inte ett namn som aldrig sparades.
+            const c = tagCache.get(tag);
+            if (c && c.name === n) tagCache.set(tag, { ...c, name: _oldName });
+            if (dialogItem.name === n) dialogItem.name = _oldName;
+            if (dlgTitle && dlgTitle.textContent.trim() === n) dlgTitle.textContent = _oldName;
+            renderLists();
+            _refreshAfterIdentityError_(res && res.code);
+            show("Namnbytet sparades inte: " + humanizeSaveError((res && res.msg) || '', res && res.code), "warn");
+          } else {
             show("Namnbyte kunde inte bekräftas — försök igen", "warn");
           }
         })
@@ -4296,7 +4524,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const args = isClear
       ? { clearTimestamp: true, clearUser: true, userName: '', sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum }
       : { lastYMD: dec.ymd, userName, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum };
-    gasCallWithRetry('updateMeta', { tag, args })
+    gasCallWithRetry('updateMeta', { tag, args: { ...args, ..._dlgIdent } })
       .then(res => {
         const cls = classifyLinkResult(res);
         if (cls === 'verified') {
@@ -4534,7 +4762,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
       if (prevQtyEl) prevQtyEl.textContent = `${formatQtySv(newQty)} ${newUnit}`;
       if (!isSingle) dlgInput.value = String(newQty).replace('.', ',');
       setMsg(`Saldot omräknat: ${formatQtySv(newQty)} ${newUnit}`, "ok");
-      queueUpdate('updateCount', { tag, newCount: newQty, userName, sheetName: _sn, rowNum: _rn });
+      queueUpdate('updateCount', { tag, newCount: newQty, userName, sheetName: _sn, rowNum: _rn, ..._dlgIdent });
     };
 
     const evalUnitChange = (newUnitRaw) => {
@@ -4634,7 +4862,8 @@ function prepareContainerDialog(item, tag, opts = {}) {
           name: targetName,
           sheetName: _sn || (cached?.place),
           rowNum: _rn || (cached?.rowNum),
-          currentTag: tag
+          currentTag: tag,
+          ..._dlgIdent
         });
         if (result.ok) {
           tagDisplay.value = result.tag;
@@ -4712,7 +4941,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   if (registerSingleBtn) {
     registerSingleBtn.onclick = () => {
       commitName();
-      Save.logSingle(tag, { name: dialogItem.name, sheetName: _sn, rowNum: _rn });
+      Save.logSingle(tag, { name: dialogItem.name, sheetName: _sn, rowNum: _rn, ..._dlgIdent });
       closeDialog();
     };
   }
@@ -4789,7 +5018,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     show(`${dialogItem.name}: ny mängd ${newCount} – sparas…`, "ok");
     closeDialog();
 
-    queueUpdate('updateCount', { tag, newCount, userName, sheetName: _sn, rowNum: _rn });
+    queueUpdate('updateCount', { tag, newCount, userName, sheetName: _sn, rowNum: _rn, ..._dlgIdent });
     }
   };
 
@@ -4873,7 +5102,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
 
     renderLists();
 
-    const payload = { tag, comment, unit, minQty, type: typeVal, category, place: sheetPlace, userName, sheetName: _sn, rowNum: _rn };
+    const payload = { tag, comment, unit, minQty, type: typeVal, category, place: sheetPlace, userName, sheetName: _sn, rowNum: _rn, ..._dlgIdent };
     if (date) payload.lastYMD = date;
     queueUpdate("updateMeta", payload);
   };
@@ -4978,9 +5207,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
           setMsg("Synkar pending ändringar…", "");
           await waitForPendingSync();
         }
-        const res = await gasCall('deleteItem', { tag, sheetName: _sn, rowNum: _rn });
+        const res = await gasCall('deleteItem', { tag, sheetName: _sn, rowNum: _rn, ..._dlgIdent });
         if (!res || res.ok === false) {
           setMsg(res?.msg || "Kunde inte radera", "warn");
+          _refreshAfterIdentityError_(res && res.code);
           setBtnBusy(deleteBtn, false);
           thawDialog();
           confirmArmed = false;
@@ -5181,7 +5411,9 @@ function findSimilarItems(name, max = 3) {
   const results = [];
   for (const h of hits) {
     const val = tagCache.get(h.tag);
-    results.push({ tag: h.tag, name: h.label, sheetName: val?.sheetName, rowNum: val?.rowNum });
+    // v160: identiteten följer med förslaget, så att kopplingen gäller artikeln
+    // som visades även om listan byggs om innan användaren trycker.
+    results.push({ tag: h.tag, name: h.label, sheetName: val?.sheetName, rowNum: val?.rowNum, ident: _identityOfItem_(val) });
     if (results.length >= max) break;
   }
   return results;
@@ -5244,7 +5476,7 @@ function _maybeInventOnLink(finalTag, name, clickTs) {
     // B5-residual (v153): koordinater via buildLogSingleTarget — utan
     // sheetName/rowNum kan backend inte lösa upp syntetiska nycklar (samma
     // mönster som skan-grenen, verifierat mot Code.js resolveItem/logTag).
-    Save.logSingle(finalTag, buildLogSingleTarget(cached.name || name, cached));
+    Save.logSingle(finalTag, { ...buildLogSingleTarget(cached.name || name, cached), ..._identityOfItem_(cached) });
     return true;
   }
   if (cached.type === 'behållare') {
@@ -5358,7 +5590,7 @@ function showLinkTagDialog(scannedTag) {
       if (uniq.length) {
         similarHtml = `<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(0,0,0,.1)"><i style="font-size:0.85em;display:block;margin-bottom:4px">Du har redan liknande:</i>`;
         for (const m of uniq) {
-          similarHtml += `<button type="button" class="btn cancel offMatchBtn" data-tag="${esc(m.tag)}" data-sheet="${esc(m.sheetName||'')}" data-row="${esc(m.rowNum||'')}" data-name="${esc(m.name)}" style="display:block;margin-top:4px;font-size:0.9em;width:100%">Koppla till "${esc(m.name)}"</button>`;
+          similarHtml += `<button type="button" class="btn cancel offMatchBtn" data-tag="${esc(m.tag)}" data-sheet="${esc(m.sheetName||'')}" data-row="${esc(m.rowNum||'')}" data-name="${esc(m.name)}" data-id="${esc((m.ident && m.ident.id) || '')}" data-ename="${esc((m.ident && m.ident.expectedName) || '')}" style="display:block;margin-top:4px;font-size:0.9em;width:100%">Koppla till "${esc(m.name)}"</button>`;
         }
         similarHtml += `</div>`;
       }
@@ -5387,7 +5619,9 @@ function showLinkTagDialog(scannedTag) {
           name: matchName,
           sheetName,
           rowNum,
-          currentTag: matchTag
+          currentTag: matchTag,
+          ...(btn.dataset.id ? { id: btn.dataset.id } : {}),
+          ...(btn.dataset.ename ? { expectedName: btn.dataset.ename } : {})
         });
         if (result.ok) {
           show(`Tag kopplad till "${matchName}"`, 'ok');
@@ -5565,7 +5799,8 @@ function openLinkSearchDialog(tagToLink) {
           name,
           sheetName: val.sheetName || val.place,
           rowNum: val.rowNum,
-          currentTag: tag
+          currentTag: tag,
+          ..._identityOfItem_(val)   // v160: artikeln som visades i sökträffen
         };
         if (!isSynthetic) {
           // Mönster A: optimistisk UI-respons (gul/pending-rad) innan svar.
@@ -6221,7 +6456,7 @@ async function onScanResult(res) {
         // ANNAN tagg har scanned!==lastCode → skannar fritt direkt.
         // B3 (v151): skicka med koordinaterna från cachen — annars kan backend
         // inte lösa upp syntetiska nycklar (se buildLogSingleTarget ovan).
-        Save.logSingle(primaryTag, buildLogSingleTarget(name, cached));
+        Save.logSingle(primaryTag, { ...buildLogSingleTarget(name, cached), ..._identityOfItem_(cached) });
         cooldown(primaryTag, 8000); busy=false;
         showSingelCaptured(name);
         return;

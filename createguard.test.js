@@ -126,7 +126,7 @@ function _persistPending_() {
     for (const v of _pendingCreates.values()) {
       if (v && v.ck) creates.push({
         ck: v.ck, tag: v.tag ?? null, name: v.name ?? '', type: v.type || 'singel',
-        qty: Number(v.qty) || 1, unit: v.unit ?? '', category: v.category ?? '',
+        qty: v.qty == null ? 1 : Number(v.qty), unit: v.unit ?? '', category: v.category ?? '',
         sheetPlace: v.sheetPlace ?? '', sheetName: v.sheetName ?? null,
         minQty: Number(v.minQty) || 0, user: v.user ?? '',
         retries: v.retries || 0

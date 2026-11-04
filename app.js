@@ -1003,7 +1003,7 @@ function _persistPending_() {
     for (const v of _pendingCreates.values()) {
       if (v && v.ck) creates.push({
         ck: v.ck, tag: v.tag ?? null, name: v.name ?? '', type: v.type || 'singel',
-        qty: Number(v.qty) || 1, unit: v.unit ?? '', category: v.category ?? '',
+        qty: v.qty == null ? 1 : Number(v.qty), unit: v.unit ?? '', category: v.category ?? '',
         sheetPlace: v.sheetPlace ?? '', sheetName: v.sheetName ?? null,
         minQty: Number(v.minQty) || 0, user: v.user ?? '',
         retries: v.retries || 0
@@ -1216,6 +1216,23 @@ function stepQty(raw, dir) {
   const next = Math.max(0, cur + dir * Math.pow(10, -decimals));
   const out = next.toFixed(decimals);
   return comma ? out.replace(".", ",") : out;
+}
+
+// A15: strikt tolkning av ett antalsfält. Bara siffror, med högst ett
+// decimaltecken (komma eller punkt). Inget parseFloat: "2kg" blev 2 och "abc"
+// blev 1 via `|| 1`, alltså ett annat saldo än det användaren skrev. Minus
+// avvisas (det finns inget läge som minskar med ett negativt tal; −/+ golvar
+// redan på 0). Tomt är ett eget utfall så att varje fält väljer sin standard:
+// ny artikel 1, min-antal 0, saldo i artikeldialogen avvisas.
+// → { ok:true, empty:true } | { ok:true, empty:false, value } | { ok:false }
+const QTY_INPUT_MSG = "Skriv bara siffror, till exempel 2 eller 1,5.";
+function parseQtyInput(raw) {
+  if (typeof raw === "number") return isFinite(raw) && raw >= 0 ? { ok: true, empty: false, value: raw } : { ok: false };
+  const s = String(raw == null ? "" : raw).trim();
+  if (!s) return { ok: true, empty: true, value: null };
+  if (!/^(\d+([.,]\d*)?|[.,]\d+)$/.test(s)) return { ok: false };
+  const v = Number(s.replace(",", "."));
+  return isFinite(v) ? { ok: true, empty: false, value: v } : { ok: false };
 }
 
 // Preferenser för ikoner i listan (togglas i Inställningar-dialogen).
@@ -4525,7 +4542,7 @@ function resetDialog(){
   // kvar dataset._wasDisabled och är fortfarande disablade. Återställ dem
   // vid varje dialog-uppbyggnad så ett läckt fruset state aldrig överlever.
   unfreezeStale(dlg);
-  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";{const _mq=qs('#manualMinQty');if(_mq)_mq.value="";}if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip,.commentBlock,.qtyConfirm').forEach(el=>el.remove());
+  dlgTitle.textContent="";dlgTitle.contentEditable="false";dlgTitle.oninput=null;dlgTitle.onblur=null;dlgInfo.innerHTML="";dlgBtns.innerHTML="";newItemFields.classList.add("hidden");dlgInputWrap.classList.add("hidden");dlgInput.value="";dlgInput.disabled=false;dlgInputSuffix.textContent="";manualName.value="";manualName.oninput=null;manualQty.value="";manualQty.classList.remove('input-error');{const _mq=qs('#manualMinQty');if(_mq){_mq.value="";_mq.classList.remove('input-error');}const _qn=qs('#manualQtyNote');if(_qn){_qn.textContent="";_qn.style.display="none";}}if(_aiSuggestTimer){clearTimeout(_aiSuggestTimer);_aiSuggestTimer=null;}dlg.querySelectorAll('.tagScanRow,.extraFields,.aiChip,.commentBlock,.qtyConfirm').forEach(el=>el.remove());
 }
 
 /* ===== Behållare-dialog ===== */
@@ -4724,7 +4741,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   // från varje skrivning nedan (saldo, datum, egenskaper, namn, koppling,
   // radering). Muteras bara av ett bekräftat namnbyte i SAMMA dialog.
   const _dlgIdent = _identityOfItem_(item);
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade saldo, person och datum. Under <b>Ny inventering</b> registrerar du dagens.<br>Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner. Steget följer siffrans decimaler: 3 blir 4, men 0,5 blir 0,6. Du kan också tappa siffran och skriva in en helt ny total.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).<br>Byter du enhet mellan till exempel kg och g erbjuder appen att räkna om saldot. Ser ett nytt saldo orimligt stort eller litet ut jämfört med förra gången frågar appen en extra gång innan det sparas.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='<b>Föregående inventering</b> visar senast sparade saldo, person och datum. Under <b>Ny inventering</b> registrerar du dagens.<br>Tryck <b>−</b> eller <b>+</b> för att räkna upp/ner. Steget följer siffrans decimaler: 3 blir 4, men 0,5 blir 0,6. Du kan också tappa siffran och skriva in en helt ny total. Skriv bara siffror, med komma för decimaler (till exempel 1,5). Står det något annat sparas ingenting.<br><b>Spara</b> bekräftar mängden och stänger dialogen.<br><b>Nytt datum</b> ändrar inventeringsdatum; rensa fältet för att avinventera.<br>Tryck på artikelnamnet för att byta namn.<br>"⚙️ Egenskaper" visar kommentar, kategori, enhet, typ, min-mängd och tag (tag sparas direkt när du skannar).<br>Byter du enhet mellan till exempel kg och g erbjuder appen att räkna om saldot. Ser ett nytt saldo orimligt stort eller litet ut jämfört med förra gången frågar appen en extra gång innan det sparas.';}
 
   const editMode = opts.editMode === true;
   // Reset per dialog: editMode (Egenskaper från singel) öppnar expanderat,
@@ -4774,7 +4791,6 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (busy) { btn.classList.add("loading"); btn.disabled = true; }
     else { btn.classList.remove("loading"); btn.disabled = false; if (labelWhenIdle) btn.textContent = labelWhenIdle; }
   };
-  const validNumber = v => !isNaN(v) && isFinite(v);
 
   dlgTitle.textContent = dialogItem.name || "Okänd artikel";
   dlgTitle.contentEditable = "true";
@@ -5082,7 +5098,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     </select>
 
     <label>Mängd som ska finnas under kurs</label>
-    <input id="minQtyEdit" type="number" inputmode="decimal" value="${esc(dialogItem.minQty)}">
+    <input id="minQtyEdit" type="text" inputmode="decimal" autocomplete="off" value="${esc(dialogItem.minQty)}">
 
     <label>Tag <span style="font-weight:400;font-size:0.8em;opacity:0.7">(sparas direkt vid skanning)</span></label>
     <div class="tagRow">
@@ -5369,9 +5385,9 @@ function prepareContainerDialog(item, tag, opts = {}) {
   if (saveBtn) saveBtn.onclick = () => {
     commitName();
     setMsg("", ""); markError(dlgInput, false);
-    const val = parseFloat((dlgInput.value || "").replace(",", "."));
-    if (!validNumber(val)) { markError(dlgInput, true); setMsg("Ogiltigt tal i fältet.", "warn"); return; }
-    const newCount = val;
+    const qp = parseQtyInput(dlgInput.value);
+    if (!qp.ok || qp.empty) { markError(dlgInput, true); setMsg(QTY_INPUT_MSG, "warn"); return; }
+    const newCount = qp.value;
     const oldCount = Number(dialogItem.qty) || 0;
     // #34: hantera ALLA fyra kombinationer av (saldo ändrat × datum ändrat).
     // commitContainerDate är idempotent via decideDateCommit/_lastCommittedDate
@@ -5464,10 +5480,15 @@ function prepareContainerDialog(item, tag, opts = {}) {
     [commentEl, unitEl, minEl, dateEl].filter(Boolean).forEach(el => markError(el, false));
 
     const date = dateEl ? normDate(dateEl.value) : "";
-    const minQty = parseFloat((minEl.value || "0").replace(",", "."));
+    // A15: ogiltigt min-antal sparas inte, men resten av fälten gör det
+    // (teardown-flushen visar inget besked, och en kommentar ska inte gå
+    // förlorad för att min-fältet har skräp). Servern rör bara min-kolumnen
+    // när minQty finns i payloaden. Tomt = 0 som förut.
+    const minP = parseQtyInput(minEl ? minEl.value : "");
+    const minQty = minP.ok ? (minP.empty ? 0 : minP.value) : undefined;
 
     if (dateEl && !date) { markError(dateEl, true); setMsg("Datum är ogiltigt.", "warn"); return; }
-    if (!validNumber(minQty) || minQty < 0) { markError(minEl, true); setMsg("Min-mängd ogiltigt.", "warn"); return; }
+    if (!minP.ok) markError(minEl, true);
 
     const comment = commentEl.value.trim();
     const unitRaw = unitEl.value.trim();
@@ -5505,7 +5526,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (catRaw === "__new__" && !category) return;
     if (placeRaw === "__new__" && !sheetPlace) return;
 
-    tagCache.set(tag, { ...tagCache.get(tag), comment, unit, minQty, type: typeVal, category, sheetPlace, pendingSync: true });
+    tagCache.set(tag, { ...tagCache.get(tag), comment, unit, ...(minP.ok ? { minQty } : {}), type: typeVal, category, sheetPlace, pendingSync: true });
 
     // B6 (v152): spegla enhetsbytet direkt i mängdfältets suffix — sattes
     // tidigare bara en gång vid dialogbygget, så suffixet visade gammal enhet
@@ -5518,12 +5539,14 @@ function prepareContainerDialog(item, tag, opts = {}) {
     setLocalMeta(tag, patch);
     recomputeMaxLast();
 
-    setMsg("Sparat ✓", "ok");
+    if (minP.ok) setMsg("Sparat ✓", "ok");
+    else setMsg("Antal som ska finnas under kurs sparades inte. " + QTY_INPUT_MSG, "warn");
 
     renderLists();
 
-    const payload = { tag, comment, unit, minQty, type: typeVal, category, place: sheetPlace, userName, sheetName: _sn, rowNum: _rn, ..._dlgIdent };
+    const payload = { tag, comment, unit, type: typeVal, category, place: sheetPlace, userName, sheetName: _sn, rowNum: _rn, ..._dlgIdent };
     if (date) payload.lastYMD = date;
+    if (minP.ok) payload.minQty = minQty;
     queueUpdate("updateMeta", payload);
   };
   // Synkron flush som resetDialog kör innan kortet rivs: avbryt den pending
@@ -6459,7 +6482,7 @@ function populateNewCategoryDropdown(forPlace){
 function prepareNewItemDialog(scanned){
   let currentTag=scanned;
   lastCode=scanned; resetDialog(); dlgTitle.textContent="Ny artikel";
-  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, flik, plats och kategori. <b>Benämning, enhet och flik är obligatoriska</b> — utan flik vet arket inte var raden ska hamna.<br><b>Flik</b> = vilket Sheet-blad raden skapas i. <b>Plats</b> = fysisk placering (kolumn B).<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Enhetslistan är grupperad i vikt, volym och styck. Välj helst en befintlig enhet — en ny enhet gör saldot svårare att tolka senare.<br>Saknas enhet, flik, plats eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
+  const ha=document.getElementById('help-article'); if(ha){ha.classList.remove('open'); ha.innerHTML='Fyll i benämning, typ, enhet, flik, plats och kategori. <b>Benämning, enhet och flik är obligatoriska</b> — utan flik vet arket inte var raden ska hamna.<br><b>Flik</b> = vilket Sheet-blad raden skapas i. <b>Plats</b> = fysisk placering (kolumn B).<br><b>Singel</b> = en enhet per etikett (t.ex. en sax).<br><b>Behållare</b> = variabel mängd (t.ex. papper, krydda, batterier).<br>Enhetslistan är grupperad i vikt, volym och styck. Välj helst en befintlig enhet — en ny enhet gör saldot svårare att tolka senare.<br>Saknas enhet, flik, plats eller kategori i listan — välj <b>+ Ny …</b> och skriv in.<br>Mängd och antal som ska finnas under kurs skrivs med siffror, med komma för decimaler (till exempel 0,5). Lämnar du mängden tom blir den 1.<br>Tryck "Skanna tag" för att koppla en QR-kod till artikeln.';}
 
   const isManual=String(scanned).startsWith('M');
   dlgInfo.innerHTML=isManual?'Skapa ny artikel manuellt:' : `Ingen matchning för <b>${esc(scanned)}</b>. Ange uppgifter:`;
@@ -6499,6 +6522,12 @@ function prepareNewItemDialog(scanned){
   const unitSel = qs('#manualUnit');
   const unitNewInput = qs('#manualUnitNew');
   const unitNote = qs('#manualUnitNote');
+  const setQtyNote = (txt) => {
+    const n = qs('#manualQtyNote');
+    if (!n) return;
+    n.textContent = txt || '';
+    n.style.display = txt ? 'block' : 'none';
+  };
   const setUnitNote = (txt, warn) => {
     if (!unitNote) return;
     unitNote.textContent = txt || '';
@@ -6597,7 +6626,6 @@ function prepareNewItemDialog(scanned){
   qs("#saveNewBtn").onclick=()=>{
     const name=manualName.value.trim();
     const type=manualType.value;
-    const qty=parseFloat((manualQty.value||"1").replace(",","."))||1;
     const unitRaw=(qs('#manualUnit')?.value||"").trim();
     const unit = unitRaw === '__new__'
       ? (qs('#manualUnitNew')?.value||'').trim()
@@ -6613,6 +6641,17 @@ function prepareNewItemDialog(scanned){
       if(v.field==='sheetName') qs('#manualPlace')?.focus();
       return;
     }
+    // A15: antal och min-antal tolkas strikt. Skräp avvisas med besked i
+    // dialogen, inget skapas. Tomt antal = 1 (platshållaren lovar det),
+    // tomt min-antal = 0. Ett hårt krav, därför före ny-enhet-gaten.
+    const minQtyEl=qs('#manualMinQty');
+    const qtyP=parseQtyInput(manualQty.value), minP=parseQtyInput(minQtyEl?.value);
+    manualQty.classList.remove('input-error'); minQtyEl?.classList.remove('input-error');
+    setQtyNote('');
+    if(!qtyP.ok){ manualQty.classList.add('input-error'); setQtyNote('Mängd just nu: '+QTY_INPUT_MSG); manualQty.focus(); return; }
+    if(!minP.ok){ minQtyEl?.classList.add('input-error'); setQtyNote('Antal som ska finnas under kurs: '+QTY_INPUT_MSG); minQtyEl?.focus(); return; }
+    const qty=qtyP.empty?1:qtyP.value;
+    const minQty=minP.empty?0:minP.value;
     // F3 (v155): mjuk gate för ny enhet — första Spara-trycket visar en
     // varningstext i dialogen, andra trycket sparar. Armering nollas om
     // enheten byts eller texten redigeras.
@@ -6629,7 +6668,6 @@ function prepareNewItemDialog(scanned){
     const category = catRaw === '__new__'
       ? (qs('#manualCategoryNew')?.value||'').trim()
       : catRaw;
-    const minQty=parseFloat((qs('#manualMinQty')?.value||'0').replace(',','.'))||0;
     // P2b/P2d: hela create-jobbet byggs som ETT objekt med en idempotensnyckel
     // och lämnas till Save.createItem, som registrerar det i _pendingCreates
     // (persisterat) innan den skickar. Bygget här gör bara DOM-avläsningen.

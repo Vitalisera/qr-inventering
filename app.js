@@ -1317,29 +1317,43 @@ function acceptScan(code, format) {
   // Accept direkt utan konsensus så användaren får snabb feedback.
   // Konsensus krävs bara för OKÄNDA koder (potentiella felläsningar som
   // annars skulle öppna "Koppla till befintlig?"-dialog felaktigt).
-  if (lookupByTag(code) || _dupKeysForScan_(code).length > 1) return true;
+  if (resolveScan(code)) return true;  // känd kod, även tvetydig (A11/A14)
   return passesScanConsensus(code);
 }
 
-// Slår upp en skannad tag i tagCache — primär nyckel först, sedan altTags linjärt.
-// Fallback: gsheets tappar ledande nollor i TAG-celler ("01234" → 1234). Om exakt
-// match miss:ar, jämför numeriskt (utan ledande 0:or) så skadade tags fångas.
+// Slår upp en skannad kod i tagCache. Unik träff → { tag, item }, annars null
+// (okänd ELLER tvetydig; tvetydigheten hanteras av resolveScan nedan).
 function lookupByTag(scanned) {
-  if (tagCache.has(scanned)) return { tag: scanned, item: tagCache.get(scanned) };
-  for (const [primary, item] of tagCache.entries()) {
-    if (item.altTags && item.altTags.includes(scanned)) return { tag: primary, item };
+  const r = resolveScan(scanned);
+  return r && !r.ambiguous ? r : null;
+}
+// A14: ALLA kandidater för en skannad kod, symmetriskt. Arket tappar ledande
+// nollor ("01234" → 1234) och en streckkod kan avläsas med eller utan dem, så
+// "123" och "00123" jämförs på nollstrippad nyckel åt båda hållen, för huvudkod
+// och extra taggar. Exakt träff vinner; finns ingen används nyckelträffarna.
+// Mer än en artikel på samma nivå → { ambiguous: [nycklar] }: välj ingen tyst.
+// Tidigare: första nyckelträffen vann tyst, och en kod utan nollor hittade
+// aldrig en kod med nollor.
+function resolveScan(scanned) {
+  const s = String(scanned == null ? '' : scanned);
+  if (!s) return null;
+  if (s.startsWith('S')) return tagCache.has(s) ? { tag: s, item: tagCache.get(s) } : null;
+  const key = _tagZeroKey_(s);
+  const exact = [], zero = [];
+  for (const [k, item] of tagCache.entries()) {
+    // Radens riktiga koder: dubblettrader (A11) ligger under radnyckeln med
+    // koden i dupTag; tagglösa rader (syntetisk nyckel utan dupTag) har ingen.
+    const codes = [];
+    if (item && item.dupTag) codes.push(String(item.dupTag));
+    else if (!_isSynthKey_(k)) codes.push(k);
+    if (item && Array.isArray(item.altTags)) for (const t of item.altTags) { const n = normTag(t); if (n) codes.push(n); }
+    if (codes.includes(s)) exact.push(k);
+    else if (codes.some(c => _tagZeroKey_(c) === key)) zero.push(k);
   }
-  const scannedNum = scanned.replace(/^0+/, '') || '0';
-  if (scannedNum === scanned) return null;
-  for (const [primary, item] of tagCache.entries()) {
-    if ((primary.replace(/^0+/, '') || '0') === scannedNum) return { tag: primary, item };
-    if (item.altTags) {
-      for (const t of item.altTags) {
-        if ((String(t).replace(/^0+/, '') || '0') === scannedNum) return { tag: primary, item };
-      }
-    }
-  }
-  return null;
+  const keys = exact.length ? exact : zero;
+  if (!keys.length) return null;
+  if (keys.length === 1) return { tag: keys[0], item: tagCache.get(keys[0]) };
+  return { ambiguous: keys };
 }
 const fmtDate=t=>{try{if(!t)return"";const d=new Date(t);return isNaN(d)?"":d.toLocaleDateString("sv-SE");}catch{return"";}};
 const toDayMs=ms=>{if(!ms)return null;const d=new Date(ms);d.setHours(0,0,0,0);return d.getTime();};
@@ -1387,11 +1401,6 @@ const tagCache=new Map(),metaCache=new Map();const placeSet=new Set();
 // Nyckel = koden utan ledande nollor → postnycklarna ("S<flik>R<rad>") för raderna.
 const dupTagKeys=new Map();
 const _tagZeroKey_=t=>String(t).replace(/^0+/,'')||'0';
-// Postnycklarna för en skannad kod som sitter på flera rader (annars tom lista).
-function _dupKeysForScan_(scanned){
-  if(!scanned||String(scanned).startsWith('S'))return [];
-  return (dupTagKeys.get(_tagZeroKey_(scanned))||[]).filter(k=>tagCache.has(k));
-}
 let maxLastMs=null;const COOLDOWN_MS=1200;let activePlaces=null;
 let activeSteps=null;  // null = alla steg synliga, Set<string> = bara dessa
 let onlyLow=false;
@@ -6793,16 +6802,17 @@ async function onScanResult(res) {
     if (!acceptScan(scanned, fmt)) return;
     busy=true; scanBox.classList.add("flash"); setTimeout(()=>scanBox.classList.remove("flash"),220);
 
-    // A11: koden sitter på flera artiklar → välj ingen tyst, låt användaren välja.
-    const dupKeys=_dupKeysForScan_(scanned);
-    if(dupKeys.length>1){
+    // A11/A14: koden passar flera artiklar (samma kod, eller samma siffror med
+    // olika ledande nollor och ingen exakt träff) → välj ingen tyst, låt användaren välja.
+    const found=resolveScan(scanned);
+    if(found&&found.ambiguous){
       await flashFeedback("Koden sitter på flera artiklar");
       cooldown(scanned); busy=false;
       if (dialogOpen()) return;
-      openDuplicateChoice(dupKeys);
+      openDuplicateChoice(found.ambiguous);
       return;
     }
-    const hit=lookupByTag(scanned);
+    const hit=found;
     // P4: 1D-streckkoder kan rapporteras med olika .text mellan frames för
     // SAMMA fysiska kod (UPC-A 12-digit ↔ EAN-13 med leading-0-pad, andra
     // format-tvetydigheter). lookupByTag normaliserar via leading-0-fallback

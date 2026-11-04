@@ -21,16 +21,16 @@ function _matchTagInScanned_(scanned, wanted) {
     if (cellTags.indexOf(wanted) !== -1) {
       return { row: entry.row, sheetName: entry.sheetName };
     }
-    if (wantedNum !== wanted) {
-      for (const t of cellTags) {
-        if ((t.replace(/^0+/, '') || '0') === wantedNum) {
-          const key = entry.sheetName + '|' + entry.row;
-          if (!seen[key]) {
-            seen[key] = true;
-            numericHits.push({ row: entry.row, sheetName: entry.sheetName });
-          }
-          break;
+    // A14: jämför nollstrippat åt BÅDA hållen. Tidigare bara när den sökta koden
+    // hade nollor, så arkets "00123" hittades aldrig av skanningen "123".
+    for (const t of cellTags) {
+      if ((t.replace(/^0+/, '') || '0') === wantedNum) {
+        const key = entry.sheetName + '|' + entry.row;
+        if (!seen[key]) {
+          seen[key] = true;
+          numericHits.push({ row: entry.row, sheetName: entry.sheetName });
         }
+        break;
       }
     }
   }
@@ -130,11 +130,20 @@ t('tom scan -> null', () => {
   eq(_matchTagInScanned_([], '959773'), null, 'tom -> null');
 });
 
-t('wanted utan leading zero gör ingen numeric-fallback', () => {
-  // wanted "959773" === wantedNum "959773" -> numeric-grenen hoppas över helt;
-  // bara exakt match gäller -> ingen exakt cell -> null
+// A14: tidigare hoppades numeric-grenen över när den sökta koden saknade nollor
+// (asymmetri: arkets "0959773" hittades aldrig av skanningen "959773").
+t('A14: wanted utan leading zero hittar entydig cell med nolla', () => {
   const scanned = [{ row: 3, sheetName: 'A', cellTags: ['0959773'] }];
-  eq(_matchTagInScanned_(scanned, '959773'), null, 'ingen numeric-fallback utan ledande nolla i sökt');
+  const r = _matchTagInScanned_(scanned, '959773');
+  assert(r && r.sheetName === 'A' && r.row === 3, 'symmetrisk numeric-fallback');
+});
+
+t('A14: wanted utan leading zero + två numeric-rader -> null', () => {
+  const scanned = [
+    { row: 3, sheetName: 'A', cellTags: ['0959773'] },
+    { row: 4, sheetName: 'B', cellTags: ['00959773'] },
+  ];
+  eq(_matchTagInScanned_(scanned, '959773'), null, 'tvetydig -> null');
 });
 
 console.log(`\n${pass}/${pass + fail} passerade`);

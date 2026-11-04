@@ -399,6 +399,7 @@ function _identityOfItem_(e) {
   if (e && e.id) out.id = e.id;
   const nm = e ? (e.serverName != null ? e.serverName : e.name) : null;
   if (nm) out.expectedName = String(nm).trim();
+  if (e && e.dupTag) out.wireTag = e.dupTag;   // A11: dubblettrad, se _wireBody_
   return out;
 }
 function _captureIdentity_(tag) {
@@ -407,6 +408,7 @@ function _captureIdentity_(tag) {
   if (e && e.id) out.id = e.id;
   const nm = e ? (e.serverName != null ? e.serverName : e.name) : null;
   if (nm) out.expectedName = String(nm).trim();
+  if (e && e.dupTag) out.wireTag = e.dupTag;   // A11: dubblettrad, se _wireBody_
   return out;
 }
 // Får en lokal (gul) post ta över serverns identitet efter en ny lista? Bara
@@ -528,6 +530,26 @@ function _flushHeldSoon_() {
   if (updateQueue.length && !updateTimer) updateTimer = setTimeout(flushUpdates, 0);
 }
 
+// A11: en rad vars kod också sitter på en annan rad har en radnyckel lokalt
+// ("S<flik>R<rad>"), men servern ska få den RIKTIGA koden (wireTag, fångad med
+// identiteten när användaren agerade). Med koden + flik + rad prövar servern att
+// koden faktiskt sitter på raden (STALE_ROW annars); med radnyckeln skulle den
+// bara pröva namnet och kunde skriva på grannraden efter en infogad rad.
+// Bara det som skickas skrivs om: kö, historik och svar behåller radnyckeln.
+function _wireBody_(fn, params) {
+  const strip = o => { const c = { ...o }; delete c.wireTag; return c; };
+  const body = { fn, ...strip(params), cv: APP_VERSION };
+  const swap = (holder, src) => { if (src && src.wireTag && _isSynthKey_(holder.tag)) holder.tag = src.wireTag; };
+  swap(body, params);
+  if (params.args && typeof params.args === 'object') { swap(body, params.args); body.args = strip(params.args); }
+  if (Array.isArray(params.batch)) body.batch = params.batch.map(j => {
+    if (!j || !j.args) return j;
+    const args = strip(j.args); swap(args, j.args);
+    return { ...j, args };
+  });
+  return body;
+}
+
 async function gasCall(fn, params = {}, timeoutMs = 30000) {
   _attachIdentityForSend_(fn, params);
   await _awaitRenames_(fn, params);
@@ -544,7 +566,7 @@ async function gasCall(fn, params = {}, timeoutMs = 30000) {
       method: 'POST',
       // cv = klientversion i VARJE anrop (v160). Backend använder den för att inte
       // ge äldre klienter svar de skulle läsa som framgång (TAG_EXISTS i st. f. existed).
-      body: JSON.stringify({ fn, ...params, cv: APP_VERSION }),
+      body: JSON.stringify(_wireBody_(fn, params)),
       redirect: 'follow',
       signal: ac.signal
     });
@@ -2093,7 +2115,7 @@ const Save = {
     const { name, sheetName, rowNum, currentTag } = target;
     // v160: identitet från jobbet (resync) eller fångad nu (användarens handling).
     const ident = _hasIdentity_(target)
-      ? { ...(target.id !== undefined ? { id: target.id } : {}), ...(target.expectedName !== undefined ? { expectedName: target.expectedName } : {}) }
+      ? { ...(target.id !== undefined ? { id: target.id } : {}), ...(target.expectedName !== undefined ? { expectedName: target.expectedName } : {}), ...(target.wireTag ? { wireTag: target.wireTag } : {}) }
       : (target._resync && _isSynthKey_(currentTag) ? {} : _captureIdentity_(currentTag));
     const isSynthetic = String(currentTag || '').startsWith('S');
     const le = appendLog(`${name} – tag ${scannedTag} kopplas`, currentTag);
@@ -2279,7 +2301,7 @@ const Save = {
     const { name, sheetName, rowNum, onResult } = target;
     // v160: identitet från jobbet (resync) eller fångad nu (användarens handling).
     const ident = _hasIdentity_(target)
-      ? { ...(target.id !== undefined ? { id: target.id } : {}), ...(target.expectedName !== undefined ? { expectedName: target.expectedName } : {}) }
+      ? { ...(target.id !== undefined ? { id: target.id } : {}), ...(target.expectedName !== undefined ? { expectedName: target.expectedName } : {}), ...(target.wireTag ? { wireTag: target.wireTag } : {}) }
       : (target._resync && _isSynthKey_(tag) ? {} : _captureIdentity_(tag));
     // Undo-fix: fånga FÖREGÅENDE meta-tillstånd SYNKRONT, FÖRE den
     // optimistiska setLocalMeta nedan klobbrar metaCache med Date.now().
@@ -3922,6 +3944,9 @@ function initData(records, { fromCache = false } = {}) {
   // Re-applyera pending edits ovanpå server-data
   for (const { t, item, meta } of pendingSnapshot) {
     const server = tagCache.get(t);
+    // A11: en post under en kod som nu sitter på flera rader (t.ex. från en kö
+    // sparad av v161) visas under radnycklarna. När den är synkad behövs den inte.
+    if (!server && !item?.pendingSync && !_isSynthKey_(t) && dupTagKeys.has(_tagZeroKey_(t))) continue;
     let merged = server ? { ...server, ...item } : item;
     // Identiteten: servern vet bäst vad artikeln heter i arket NU (någon kan ha
     // bytt namn direkt i arket). Men bara om det är SAMMA artikel: under en

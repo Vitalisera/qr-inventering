@@ -14,6 +14,7 @@ function _identityOfItem_(e) {
   if (e && e.id) out.id = e.id;
   const nm = e ? (e.serverName != null ? e.serverName : e.name) : null;
   if (nm) out.expectedName = String(nm).trim();
+  if (e && e.dupTag) out.wireTag = e.dupTag;   // A11: dubblettrad, se _wireBody_
   return out;
 }
 function _captureIdentity_(tag) {
@@ -22,6 +23,7 @@ function _captureIdentity_(tag) {
   if (e && e.id) out.id = e.id;
   const nm = e ? (e.serverName != null ? e.serverName : e.name) : null;
   if (nm) out.expectedName = String(nm).trim();
+  if (e && e.dupTag) out.wireTag = e.dupTag;   // A11: dubblettrad, se _wireBody_
   return out;
 }
 function _adoptServerIdentity_(key, item, server) {

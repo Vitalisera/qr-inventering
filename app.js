@@ -1804,6 +1804,7 @@ qs('#syncBadge')?.addEventListener('click', () => {
   // att nolla dem här vore falsk trygghet. Bara det som redan är slutgiltigt
   // och nu läst kvitteras.
   if (_failedWrites > 0) { _failedWrites = 0; _persistPending_(); }
+  _retryParkedJobs_();   // parkerade köjobb får ett nytt försök
 });
 function markAsDone(e) {
   const icon = e.querySelector(".icon");
@@ -2304,7 +2305,7 @@ const Save = {
             tag, name, type: "singel", qty: 1, user: userName,
             sheetName: sheetName ?? null, rowNum: rowNum ?? null, ...ident
           })
-        : { ok: false, exhausted: true, msg: 'väntar på en tidigare ändring' })
+        : { ok: false, exhausted: true, waiting: true, msg: 'väntar på en tidigare ändring' })
       .then(res => {
         // gasCallWithRetry kastar normalt INTE — den returnerar
         // {ok:false,exhausted:true} vid uttömt/nätfel. classifyLinkResult
@@ -2338,7 +2339,9 @@ const Save = {
           job._le = le;                 // återanvänd samma rad vid resync
           // v151: räkna misslyckade försök (persisteras) → synlig eskalering
           // i stället för evig tyst retry när samma jobb failar om och om igen.
-          job.retries = (job.retries || 0) + 1;
+          // Att bara vänta in ett äldre köjobb (res.waiting) är inget misslyckat
+          // försök: registreringen har inte ens skickats.
+          if (!(res && res.waiting)) job.retries = (job.retries || 0) + 1;
           _pendingLogSingle.set(tag, job);
           _persistPending_();
           const _gaveUpHope = job.retries >= RESYNC_WARN_AFTER;
@@ -2477,6 +2480,7 @@ const Save = {
         if (cls === 'verified') {
           _pendingCreates.delete(job.ck);
           _persistPending_();
+          _flushHeldSoon_();   // köjobb för artikeln som väntade på den kan gå nu
           markAsDone(le);
           const newKey = createCacheKey(job, res);
           const cur = tagCache.get(cacheKey);
@@ -2815,7 +2819,7 @@ function _buildBatch_() {
   const ready = [];
   for (const j of send) {
     const t = j && j.args && j.args.tag;
-    if (blocked.has(t) || _olderOpPending_(t, j.seq || 0)) { blocked.add(t); hold.push(j); } else ready.push(j);
+    if (j._parked || blocked.has(t) || _olderOpPending_(t, j.seq || 0)) { blocked.add(t); hold.push(j); } else ready.push(j);
   }
   hold.sort((a, b) => (a.seq || 0) - (b.seq || 0));
   const batch = ready.map(job =>
@@ -2942,7 +2946,10 @@ function _renderBatchOutcome_(failedTags) {
   if (failedTags.length === 0 && retrying > 0) {
     // A09: tillfälligt fel → jobben ligger kvar i kön och skickas igen. Ingen
     // bock (inget är bekräftat), inget fel (inget är förlorat).
-    const label = `⏳ ${retrying} ${retrying === 1 ? 'ändring' : 'ändringar'} försöker igen`;
+    const parked = failedTags.retry.filter(j => j._parked).length;
+    const label = parked
+      ? `⚠️ ${parked} ${parked === 1 ? 'ändring' : 'ändringar'} väntar, tryck på statusraden för att försöka igen`
+      : `⏳ ${retrying} ${retrying === 1 ? 'ändring' : 'ändringar'} försöker igen`;
     if (msgLine) { msgLine.className = "msgLine warn"; msgLine.textContent = label; }
     show(label, "warn");
     return;
@@ -3014,6 +3021,16 @@ function _revalidateCacheTs_() {
 let _flushAgain_ = false;
 let _lastFlushRequeued_ = false;
 const _BATCH_RETRY_MS_ = [2000, 5000, 15000, 30000, 60000];
+// Tak: efter så många tillfälliga fel i rad (samma gräns som eskaleringen i
+// statusraden) parkeras jobbet. Det ligger kvar i kön och på disk, statusraden
+// är röd, men appen slutar skicka det av sig själv. Ett tryck på statusraden
+// eller en omstart av appen ger det ett nytt försök.
+const _BATCH_RETRY_CAP_ = RESYNC_WARN_AFTER;
+function _retryParkedJobs_() {
+  let any = false;
+  for (const j of updateQueue) if (j && j._parked) { delete j._parked; any = true; }
+  if (any && !flushInFlight) flushUpdates();
+}
 function flushUpdates() {
   if (flushInFlight) { _flushAgain_ = true; return; }
   if (updateQueue.length === 0) return;
@@ -3041,7 +3058,12 @@ function flushUpdates() {
         _requeueJobs_(failedTags.retry, true);
         _lastFlushRequeued_ = true;
         const n = Math.max(...failedTags.retry.map(j => j.retries || 1));
-        setTimeout(flushUpdates, _BATCH_RETRY_MS_[Math.min(n, _BATCH_RETRY_MS_.length) - 1]);
+        if (n >= _BATCH_RETRY_CAP_) {
+          for (const j of failedTags.retry) if ((j.retries || 0) >= _BATCH_RETRY_CAP_) j._parked = true;
+          _expandLog_();
+        } else {
+          setTimeout(flushUpdates, _BATCH_RETRY_MS_[Math.min(n, _BATCH_RETRY_MS_.length) - 1]);
+        }
       }
       _persistQueue_();
       renderLists();

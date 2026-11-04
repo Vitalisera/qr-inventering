@@ -146,10 +146,13 @@ async function drain(a, rounds = 6) {
     const a = start(rig);
     a.fetchMode = 'hang';
     a.run(`Save.logSingle('7310003', { name: 'Hink', sheetName: '${S}', rowNum: 4, expectedName: 'Hink' })`);
+    // Disken läses FÖRE kopplingen: linkTag persisterar hela blobben och skulle
+    // annars få med en skanning som logSingle själv aldrig skrev ner.
+    const p0 = a.persisted(PKEY) || {};
+    ok((p0.logSingle || []).some(j => j.tag === '7310003'), 'singelskanningen ligger på disk medan anropet väntar');
     a.run(`Save.linkTag('7399999', { name: 'Spade', sheetName: '${S}', rowNum: 3, currentTag: '7310002', expectedName: 'Spade' })`);
     await a.settle(10);
     const p = a.persisted(PKEY) || {};
-    ok((p.logSingle || []).some(j => j.tag === '7310003'), 'singelskanningen ligger på disk medan anropet väntar');
     ok((p.tagLinks || []).some(j => j.scannedTag === '7399999'), 'kopplingen ligger på disk medan anropet väntar');
     const ls = snapshot(a); a.stop();
     const b = start(rig, ls);
@@ -202,11 +205,47 @@ async function drain(a, rounds = 6) {
     a.run(`Save.logSingle('7310001', { name: 'Kratta', sheetName: '${S}', rowNum: 2, expectedName: 'Kratta' })`);
     await a.settle(50); await drain(a, 2);
     ok(a.run(`_pendingLogSingle.has('7310001')`), 'skanningen ligger kvar i kön medan det äldre saldot väntar');
+    ok((a.run(`_pendingLogSingle.get('7310001').retries`) || 0) === 0, 'att vänta på ett äldre jobb räknas inte som ett misslyckat försök (retries ' + a.run(`_pendingLogSingle.get('7310001').retries`) + ')');
     a.fetchMode = 'rig';
     a.run('flushUpdates()');
     await a.settle(30); await drain(a); await a.settle(30); await drain(a);
     ok(qty(rig, 2) === 1, 'det senare (skanningen, 1) vinner över det tidigare saldot (4), arket har ' + qty(rig, 2));
     ok(!a.run(`_pendingLogSingle.has('7310001')`), 'och skanningen är bekräftad');
+    a.stop();
+  }
+
+  console.log('Ny artikel: köjobb som väntade på den skickas när den bekräftats');
+  {
+    const rig = mkRig();
+    const a = start(rig);
+    a.fetchMode = 'hang';
+    a.run(`Save.createItem({ ck: 'ck-test-1', tag: '7318888', name: 'Räfsa', type: 'behållare', qty: 3, unit: 'st', category: '', sheetPlace: '', sheetName: '${S}', minQty: 0, user: 'Testare' })`);
+    await a.settle(5);
+    a.run(`queueUpdate('updateCount', { tag: '7318888', newCount: 9, userName: 'Testare', sheetName: '${S}', expectedName: 'Räfsa' })`);
+    a.run('clearTimeout(updateTimer); updateTimer = null; flushUpdates()');
+    await a.settle(5);
+    ok(a.hung.filter(h => h.body.fn === 'batch').length === 0, 'saldot hålls medan den nya artikeln väntar på svar');
+    a.fetchMode = 'rig'; a.releaseHung();
+    await a.settle(100); await drain(a, 2);
+    const r = rig.findByTag('7318888')[0];
+    ok(r && qty(rig, r.row) === 9, 'saldot sparas direkt när artikeln bekräftats (arket har ' + (r && qty(rig, r.row)) + ')');
+    a.stop();
+  }
+
+  console.log('Toppnivåfel utan transient:false: tak på omförsöken');
+  {
+    const rig = mkRig();
+    const a = start(rig);
+    a.serve = (fn, p) => fn === 'batch' ? { error: 'Exception: Service invoked too many times' } : rig.api(fn, p);
+    a.run(count('7310002', 8, 3, 'Spade'));
+    for (let i = 0; i < 10; i++) { a.run('clearTimeout(updateTimer); updateTimer = null; flushUpdates()'); await drain(a, 1); }
+    const sent = a.calls.filter(c => c.fn === 'batch').length;
+    ok(sent <= 6, 'efter taket skickas jobbet inte om av sig självt (' + sent + ' försök på 10 tillfällen)');
+    ok(queuedTags(a).includes('7310002'), 'jobbet ligger kvar i kön på disk');
+    ok(a.run('updateQueue.filter(j => (j.retries || 0) >= RESYNC_WARN_AFTER).length') === 1, 'och räknas i statusradens varning');
+    a.serve = null;
+    a.run('_retryParkedJobs_()'); await drain(a);
+    ok(qty(rig, 3) === 8, 'ett tryck på statusraden försöker igen och sparar jobbet (arket har ' + qty(rig, 3) + ')');
     a.stop();
   }
 

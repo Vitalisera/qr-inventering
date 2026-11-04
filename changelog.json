@@ -5,7 +5,7 @@
       "version": 161,
       "date": "2026-11-04",
       "notes": [
-        "Svarar arket inte för stunden ligger ändringen kvar på telefonen och skickas igen av sig själv. Förut kunde den räknas som misslyckad fast den bara behövde ett nytt försök. Ändringar på samma artikel från den här telefonen skickas i den ordning du gjorde dem, även efter att appen startats om, så det du ändrade sist vinner. En skanning sparas också på telefonen direkt, inte först när nätet svikit."
+        "Svarar arket inte för stunden ligger ändringen kvar på telefonen och skickas igen av sig själv. Förut kunde den räknas som misslyckad fast den bara behövde ett nytt försök. Går det inte efter fem försök blir statusraden röd, och ett tryck på den försöker igen. Ändringen ligger kvar under tiden. Ändringar på samma artikel från den här telefonen skickas i den ordning du gjorde dem, även efter att appen startats om, så det du ändrade sist vinner. En skanning sparas också på telefonen direkt, inte först när nätet svikit."
       ]
     },
     {

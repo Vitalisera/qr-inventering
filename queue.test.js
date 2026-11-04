@@ -249,6 +249,44 @@ async function drain(a, rounds = 6) {
     a.stop();
   }
 
+  console.log('Parkerat jobb: tryck medan en flush pågår, och grannar i samma batch');
+  {
+    const rig = mkRig();
+    const a = start(rig);
+    a.serve = (fn, p) => fn === 'batch' ? { error: 'Exception: Service invoked too many times' } : rig.api(fn, p);
+    a.run(count('7310002', 8, 3, 'Spade'));
+    for (let i = 0; i < 6; i++) { a.run('clearTimeout(updateTimer); updateTimer = null; flushUpdates()'); await drain(a, 1); }
+    a.serve = null;
+    a.fetchMode = 'hang';
+    a.run(count('7310003', 5, 4, 'Hink'));
+    a.run('clearTimeout(updateTimer); updateTimer = null; flushUpdates()');
+    await a.settle(5);
+    a.run('_retryParkedJobs_()');            // trycket kommer medan Hink-batchen är på väg
+    a.fetchMode = 'rig'; a.releaseHung();
+    await a.settle(20); await drain(a); await a.settle(20); await drain(a);
+    ok(qty(rig, 3) === 8, 'ett tryck på statusraden medan en flush pågår försöker ändå igen (arket har ' + qty(rig, 3) + ')');
+    a.stop();
+  }
+  {
+    const rig = mkRig();
+    const a = start(rig);
+    let n = 0;
+    a.serve = (fn, p) => (fn === 'batch' && n++ === 0)
+      ? { ok: false, results: p.batch.map(j => ({ tag: j.args.tag, ok: false, code: 'LOCK_TIMEOUT', transient: true, msg: 'Server upptagen' })) }
+      : (fn === 'batch' ? { ok: false, results: p.batch.map(j => j.args.tag === '7310001'
+          ? { tag: j.args.tag, ok: false, code: 'LOCK_TIMEOUT', transient: true, msg: 'Server upptagen' }
+          : rig.api('batch', { batch: [j], cv: 160 }).results[0]) } : rig.api(fn, p));
+    a.run(count('7310001', 7, 2, 'Kratta'));
+    a.run('updateQueue[0].retries = RESYNC_WARN_AFTER - 1');   // parkeras vid nästa fel
+    a.run(count('7310002', 9, 3, 'Spade'));
+    a.run('clearTimeout(updateTimer); updateTimer = null; flushUpdates()');
+    await drain(a, 1);
+    ok(a.run(`updateQueue.some(j => j.args.tag === '7310001' && j._parked)`), 'jobbet som nått taket parkeras');
+    await a.settle(2300); await drain(a);
+    ok(qty(rig, 3) === 9, 'grannen med ett första tillfälligt fel försöks igen efter den korta väntetiden (arket har ' + qty(rig, 3) + ')');
+    a.stop();
+  }
+
   console.log('markSingleMissing och ett hållet namnbyte');
   {
     const rig = mkRig();

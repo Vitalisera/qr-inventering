@@ -3027,9 +3027,9 @@ const _BATCH_RETRY_MS_ = [2000, 5000, 15000, 30000, 60000];
 // eller en omstart av appen ger det ett nytt försök.
 const _BATCH_RETRY_CAP_ = RESYNC_WARN_AFTER;
 function _retryParkedJobs_() {
-  let any = false;
-  for (const j of updateQueue) if (j && j._parked) { delete j._parked; any = true; }
-  if (any && !flushInFlight) flushUpdates();
+  for (const j of updateQueue) if (j && j._parked) delete j._parked;
+  // Utan villkor: pågår en flush sätter spärren i flushUpdates en ny körning.
+  flushUpdates();
 }
 function flushUpdates() {
   if (flushInFlight) { _flushAgain_ = true; return; }
@@ -3057,11 +3057,15 @@ function flushUpdates() {
       if (failedTags.retry.length) {
         _requeueJobs_(failedTags.retry, true);
         _lastFlushRequeued_ = true;
-        const n = Math.max(...failedTags.retry.map(j => j.retries || 1));
-        if (n >= _BATCH_RETRY_CAP_) {
-          for (const j of failedTags.retry) if ((j.retries || 0) >= _BATCH_RETRY_CAP_) j._parked = true;
-          _expandLog_();
-        } else {
+        // Jobb som nått taket parkeras. Övriga (andra artiklar i samma batch)
+        // får sin egen, kortare väntetid och väntar inte på 60-sekundersticken.
+        const live = [];
+        for (const j of failedTags.retry) {
+          if ((j.retries || 0) >= _BATCH_RETRY_CAP_) j._parked = true; else live.push(j);
+        }
+        if (live.length < failedTags.retry.length) _expandLog_();
+        if (live.length) {
+          const n = Math.max(...live.map(j => j.retries || 1));
           setTimeout(flushUpdates, _BATCH_RETRY_MS_[Math.min(n, _BATCH_RETRY_MS_.length) - 1]);
         }
       }

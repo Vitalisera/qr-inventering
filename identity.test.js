@@ -48,7 +48,7 @@ function _attachIdentityForSend_(fn, params) {
 const _renamesInFlight_ = new Map();
 function _beginRename_(tag, oldName, newName) {
   let settle; const done = new Promise(r => { settle = r; });
-  const entry = { oldName, newName, done };
+  const entry = { oldName, newName, done, startedAt: Date.now() };
   _renamesInFlight_.set(tag, entry);
   return ok => { if (_renamesInFlight_.get(tag) === entry) _renamesInFlight_.delete(tag); settle(!!ok); };
 }
@@ -59,14 +59,42 @@ function _identityTargets_(fn, params) {
   if (fn === 'logTag' || fn === 'addTag' || _IDENTITY_DIRECT_FNS_[fn]) return [[params.tag, params]];
   return [];
 }
+// Väntar på ett namnbyte, högst capMs. true = bytet bekräftades.
+async function _renameOutcome_(e, capMs) {
+  let timer;
+  const ok = await Promise.race([e.done, new Promise(r => { timer = setTimeout(() => r(false), capMs); })]);
+  clearTimeout(timer);
+  return ok;
+}
+// Alla väntor löper samtidigt: två hängande namnbyten kostar en gräns, inte två.
 async function _awaitRenames_(fn, params, capMs = 45000) {
-  for (const [tag, o] of _identityTargets_(fn, params)) {
+  await Promise.all(_identityTargets_(fn, params).map(async ([tag, o]) => {
     const e = _renamesInFlight_.get(tag);
-    if (!e) continue;
-    let timer;
-    const ok = await Promise.race([e.done, new Promise(r => { timer = setTimeout(() => r(false), capMs); })]);
-    clearTimeout(timer);
+    if (!e) return;
+    const ok = await _renameOutcome_(e, capMs);
     if (ok && o.expectedName === e.oldName) o.expectedName = e.newName;
+  }));
+}
+// Batchkön: bara jobb för en artikel vars namnbyte väntar på svar hålls kvar
+// (i den beständiga kön); alla andra skickas direkt. Efter gränsen släpps även
+// de hållna, med det gamla namnet, så servern nekar synligt i stället för att gissa.
+function _takeSendableJobs_(queue, now = Date.now(), capMs = 45000) {
+  const send = [], hold = [];
+  for (const j of queue) {
+    const e = j && j.args ? _renamesInFlight_.get(j.args.tag) : null;
+    (e && now - e.startedAt < capMs ? hold : send).push(j);
+  }
+  return { send, hold };
+}
+// Två namnbyten i följd på samma artikel: det andra skickas först när det
+// första fått svar, och förväntar sig då det bekräftade namnet. prev fångas
+// innan det egna bytet anmäls, så ett byte väntar aldrig på sig självt.
+async function _afterPrevRename_(prev, ident, entry, capMs = 45000) {
+  if (!prev) return;
+  const ok = await _renameOutcome_(prev, capMs);
+  if (ok && ident.expectedName === prev.oldName) {
+    ident.expectedName = prev.newName;
+    if (entry) entry.oldName = prev.newName;
   }
 }
 
@@ -199,7 +227,74 @@ console.log('B3: dialog öppen, raden flyttas, listan byggs om, radera:');
   _beginRename_('STR4', 'X', 'Y');
   await _awaitRenames_('logTag', slow, 20);
   ok(slow.expectedName === 'X', 'svarar namnbytet aldrig skickas registreringen ändå efter en gräns, med det gamla namnet');
+
+  console.log('Granskningsfynd 1: ett hängande namnbyte håller bara sin egen artikel:');
+  {
+    const sA = _beginRename_('SHA', 'A0', 'A1'), sB = _beginRename_('SHB', 'B0', 'B1');
+    const both = { batch: [{ fnName: 'updateCount', args: { tag: 'SHA', expectedName: 'A0' } },
+                           { fnName: 'updateCount', args: { tag: 'SHB', expectedName: 'B0' } }] };
+    const t0 = Date.now();
+    await _awaitRenames_('batch', both, 80);
+    const waited = Date.now() - t0;
+    ok(waited < 150, 'två hängande namnbyten väntas in samtidigt, inte efter varandra (' + waited + ' ms, gräns 80 ms per byte)');
+    sA(false); sB(false);
+    let split = null;
+    try {
+      _beginRename_('SHC', 'C0', 'C1');
+      const q = [{ fnName: 'updateCount', args: { tag: 'SHC', expectedName: 'C0' } },
+                 { fnName: 'updateMeta', args: { tag: 'SHD', comment: 'x' } }];
+      split = _takeSendableJobs_(q);
+      ok(split.send.length === 1 && split.send[0].args.tag === 'SHD', 'en annan artikels jobb skickas direkt');
+      ok(split.hold.length === 1 && split.hold[0].args.tag === 'SHC', 'jobbet för artikeln med namnbytet hålls kvar i kön');
+      const late = _takeSendableJobs_(q, Date.now() + 46000);
+      ok(late.send.length === 2 && late.hold.length === 0, 'svarar namnbytet aldrig släpps jobbet efter gränsen');
+    } catch (e) { ok(false, '_takeSendableJobs_ delar kön per artikel (' + e.message + ')'); }
+  }
+
+  console.log('Granskningsfynd 2: två namnbyten i följd på samma artikel:');
+  try {
+    const s1 = _beginRename_('SR2', 'N0', 'N1');
+    const prev = _renamesInFlight_.get('SR2');
+    _beginRename_('SR2', 'N1', 'N2');
+    const entry2 = _renamesInFlight_.get('SR2');
+    const ident = { expectedName: 'N0' };
+    entry2.oldName = ident.expectedName;
+    let sent2 = false;
+    const p = _afterPrevRename_(prev, ident, entry2).then(() => { sent2 = true; });
+    await Promise.resolve(); await Promise.resolve();
+    ok(!sent2, 'andra namnbytet skickas inte medan det första är på väg');
+    s1(true); await p;
+    ok(ident.expectedName === 'N1' && entry2.oldName === 'N1', 'andra namnbytet förväntar sig det bekräftade namnet från det första');
+    const prevR = (() => { const s = _beginRename_('SR3', 'M0', 'M1'); const e = _renamesInFlight_.get('SR3'); s(false); return e; })();
+    const identR = { expectedName: 'M0' };
+    await _afterPrevRename_(prevR, identR, null);
+    ok(identR.expectedName === 'M0', 'nekat första byte → det andra förväntar sig fortfarande det gamla namnet');
+    let own = false; await _afterPrevRename_(undefined, { expectedName: 'Z' }, null).then(() => { own = true; });
+    ok(own, 'utan tidigare byte väntar namnbytet inte alls (aldrig på sig självt)');
+  } catch (e) { ok(false, '_afterPrevRename_ väntar in föregående byte (' + e.message + ')'); }
+
+  console.log('Granskningsfynd 3: speglarna i den här filen är identiska med app.js:');
+  {
+    const { loadFile, canonical } = require('./testdrift.check.js');
+    const prod = loadFile(__dirname + '/app.js'), mine = loadFile(__filename);
+    const MIRRORS = ['_isSynthKey_', '_identityOfItem_', '_captureIdentity_', '_adoptServerIdentity_', '_hasIdentity_',
+      '_attachIdentity_', '_IDENTITY_DIRECT_FNS_', '_attachIdentityForSend_', '_beginRename_', '_identityTargets_',
+      '_renameOutcome_', '_awaitRenames_', '_takeSendableJobs_', '_afterPrevRename_'];
+    const canon = x => canonical(x.params, x.paramMask) + canonical(x.body, x.bodyMask);
+    const bad = MIRRORS.filter(n => {
+      const a = prod.fns.get(n) || prod.tables.get(n), b = mine.fns.get(n) || mine.tables.get(n);
+      return !a || !b || canon(a) !== canon(b);
+    });
+    ok(bad.length === 0, 'varje speglad funktion är lika med app.js utan kommentarer' + (bad.length ? ' (skiljer: ' + bad.join(', ') + ')' : ''));
+  }
+
   const src = require('fs').readFileSync(__dirname + '/app.js', 'utf8');
+  ok(/function _buildBatch_\(\) \{[\s\S]*?const \{ send, hold \} = _takeSendableJobs_\(updateQueue\);/.test(src),
+     'batchen byggs bara av jobb som inte väntar på ett namnbyte');
+  ok(/const _prevRename = _renamesInFlight_\.get\(tag\);\s*\n(?:\s*\/\/.*\n)*\s*const _endRename = _beginRename_\(tag, _oldName, n\);/.test(src),
+     'commitName fångar ett tidigare byte innan det egna anmäls');
+  ok(src.includes("_afterPrevRename_(_prevRename, _ident, _entry)"), 'commitName skickar först när det tidigare bytet fått svar');
+  ok(/_endRename\(_cls === 'verified'\);[\s\S]{0,1200}?_flushHeldSoon_\(\)/.test(src), 'hållna jobb skickas när namnbytet fått svar');
   ok(/async function gasCall\([^)]*\) \{\n  _attachIdentityForSend_\(fn, params\);\n  await _awaitRenames_\(fn, params\);/.test(src),
      'gasCall väntar in pågående namnbyten före varje skrivning');
   ok(src.includes("const _endRename = _beginRename_(tag, _oldName, n);"), 'commitName anmäler namnbytet innan det skickas');

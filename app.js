@@ -474,7 +474,7 @@ function _refreshAfterIdentityError_(code) {
 const _renamesInFlight_ = new Map();
 function _beginRename_(tag, oldName, newName) {
   let settle; const done = new Promise(r => { settle = r; });
-  const entry = { oldName, newName, done };
+  const entry = { oldName, newName, done, startedAt: Date.now() };
   _renamesInFlight_.set(tag, entry);
   return ok => { if (_renamesInFlight_.get(tag) === entry) _renamesInFlight_.delete(tag); settle(!!ok); };
 }
@@ -485,15 +485,47 @@ function _identityTargets_(fn, params) {
   if (fn === 'logTag' || fn === 'addTag' || _IDENTITY_DIRECT_FNS_[fn]) return [[params.tag, params]];
   return [];
 }
+// Väntar på ett namnbyte, högst capMs. true = bytet bekräftades.
+async function _renameOutcome_(e, capMs) {
+  let timer;
+  const ok = await Promise.race([e.done, new Promise(r => { timer = setTimeout(() => r(false), capMs); })]);
+  clearTimeout(timer);
+  return ok;
+}
+// Alla väntor löper samtidigt: två hängande namnbyten kostar en gräns, inte två.
 async function _awaitRenames_(fn, params, capMs = 45000) {
-  for (const [tag, o] of _identityTargets_(fn, params)) {
+  await Promise.all(_identityTargets_(fn, params).map(async ([tag, o]) => {
     const e = _renamesInFlight_.get(tag);
-    if (!e) continue;
-    let timer;
-    const ok = await Promise.race([e.done, new Promise(r => { timer = setTimeout(() => r(false), capMs); })]);
-    clearTimeout(timer);
+    if (!e) return;
+    const ok = await _renameOutcome_(e, capMs);
     if (ok && o.expectedName === e.oldName) o.expectedName = e.newName;
+  }));
+}
+// Batchkön: bara jobb för en artikel vars namnbyte väntar på svar hålls kvar
+// (i den beständiga kön); alla andra skickas direkt. Efter gränsen släpps även
+// de hållna, med det gamla namnet, så servern nekar synligt i stället för att gissa.
+function _takeSendableJobs_(queue, now = Date.now(), capMs = 45000) {
+  const send = [], hold = [];
+  for (const j of queue) {
+    const e = j && j.args ? _renamesInFlight_.get(j.args.tag) : null;
+    (e && now - e.startedAt < capMs ? hold : send).push(j);
   }
+  return { send, hold };
+}
+// Två namnbyten i följd på samma artikel: det andra skickas först när det
+// första fått svar, och förväntar sig då det bekräftade namnet. prev fångas
+// innan det egna bytet anmäls, så ett byte väntar aldrig på sig självt.
+async function _afterPrevRename_(prev, ident, entry, capMs = 45000) {
+  if (!prev) return;
+  const ok = await _renameOutcome_(prev, capMs);
+  if (ok && ident.expectedName === prev.oldName) {
+    ident.expectedName = prev.newName;
+    if (entry) entry.oldName = prev.newName;
+  }
+}
+// Hållna jobb skickas så snart namnbytet fått svar (eller gränsen passerats).
+function _flushHeldSoon_() {
+  if (updateQueue.length && !updateTimer) updateTimer = setTimeout(flushUpdates, 0);
 }
 
 async function gasCall(fn, params = {}, timeoutMs = 30000) {
@@ -2681,12 +2713,14 @@ function _buildBatch_() {
   // för riktiga taggar. En syntetisk nyckel kan nu peka på en annan artikel →
   // skickas utan identitet och nekas synligt av servern (ROW_UNVERIFIED).
   for (const job of updateQueue) if (job && job.args) _attachIdentity_(job.args, job.args.tag, false);
-  const batch = updateQueue.map(job =>
+  const { send, hold } = _takeSendableJobs_(updateQueue);
+  const batch = send.map(job =>
     job.fnName === "updateMeta"
       ? { fnName: job.fnName, args: { ...job.args, userName } }
       : job
   );
   updateQueue.length = 0;
+  updateQueue.push(...hold);   // väntar på sitt namnbyte, ligger kvar i den beständiga kön
   updateTimer = null;
   return batch;
 }
@@ -2847,6 +2881,7 @@ function flushUpdates() {
   if (updateQueue.length === 0) return;
 
   const batch = _buildBatch_();
+  if (!batch.length) return;   // allt väntar på namnbyten; _flushHeldSoon_ skickar sedan
   console.log("Skickar batch:", batch.map(b => b.args.tag));
 
   // #5: håll batchen persisterad medan den är in-flight — en PWA-kill mitt i
@@ -4409,19 +4444,25 @@ function prepareContainerDialog(item, tag, opts = {}) {
     if (n && n !== dialogItem.name) {
       const _oldName = dialogItem.name;
       const _ident = { ..._dlgIdent };   // expectedName = det gamla namnet i arket
+      const _prevRename = _renamesInFlight_.get(tag);
       // Skrivningar på samma artikel väntar in svaret (se _awaitRenames_).
       const _endRename = _beginRename_(tag, _oldName, n);
+      const _entry = _renamesInFlight_.get(tag);
       if (_ident.expectedName && _ident.expectedName !== _oldName) {
         // Det gamla namnet i arket (serverName) kan skilja sig från det visade.
-        _renamesInFlight_.get(tag).oldName = _ident.expectedName;
+        _entry.oldName = _ident.expectedName;
       }
+      // Svarar namnbytet aldrig ska de hållna jobben ändå gå iväg efter gränsen.
+      setTimeout(_flushHeldSoon_, 45100);
       dialogItem.name = n;
       tagCache.set(tag, { ...tagCache.get(tag), name: n });
       // D (samma klass): .catch(console.log) svalde fel TYST — användaren såg
       // det nya namnet i UI:t men det kunde aldrig ha sparats. Verifierat via
       // classifyLinkResult; ej-bekräftat → ⚠️-banner (ingen tyst förlust).
       // gasCallWithRetry → exhausted/nätfel skiljs från äkta server-avvisning.
-      gasCallWithRetry('updateName', {tag, newName: n, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum, ..._ident})
+      const _sheetName = dialogItem.sheetName, _rowNum = dialogItem.rowNum;
+      _afterPrevRename_(_prevRename, _ident, _entry)
+        .then(() => gasCallWithRetry('updateName', {tag, newName: n, sheetName: _sheetName, rowNum: _rowNum, ..._ident}))
         .then(res => {
           const _cls = classifyLinkResult(res);
           _endRename(_cls === 'verified');
@@ -4444,8 +4485,9 @@ function prepareContainerDialog(item, tag, opts = {}) {
           } else {
             show("Namnbyte kunde inte bekräftas — försök igen", "warn");
           }
+          _flushHeldSoon_();
         })
-        .catch(() => { _endRename(false); show("Namnbyte kunde inte bekräftas — försök igen", "warn"); });
+        .catch(() => { _endRename(false); _flushHeldSoon_(); show("Namnbyte kunde inte bekräftas — försök igen", "warn"); });
       renderLists();
     }
   };

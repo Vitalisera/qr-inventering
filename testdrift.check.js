@@ -469,4 +469,6 @@ function main() {
   process.exit(drifted.length ? 1 : 0);
 }
 
-main();
+// Körs som skript: rapport. Laddas med require (t.ex. identity.test.js): bara verktygen.
+if (require.main === module) main();
+module.exports = { loadFile, canonical };

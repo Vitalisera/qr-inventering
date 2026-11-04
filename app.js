@@ -1906,8 +1906,18 @@ function addUndoButton(logEntry, tag, prevOverride) {
     undoBtn.remove();
     undoData.delete(tag);
     show("Ångrad", "warn");
+    // A12b: ångran är på väg → andra vägar får inte släcka gult under tiden.
+    _undoInFlight.set(tag, (_undoInFlight.get(tag) || 0) + 1);
+    let _undoSettled = false;   // .then och .catch kan båda nås; räkna ned en gång
+    const _undoDone = () => {
+      if (_undoSettled) return;
+      _undoSettled = true;
+      const n = (_undoInFlight.get(tag) || 1) - 1;
+      if (n > 0) _undoInFlight.set(tag, n); else _undoInFlight.delete(tag);
+    };
     gasCallWithRetry('updateMeta', {tag, args: payload})
       .then(res => {
+        _undoDone();
         const _cls = classifyLinkResult(res);
         if (_cls !== 'verified') {
           // P3: ångra-vägen registrerar INGET jobb för resync — varken kön
@@ -1918,21 +1928,25 @@ function addUndoButton(logEntry, tag, prevOverride) {
             ' – ångra nådde inte arket, kontrollera artikeln');
           show("Ångra kunde inte bekräftas", "warn");
           if (countsAsLostWrite(_cls, false)) _bumpFailedWrites_(1);
+          // A12b: det ångrade värdet finns inte i arket → gult står kvar även
+          // om en annan väg lyckas, tills en bekräftad köskrivning kommer.
+          _rejectedSync_.add(tag);
         } else {
           // §1.3-fix (b cleanup): undo verified → rensa pendingSync så raden
           // INTE permanent gulmarkeras (b) satte true:n bara som tillfälligt
           // initData-skydd under undo-flight). renderLists efter cleanup.
-          const cur2 = tagCache.get(tag);
-          if (cur2) tagCache.set(tag, { ...cur2, pendingSync: false });
+          _settleSync_(tag);   // A12b: bara om inget annat väntar eller nekats
           renderLists();
         }
       })
       .catch(err => {
+        _undoDone();
         // Samma resonemang som i .then-grenen: inget re-försök finns.
         markLogWarn(logEntry, (msg ? msg.textContent : '') +
           ' – ' + humanizeSaveError(err && err.message));
         show("Ångra kunde inte bekräftas", "warn");
         _bumpFailedWrites_(1);
+        _rejectedSync_.add(tag);   // A12b
       });
   };
   logEntry.appendChild(undoBtn);
@@ -1980,6 +1994,7 @@ function _applySyntheticKeySwap_(oldTag, newTag, coords) {
   // den nya taggen mot serverns writtenTag-eko efter att addTag landat.
   const rekeyed = rekeyPendingJobs(oldTag, newTag, c,
     updateQueue.concat(_inflightBatch || []), _pendingLogSingle, _pendingTagLinks);
+  _moveRejectedSync_(oldTag, newTag);   // A12b
   if (rekeyed.queue > 0) _persistQueue_();
   if (rekeyed.singles > 0 || rekeyed.links > 0) _persistPending_();
 }
@@ -2204,6 +2219,10 @@ const Save = {
     }
 
     if (res && res.ok) {
+      // A12b: avregistrera kopplingen FÖRE statusregeln nedan, annars räknas
+      // den som väntande och artikeln fastnar gul.
+      _pendingTagLinks.delete(scannedTag); // bekräftat → ej längre pending
+      _persistPending_();
       // A11: en dubblettrad (koden sitter även på en annan rad) behåller sin
       // radnyckel. Den nya koden ligger kvar som extra tagg (altTags ovan), så
       // båda koderna hittar rätt rad, och den gamla koden öppnar fortfarande
@@ -2219,8 +2238,9 @@ const Save = {
             sheetName: sheetName ?? oldData.sheetName ?? null,
             rowNum: rowNum ?? oldData.rowNum ?? null
           };
-          // Länken är bekräftad → släpp pendingSync på nuvarande nyckel.
-          tagCache.set(currentTag, { ...oldData, pendingSync: false });
+          // Länken är bekräftad → släpp pendingSync på nuvarande nyckel, om
+          // inget annat för artikeln väntar eller nekats (A12b).
+          tagCache.set(currentTag, { ...oldData, pendingSync: _syncStillPending_(currentTag) });
           // B5 (v153): är en dialog öppen på just S-nyckeln (optimistiskt
           // inventeringssteg, eller Egenskaper-dialogen där taggen skannades)
           // → skjut upp swappen tills dialogen stängs. Annars swappa direkt
@@ -2232,11 +2252,8 @@ const Save = {
           }
         }
       } else {
-        const cur = tagCache.get(currentTag);
-        if (cur) tagCache.set(currentTag, { ...cur, pendingSync: false });
+        _settleSync_(currentTag);   // A12b
       }
-      _pendingTagLinks.delete(scannedTag); // bekräftat → ej längre pending
-      _persistPending_();
       _inventOnLinkState.delete(scannedTag); // B5: bekräftat → ingen retro-varning
       markAsDone(le);
       return { ok: true, tag: res.tag, alreadyPresent: !!res.alreadyPresent, le };
@@ -2258,11 +2275,7 @@ const Save = {
     // P0c: gäller BÅDA synth + non-synth — båda fick optimistic altTag-push,
     // båda måste rensa scannedTag ur altTags + pendingSync:false vid rejected.
     const cur = tagCache.get(currentTag);
-    if (cur) tagCache.set(currentTag, {
-      ...cur,
-      pendingSync: false,
-      altTags: (cur.altTags || []).filter(t => t !== scannedTag)
-    });
+    if (cur) _settleSync_(currentTag, { altTags: (cur.altTags || []).filter(t => t !== scannedTag) });   // A12b
     const failMsg = res && res.collision
       ? `redan kopplad till "${res.existingName}"`
       : humanizeSaveError(res && res.msg, res && res.code, !!(res && res.ambiguousName));
@@ -2336,8 +2349,15 @@ const Save = {
     // i minnet: svepet tar den inte en gång till nu, men väl efter en omstart.
     // A07: seq = när användaren skannade. Ett omförsök behåller sitt.
     const seq = (target._resync && target.seq) || _nextOpSeq_();
+    // A12b: ett nyckelbyte under flykten (koppling på tagglös rad + inventera
+    // vid koppling) flyttar jobbet och artikeln till den nya taggen. Svaret ska
+    // då hanteras under jobbets AKTUELLA nyckel, annars ligger jobbet kvar och
+    // artikeln fastnar gul.
+    let _lsJob = null;
+    const curKey = () => (_lsJob && _lsJob.tag) || tag;
     {
       const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident };
+      _lsJob = job;
       job.seq = seq; job._inflight = true; job._le = le;
       _pendingLogSingle.set(tag, job);
       _persistPending_();
@@ -2353,6 +2373,7 @@ const Save = {
           })
         : { ok: false, exhausted: true, waiting: true, msg: 'väntar på en tidigare ändring' })
       .then(res => {
+        const k = curKey();
         // gasCallWithRetry kastar normalt INTE — den returnerar
         // {ok:false,exhausted:true} vid uttömt/nätfel. classifyLinkResult
         // mappar: ok:true → verified; exhausted/inget svar → pending-retry;
@@ -2361,26 +2382,27 @@ const Save = {
         // → rejected → markLogFail (ingen falsk bock på fel rad).
         const cls = classifyLinkResult(res);
         if (cls === 'verified') {
-          _pendingLogSingle.delete(tag);          // bekräftat → ej längre pending
+          _pendingLogSingle.delete(k);          // bekräftat → ej längre pending
           _persistPending_();
           // Server bekräftad → släpp pendingSync så server blir sanningskälla
           // igen vid nästa poll (spegel av v125 commitContainerDate verified).
           // B5 (v153): has-guard — vid optimistisk inventering på syntetisk
           // nyckel kan key-swappen (S→riktig tagg) ha hunnit köras under
           // flykten; en villkorslös set skulle då återskapa en spökpost.
-          if (tagCache.has(tag)) tagCache.set(tag, { ...tagCache.get(tag), pendingSync: false });
+          // A12b: men bara om inget annat för artikeln väntar eller nekats.
+          _settleSync_(k);
           // Grace-fönster (fältfynd 2026-07-30): utan detta klobbar en preload som
           // startade FÖRE writen den optimistiska raden direkt efter verified —
           // samma mekanism som v147-fixen, som bara täckte batch-vägen.
-          _recentlySynced.set(tag, Date.now());
-          markAsDone(le); addUndoButton(le, tag, { ..._undoPrev, ident });
+          _recentlySynced.set(k, Date.now());
+          markAsDone(le); addUndoButton(le, k, { ..._undoPrev, ident });
         } else if (cls === 'pending-retry') {
           // Ej bekräftat (offline/uttömt): ingen falsk bock. ⚠️ + diskret
           // status — optimistisk lokal write står kvar (gul rad via
           // pendingSync-mönstret i renderLists). 9.6: REGISTRERA jobbet så
           // resyncPendingTagLinks faktiskt re-försöker det vid online —
           // meddelandet blir SANT. _inflight nollas så nästa event kan ta det.
-          const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident, seq };
+          const job = _pendingLogSingle.get(k) || { tag: k, name, sheetName, rowNum, ...ident, seq };
           job._inflight = false;
           job._le = le;                 // återanvänd samma rad vid resync
           // v151: räkna misslyckade försök (persisteras) → synlig eskalering
@@ -2388,7 +2410,7 @@ const Save = {
           // Att bara vänta in ett äldre köjobb (res.waiting) är inget misslyckat
           // försök: registreringen har inte ens skickats.
           if (!(res && res.waiting)) job.retries = (job.retries || 0) + 1;
-          _pendingLogSingle.set(tag, job);
+          _pendingLogSingle.set(k, job);
           _persistPending_();
           const _gaveUpHope = job.retries >= RESYNC_WARN_AFTER;
           // P3b: eviction-immun rad. Ingen uppräkning av felräknaren — jobbet
@@ -2408,12 +2430,12 @@ const Save = {
           // ⚠️ + felmeddelande. Avregistrera — re-försök är meningslöst.
           // P2: rulla tillbaka optimistisk write + släpp pendingSync så listan
           // inte falskt visar "inventerad idag" (spegel av v125 rejected).
-          _pendingLogSingle.delete(tag);
+          _pendingLogSingle.delete(k);
           _persistPending_();
           // B5 (v153): has-guards av samma skäl som verified-grenen — rulla
           // bara tillbaka om nyckeln fortfarande finns (annars spökpost).
-          if (metaCache.has(tag)) metaCache.set(tag, _prevMeta);
-          if (tagCache.has(tag)) tagCache.set(tag, { ...tagCache.get(tag), pendingSync: false });
+          if (metaCache.has(k)) metaCache.set(k, _prevMeta);
+          _settleSync_(k);   // A12b
           recomputeMaxLast(); renderLists();
           markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code, ambiguousName: !!(res && res.ambiguousName) });
         }
@@ -2421,13 +2443,14 @@ const Save = {
         _flushHeldSoon_();   // A07: köjobb som väntade på registreringen kan gå nu
       })
       .catch(err => {
+        const k = curKey();
         // gasCallWithRetry kastar bara vid oväntat fel (ej server-avvisning) →
         // behandla som ej bekräftat (pending-retry), ingen falsk bock.
-        const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident, seq };
+        const job = _pendingLogSingle.get(k) || { tag: k, name, sheetName, rowNum, ...ident, seq };
         job._inflight = false;
         job._le = le;                   // återanvänd samma rad vid resync
         job.retries = (job.retries || 0) + 1;  // v151: räknas mot RESYNC_WARN_AFTER
-        _pendingLogSingle.set(tag, job);
+        _pendingLogSingle.set(k, job);
         _persistPending_();
         // P3a: retryable — jobbet ligger kvar i _pendingLogSingle (raden ovan)
         // och tas av resync-svepet, så det får INTE räknas som förlorat.
@@ -2529,12 +2552,16 @@ const Save = {
           _flushHeldSoon_();   // köjobb för artikeln som väntade på den kan gå nu
           markAsDone(le);
           const newKey = createCacheKey(job, res);
+          let settledKey = cacheKey;
           const cur = tagCache.get(cacheKey);
           if (cur) {
-            const updated = { ...cur, rowNum: (res && res.row) || cur.rowNum, pendingSync: false,
+            // A12b: pendingSync sätts efter omnycklingen nedan (_settleSync_).
+            const updated = { ...cur, rowNum: (res && res.row) || cur.rowNum,
               // v160: artikelns beständiga ID och namnet i arket, för kommande skrivningar.
               ...(res && res.id ? { id: String(res.id) } : {}), serverName: String(job.name || '').trim() };
             if (newKey !== cacheKey && !tagCache.has(newKey)) {
+              settledKey = newKey;
+              _moveRejectedSync_(cacheKey, newKey);
               tagCache.delete(cacheKey);
               tagCache.set(newKey, updated);
               const m = metaCache.get(cacheKey);
@@ -2562,6 +2589,10 @@ const Save = {
             }
             _persistQueue_(); _persistPending_();
           }
+          // A12b: gul släcks bara om inget annat för artikeln väntar (t.ex. ett
+          // saldo som hölls i kön tills artikeln fanns). Efter omnycklingen, så
+          // att jobben räknas under den nyckel de nu ligger på.
+          if (cur) _settleSync_(settledKey);
           // Grace-fönster (fältfynd 2026-07-30): skydda den färska raden mot en
           // preload som startade FÖRE writen. Samma mönster som logSingle.
           _recentlySynced.set(newKey, Date.now());
@@ -2953,14 +2984,16 @@ function _applyBatchResults_(batch, res) {
   // utom när servern uttryckligen sagt att felet är permanent.
   const wholeTransient = !results && !(res && res.ok === false && res.transient === false);
   const retryTags = new Set();
+  // A12b: kroken returnerar true om den rullade tillbaka sin lokala ändring.
   const hook = (job, cls) => {
     const h = _jobHooks_.get(job.seq);
-    if (h) { _jobHooks_.delete(job.seq); try { h(cls); } catch (_) {} }
+    if (h) { _jobHooks_.delete(job.seq); try { return h(cls) === true; } catch (_) {} }
+    return false;
   };
   // A12: synkstatusen gäller ARTIKELN, inte jobbet. Gul släcks först när inget
   // jobb för artikeln i denna batch nekades eller ska försökas igen, och ingen
   // annan ändring för den väntar (kö, singelregistrering, koppling, ny artikel).
-  const verifiedTags = [], dirtyTags = new Set();
+  const verifiedTags = [], dirtyTags = new Set(), rejectedTags = new Set();
   for (let i = 0; i < batch.length; i++) {
     const tag = batch[i].args.tag;
     const r = results ? results[i] : res;
@@ -2974,7 +3007,9 @@ function _applyBatchResults_(batch, res) {
       dirtyTags.add(tag);
       failedTags.push(tag);
       failedTags.details.push({ tag, fnName: batch[i].fnName, code: r && r.code, msg: r && r.msg, ambiguousName: !!(r && r.ambiguousName) });
-      hook(batch[i], 'rejected');
+      // A12b: rullade kroken tillbaka ändringen (datumvägarna) finns inget kvar
+      // att varna för; annars står den nekade ändringen kvar lokalt → minns.
+      if (!hook(batch[i], 'rejected')) rejectedTags.add(tag);
     } else {
       hook(batch[i], 'verified');
       verifiedTags.push(tag);
@@ -2988,10 +3023,14 @@ function _applyBatchResults_(batch, res) {
       _recentlySynced.set(tag, Date.now());
     }
   }
-  for (const tag of new Set(verifiedTags)) {
-    if (dirtyTags.has(tag) || _tagHasPendingOps_(tag)) continue;
-    const cur = tagCache.get(tag);
-    if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
+  // A12b: en ny bekräftad köskrivning släpper ett tidigare avslag, men inte om
+  // artikeln fick ett nytt avslag i samma batch.
+  for (const tag of verifiedTags) if (!rejectedTags.has(tag)) _rejectedSync_.delete(tag);
+  for (const tag of rejectedTags) _rejectedSync_.add(tag);
+  // Status för varje artikel i batchen enligt den gemensamma regeln. Batchen
+  // själv räknas inte (den är besvarad nu); omförsöken hanteras nedan.
+  for (const tag of new Set(batch.map(j => j.args.tag))) {
+    if (!retryTags.has(tag)) _settleSync_(tag, null, batch);
   }
   // A12: ett jobb som ska försökas igen ligger ännu inte i kön när krokarna ovan
   // körs (det läggs tillbaka efter detta), så en krok kan ha släckt gult för
@@ -3003,12 +3042,38 @@ function _applyBatchResults_(batch, res) {
   return failedTags;
 }
 // A12: väntar någon annan ändring för artikeln på svar eller på att skickas?
-function _tagHasPendingOps_(tag) {
+// A12b: även en batch som är skickad men obesvarad räknas, utom den batch vars
+// svar just nu behandlas (exceptBatch), och en ångra som är på väg.
+function _tagHasPendingOps_(tag, exceptBatch) {
   if (updateQueue.some(j => j && j.args && j.args.tag === tag)) return true;
+  if (_inflightBatch && _inflightBatch !== exceptBatch &&
+      _inflightBatch.some(j => j && j.args && j.args.tag === tag)) return true;
+  if ((_undoInFlight.get(tag) || 0) > 0) return true;
   if (_pendingLogSingle.has(tag)) return true;
   for (const j of _pendingTagLinks.values()) if (j && j.currentTag === tag) return true;
   for (const j of _pendingCreates.values()) if (j && j.tag === tag) return true;
   return false;
+}
+// A12b: artiklar där ett köjobb nekades och ändringen INTE rullades tillbaka
+// (den lokala versionen visar alltså något som inte finns i arket). Gult får
+// inte släckas av en annan väg (registrering, koppling, ångra) förrän en ny
+// bekräftad köskrivning för artikeln kommit, eller identiteten släppts
+// (ROW_UNVERIFIED/ITEM_NOT_FOUND). Bara i minnet, som pendingSync självt.
+const _rejectedSync_ = new Set();
+// Ångra registrerar inget köjobb; räknaren gör den synlig för regeln ovan.
+const _undoInFlight = new Map();   // tag → antal ångra som väntar på svar
+// A12b: EN regel för alla skrivvägar. Gul står kvar så länge något annat för
+// artikeln väntar eller har nekats. Anroparen avregistrerar sitt eget jobb
+// FÖRE anropet, annars räknas det och artikeln fastnar gul.
+function _syncStillPending_(tag, exceptBatch) {
+  return _tagHasPendingOps_(tag, exceptBatch) || _rejectedSync_.has(tag);
+}
+function _settleSync_(tag, extra, exceptBatch) {
+  if (!tagCache.has(tag)) return;   // B5: aldrig återskapa en flyttad nyckel
+  tagCache.set(tag, { ...tagCache.get(tag), ...(extra || {}), pendingSync: _syncStillPending_(tag, exceptBatch) });
+}
+function _moveRejectedSync_(oldTag, newTag) {
+  if (oldTag !== newTag && _rejectedSync_.delete(oldTag)) _rejectedSync_.add(newTag);
 }
 
 // msgLine + status-banner. Vid fail behålls meddelandet (med pendingSync-CSS
@@ -3049,8 +3114,11 @@ function _renderBatchOutcome_(failedTags) {
         // Inget skrevs, och raden bakom nyckeln kan vara en annan artikel nu.
         // Släpp den gula lokala versionen så att den nya listan visar arkets
         // sanning; vad som inte sparades står kvar i historiken ovan.
+        // A12b: avslaget glöms (raden kan vara en annan artikel), men väntar
+        // en annan ändring för nyckeln står gult kvar tills den fått svar.
+        _rejectedSync_.delete(d.tag);
         const c = tagCache.get(d.tag);
-        if (c && c.pendingSync) tagCache.set(d.tag, { ...c, pendingSync: false });
+        if (c && c.pendingSync) _settleSync_(d.tag);
         _recentlySynced.delete(d.tag);
       }
       _refreshAfterIdentityError_(d.code);
@@ -4555,10 +4623,11 @@ function prepareSingleDialog(item, tag) {
         return;
       }
       metaCache.set(tag, _prevMeta);
-      tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: _tagHasPendingOps_(tag) });
+      tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: _syncStillPending_(tag) });
       recomputeMaxLast(); renderLists();
       markLogWarn(le, `${item.name} – datumet sparades inte`);
       if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Kunde inte spara datumet'; }
+      return true;   // A12b: tillbakarullat
     });
     (async () => {
       try { await waitForPendingSync(); } catch (_) {}
@@ -4897,11 +4966,12 @@ function prepareContainerDialog(item, tag, opts = {}) {
         return;
       }
       metaCache.set(tag, _prevMeta);
-      tagCache.set(tag, { ..._prevItem, pendingSync: _tagHasPendingOps_(tag) });
+      tagCache.set(tag, { ..._prevItem, pendingSync: _syncStillPending_(tag) });
       if (_lastCommittedDate === _committed) _lastCommittedDate = _prevCommitted;
       recomputeMaxLast(); renderLists();
       const _msg = le && le.querySelector('.msg');
       markLogWarn(le, (_msg ? _msg.textContent : '') + ' – sparades inte');
+      return true;   // A12b: tillbakarullat
     });
     (async () => {
       try { await waitForPendingSync(); } catch (_) {}

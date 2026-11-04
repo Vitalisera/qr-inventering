@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 160;
+const APP_VERSION = 161;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -694,6 +694,40 @@ const _pendingLogSingle = new Map();
 // annanstans — artikeln är då borta utan spår. Samma persist-före-sändning
 // som _inflightBatch i batch-kön (#5), och det är ck som gör en replay säker.
 const _pendingCreates = new Map();
+// A07: varje skrivning får ett löpnummer (seq) i det ögonblick användaren
+// agerar, och det följer jobbet till disk och tillbaka. Regeln som alla köer
+// följer: en skrivning för artikel T skickas aldrig medan en ÄLDRE skrivning för
+// T är obekräftad. Då kan ett äldre värde aldrig landa efter ett nyare, varken
+// efter en omstart, ett tillfälligt fel eller när två köer töms samtidigt.
+// Datumbaserat och strikt växande: överlever omstart utan egen lagringsnyckel.
+let _lastOpSeq_ = 0;
+function _nextOpSeq_() { _lastOpSeq_ = Math.max(_lastOpSeq_ + 1, Date.now()); return _lastOpSeq_; }
+function _noteOpSeq_(seq) { if (Number(seq) > _lastOpSeq_) _lastOpSeq_ = Number(seq); }
+// Väntar en äldre singelregistrering eller en ny artikel på T på svar?
+function _olderOpPending_(tag, seq) {
+  const s = _pendingLogSingle.get(tag);
+  if (s && (s.seq || 0) < seq) return true;
+  for (const c of _pendingCreates.values()) if (c && c.tag === tag && (c.seq || 0) < seq) return true;
+  return false;
+}
+// Töm batchkön tills inget äldre jobb för T återstår. false = det gick inte nu
+// (offline, tillfälligt fel eller ett namnbyte som håller jobbet).
+async function _awaitOlderQueued_(tag, seq) {
+  for (let i = 0; i < 4 && _olderQueued_(tag, seq); i++) {
+    if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; }
+    if (!flushInFlight) flushUpdates();
+    if (!flushInFlight) break;
+    try { await flushInFlight; } catch (_) {}
+    if (_lastFlushRequeued_) break;
+  }
+  return !_olderQueued_(tag, seq);
+}
+// Ligger en äldre skrivning för T i batchkön (köad eller på väg)?
+function _olderQueued_(tag, seq) {
+  for (const j of updateQueue) if (j && j.args && j.args.tag === tag && (j.seq || 0) < seq) return true;
+  for (const j of (_inflightBatch || [])) if (j && j.args && j.args.tag === tag && (j.seq || 0) < seq) return true;
+  return false;
+}
 // v151: efter så här många misslyckade spar-försök byter historikraden text
 // från "sparas när du är online igen" till en uppmaning att skanna om —
 // evig tyst retry ska inte se ut som att allt är på väg att ordna sig.
@@ -887,6 +921,8 @@ function _updateSyncBadge_() {
     // via singles-facket) — en ny artikel som inte kommit fram ska synas i
     // statusraden precis som en skanning som inte kommit fram.
     for (const j of _pendingCreates.values()) if (j && (j.retries || 0) >= RESYNC_WARN_AFTER) warn++;
+    // A09: ett batchjobb som fått tillfälliga fel om och om igen ska synas på samma sätt.
+    for (const j of updateQueue) if (j && (j.retries || 0) >= RESYNC_WARN_AFTER) warn++;
     const m = buildSyncBadgeModel({
       links: _pendingTagLinks.size,
       singles: _pendingLogSingle.size + _pendingCreates.size,
@@ -920,6 +956,7 @@ function _persistPending_() {
       if (v && v.scannedTag) tagLinks.push({
         scannedTag: v.scannedTag, sheetName: v.sheetName ?? null,
         rowNum: v.rowNum ?? null, currentTag: v.currentTag ?? null, name: v.name ?? '',
+        ...(v.seq ? { seq: v.seq } : {}),
         // v160: identiteten som fångades när användaren agerade följer med jobbet.
         ...(v.id !== undefined ? { id: v.id } : {}),
         ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
@@ -930,6 +967,7 @@ function _persistPending_() {
       if (v && v.tag) logSingle.push({
         tag: v.tag, name: v.name ?? '', sheetName: v.sheetName ?? null, rowNum: v.rowNum ?? null,
         retries: v.retries || 0,  // v151: eskaleringsräknaren överlever PWA-kill
+        ...(v.seq ? { seq: v.seq } : {}),   // A07: ordningen överlever omstart
         ...(v.id !== undefined ? { id: v.id } : {}),
         ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
       });
@@ -974,10 +1012,10 @@ function _rehydratePending_() {
     if (!raw) return;
     const d = JSON.parse(raw);
     if (d && Array.isArray(d.tagLinks)) for (const j of d.tagLinks) {
-      if (j && j.scannedTag && !_pendingTagLinks.has(j.scannedTag)) _pendingTagLinks.set(j.scannedTag, j);
+      if (j && j.scannedTag && !_pendingTagLinks.has(j.scannedTag)) { _noteOpSeq_(j.seq); _pendingTagLinks.set(j.scannedTag, j); }
     }
     if (d && Array.isArray(d.logSingle)) for (const j of d.logSingle) {
-      if (j && j.tag && !_pendingLogSingle.has(j.tag)) _pendingLogSingle.set(j.tag, j);
+      if (j && j.tag && !_pendingLogSingle.has(j.tag)) { _noteOpSeq_(j.seq); _pendingLogSingle.set(j.tag, j); }
     }
     // P2b: creates rehydreras på exakt samma villkor (nyckelfältet måste finnas,
     // befintlig post vinner). ck följer med ur lagringen → ett omförsök efter
@@ -2088,7 +2126,8 @@ const Save = {
           : [...(cur.altTags || []), scannedTag],
         pendingSync: true
       });
-      _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name, ...ident });
+      const _seq = (_pendingTagLinks.get(scannedTag) || {}).seq;
+      _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name, ...ident, ...(_seq ? { seq: _seq } : {}) });
       _persistPending_();
       // P3b: eviction-immun (raden ska finnas kvar tills resyncen svarat), men
       // INGEN uppräkning av felräknaren — jobbet ligger i _pendingTagLinks och
@@ -2096,6 +2135,14 @@ const Save = {
       // det ge upp hoppet fångas det av warn-facket (RESYNC_WARN_AFTER).
       markLogWarn(le, `${name} – ej bekräftat – försöker igen${msgTail ? ' (' + msgTail + ')' : ''}`);
     };
+
+    // A10: kopplingen ligger på disk INNAN anropet går iväg. Dör appen under
+    // anropet tar nästa start den. _inflight (bara i minnet) hindrar svepet från
+    // att skicka den en gång till under samma körning.
+    const _prevLink = _pendingTagLinks.get(scannedTag);
+    _pendingTagLinks.set(scannedTag, { scannedTag, sheetName, rowNum, currentTag, name, ...ident,
+      seq: (_prevLink && _prevLink.seq) || target.seq || _nextOpSeq_(), _inflight: true });
+    _persistPending_();
 
     let res;
     try {
@@ -2237,10 +2284,27 @@ const Save = {
     // (annars log-spam vid upprepade resync-event).
     const le = target._resyncLe || appendLog(`${name} – uppdateras`, tag);
     show("Sparar…");
-    gasCallWithRetry('logTag', {
-      tag, name, type: "singel", qty: 1, user: userName,
-      sheetName: sheetName ?? null, rowNum: rowNum ?? null, ...ident
-    })
+    // A10: registreringen ligger på disk INNAN anropet går iväg (förr först när
+    // alla försök misslyckats, upp till två minuter senare). _inflight finns bara
+    // i minnet: svepet tar den inte en gång till nu, men väl efter en omstart.
+    // A07: seq = när användaren skannade. Ett omförsök behåller sitt.
+    const seq = (target._resync && target.seq) || _nextOpSeq_();
+    {
+      const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident };
+      job.seq = seq; job._inflight = true; job._le = le;
+      _pendingLogSingle.set(tag, job);
+      _persistPending_();
+    }
+    // A07: ligger ett äldre köjobb för artikeln (t.ex. ett saldo) obekräftat
+    // skickas registreringen först när det fått svar. Går det inte nu (offline)
+    // ligger den kvar och tas av svepet efter nästa lyckade flush.
+    _awaitOlderQueued_(tag, seq)
+      .then(clear => clear
+        ? gasCallWithRetry('logTag', {
+            tag, name, type: "singel", qty: 1, user: userName,
+            sheetName: sheetName ?? null, rowNum: rowNum ?? null, ...ident
+          })
+        : { ok: false, exhausted: true, msg: 'väntar på en tidigare ändring' })
       .then(res => {
         // gasCallWithRetry kastar normalt INTE — den returnerar
         // {ok:false,exhausted:true} vid uttömt/nätfel. classifyLinkResult
@@ -2269,7 +2333,7 @@ const Save = {
           // pendingSync-mönstret i renderLists). 9.6: REGISTRERA jobbet så
           // resyncPendingTagLinks faktiskt re-försöker det vid online —
           // meddelandet blir SANT. _inflight nollas så nästa event kan ta det.
-          const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident };
+          const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident, seq };
           job._inflight = false;
           job._le = le;                 // återanvänd samma rad vid resync
           // v151: räkna misslyckade försök (persisteras) → synlig eskalering
@@ -2305,11 +2369,12 @@ const Save = {
           markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code, ambiguousName: !!(res && res.ambiguousName) });
         }
         if (typeof onResult === 'function') { try { onResult(cls); } catch (_) {} }
+        _flushHeldSoon_();   // A07: köjobb som väntade på registreringen kan gå nu
       })
       .catch(err => {
         // gasCallWithRetry kastar bara vid oväntat fel (ej server-avvisning) →
         // behandla som ej bekräftat (pending-retry), ingen falsk bock.
-        const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident };
+        const job = _pendingLogSingle.get(tag) || { tag, name, sheetName, rowNum, ...ident, seq };
         job._inflight = false;
         job._le = le;                   // återanvänd samma rad vid resync
         job.retries = (job.retries || 0) + 1;  // v151: räknas mot RESYNC_WARN_AFTER
@@ -2319,6 +2384,7 @@ const Save = {
         // och tas av resync-svepet, så det får INTE räknas som förlorat.
         markLogFail(le, err, { retryable: true });
         if (typeof onResult === 'function') { try { onResult('pending-retry'); } catch (_) {} }
+        _flushHeldSoon_();
       });
     setLocalMeta(tag, { lastMs: Date.now(), user: userName });
     // P2-fix: skydda den optimistiska writen mot 15s-pollens initData-rebuild
@@ -2590,6 +2656,7 @@ async function resyncPendingTagLinks() {
           sheetName: job.sheetName,
           rowNum: job.rowNum,
           currentTag: job.currentTag,
+          ...(job.seq ? { seq: job.seq } : {}),
           ...(job.id !== undefined ? { id: job.id } : {}),
           ...(job.expectedName !== undefined ? { expectedName: job.expectedName } : {}),
           _resync: true
@@ -2614,6 +2681,7 @@ async function resyncPendingTagLinks() {
           name: job.name, sheetName: job.sheetName, rowNum: job.rowNum,
           ...(job.id !== undefined ? { id: job.id } : {}),
           ...(job.expectedName !== undefined ? { expectedName: job.expectedName } : {}),
+          ...(job.seq ? { seq: job.seq } : {}),
           _resync: true,
           _resyncLe: job._le || null
         });
@@ -2676,9 +2744,13 @@ const _QUEUE_LS_KEY = 'vitaliseraUpdateQueue';
 let _inflightBatch = null;
 function _persistQueue_() {
   try {
-    const all = updateQueue.concat(_inflightBatch || []);
+    // A07: i den ordning jobben skapades. Förr stod den avsända batchen SIST,
+    // så efter en omstart skickades det äldre saldot efter det nyare och vann.
+    const all = (_inflightBatch || []).concat(updateQueue).sort((a, b) => (a.seq || 0) - (b.seq || 0));
     if (!all.length) { localStorage.removeItem(_QUEUE_LS_KEY); _updateSyncBadge_(); return; }
-    localStorage.setItem(_QUEUE_LS_KEY, JSON.stringify(all));
+    localStorage.setItem(_QUEUE_LS_KEY, JSON.stringify(all.map(j => ({
+      fnName: j.fnName, args: j.args, seq: j.seq, ...(j.retries ? { retries: j.retries } : {})
+    }))));
   } catch (_) {}
   _updateSyncBadge_();   // U4: badge speglar köerna — samma choke-point som persistering
 }
@@ -2687,9 +2759,13 @@ function _rehydrateQueue_() {
     const raw = localStorage.getItem(_QUEUE_LS_KEY);
     if (!raw) return;
     const arr = JSON.parse(raw);
+    // Jobb sparade av en äldre version saknar seq och får ett i lagrad ordning.
     if (Array.isArray(arr)) for (const j of arr) {
-      if (j && j.fnName && j.args && j.args.tag) updateQueue.push({ fnName: j.fnName, args: j.args });
+      if (!j || !j.fnName || !j.args || !j.args.tag) continue;
+      if (j.seq) _noteOpSeq_(j.seq);
+      updateQueue.push({ fnName: j.fnName, args: j.args, seq: j.seq || _nextOpSeq_(), ...(j.retries ? { retries: j.retries } : {}) });
     }
+    updateQueue.sort((a, b) => (a.seq || 0) - (b.seq || 0));
   } catch (_) {}
 }
 function queueUpdate(fnName, args) {
@@ -2697,13 +2773,32 @@ function queueUpdate(fnName, args) {
   // Saknas den fylls den bara i för riktiga taggar; en syntetisk nyckel slås
   // aldrig upp här, eftersom cachen kan ha byggts om sedan dialogen öppnades.
   if (args && args.tag != null) _attachIdentity_(args, args.tag, false);
-  updateQueue.push({ fnName, args });
+  const job = { fnName, args, seq: _nextOpSeq_() };
+  updateQueue.push(job);
   _persistQueue_();
   if (!updateTimer) updateTimer = setTimeout(flushUpdates, 1000);
+  return job;
 }
+// Utfallet för ett enskilt köjobb ('verified' | 'rejected'), nyckel = seq. Inte
+// beständigt: det är bara historikraden som lyssnar, och den dör med appen.
+const _jobHooks_ = new Map();
+// Töm kön så långt det går och vänta tills inget är på väg. Slutar när det som
+// är kvar inte kan skickas nu (väntar på ett namnbyte eller fick ett tillfälligt fel).
 async function waitForPendingSync() {
-  if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; flushUpdates(); }
-  if (flushInFlight) { try { await flushInFlight; } catch (_) {} }
+  if (updateTimer) { clearTimeout(updateTimer); updateTimer = null; }
+  for (let i = 0; i < 6; i++) {
+    if (!flushInFlight) flushUpdates();
+    if (!flushInFlight) return;
+    try { await flushInFlight; } catch (_) {}
+    if (_lastFlushRequeued_) return;
+  }
+}
+// A09: lägg tillbaka jobb i kön i ursprunglig ordning (äldst först).
+function _requeueJobs_(jobs, countRetry) {
+  if (!jobs || !jobs.length) return;
+  if (countRetry) for (const j of jobs) j.retries = (j.retries || 0) + 1;
+  updateQueue.unshift(...jobs);
+  updateQueue.sort((a, b) => (a.seq || 0) - (b.seq || 0));
 }
 // Bygg batch-payload från updateQueue + töm kön synkront (måste ske före gasCall
 // så nya queueUpdate under flight hamnar i nästa batch, inte denna).
@@ -2714,9 +2809,18 @@ function _buildBatch_() {
   // skickas utan identitet och nekas synligt av servern (ROW_UNVERIFIED).
   for (const job of updateQueue) if (job && job.args) _attachIdentity_(job.args, job.args.tag, false);
   const { send, hold } = _takeSendableJobs_(updateQueue);
-  const batch = send.map(job =>
+  // A07: väntar en äldre skrivning på samma artikel i en annan kö (singel-
+  // registrering, ny artikel) hålls jobbet, och alla senare jobb för artikeln med det.
+  const blocked = new Set(hold.map(j => j && j.args && j.args.tag));
+  const ready = [];
+  for (const j of send) {
+    const t = j && j.args && j.args.tag;
+    if (blocked.has(t) || _olderOpPending_(t, j.seq || 0)) { blocked.add(t); hold.push(j); } else ready.push(j);
+  }
+  hold.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  const batch = ready.map(job =>
     job.fnName === "updateMeta"
-      ? { fnName: job.fnName, args: { ...job.args, userName } }
+      ? { fnName: job.fnName, args: { ...job.args, userName }, seq: job.seq, ...(job.retries ? { retries: job.retries } : {}) }
       : job
   );
   updateQueue.length = 0;
@@ -2784,18 +2888,37 @@ function _withinSyncGrace_(tag) {
 // lyckade (ok + ej stale + writtenTag matchar); allt annat → fail-tag,
 // pendingSync behålls (gul + ⚠️ i historik via _renderBatchOutcome_).
 function _applyBatchResults_(batch, res) {
-  const results = Array.isArray(res?.results) ? res.results : [];
+  const results = Array.isArray(res?.results) ? res.results : null;
   const failedTags = [];
   // v160: varför varje jobb nekades (för en synlig historikrad per jobb).
   // Egenskap på arrayen → signaturen är oförändrad för alla befintliga anropare.
   failedTags.details = [];
+  // A09: jobb som ska försökas igen (tillfälligt fel). De ligger kvar med sin
+  // ursprungliga payload och identitet; bara permanenta fel hamnar i failedTags.
+  failedTags.retry = [];
+  // Inget resultat alls (serverkast utan resultatlista) räknas som tillfälligt,
+  // utom när servern uttryckligen sagt att felet är permanent.
+  const wholeTransient = !results && !(res && res.ok === false && res.transient === false);
+  const retryTags = new Set();
+  const hook = (job, cls) => {
+    const h = _jobHooks_.get(job.seq);
+    if (h) { _jobHooks_.delete(job.seq); try { h(cls); } catch (_) {} }
+  };
   for (let i = 0; i < batch.length; i++) {
     const tag = batch[i].args.tag;
-    const r = results[i];
+    const r = results ? results[i] : res;
+    // Ett jobb efter ett tillfälligt fel på samma artikel följer med tillbaka i
+    // kön, även om det lyckades: annars skulle det äldre värdet skickas om
+    // EFTER det nyare och vinna. Omsändningen är ofarlig (samma värde igen).
+    const transient = retryTags.has(tag) ||
+      (results ? (r == null || (r.ok === false && r.transient === true)) : wholeTransient);
+    if (transient) { retryTags.add(tag); failedTags.retry.push(batch[i]); continue; }
     if (!_isJobVerifiedOk_(tag, r)) {
       failedTags.push(tag);
       failedTags.details.push({ tag, fnName: batch[i].fnName, code: r && r.code, msg: r && r.msg, ambiguousName: !!(r && r.ambiguousName) });
+      hook(batch[i], 'rejected');
     } else {
+      hook(batch[i], 'verified');
       const cur = tagCache.get(tag);
       if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
       // Synk-audit 2026-07-01 (kommentar-display-bugg): batch bekräftad → pendingSync
@@ -2815,6 +2938,15 @@ function _applyBatchResults_(batch, res) {
 // på raderna) tills nästa flush — annars försvinner felet tyst efter 5s.
 function _renderBatchOutcome_(failedTags) {
   const msgLine = document.querySelector("#msgLine");
+  const retrying = (failedTags && failedTags.retry) ? failedTags.retry.length : 0;
+  if (failedTags.length === 0 && retrying > 0) {
+    // A09: tillfälligt fel → jobben ligger kvar i kön och skickas igen. Ingen
+    // bock (inget är bekräftat), inget fel (inget är förlorat).
+    const label = `⏳ ${retrying} ${retrying === 1 ? 'ändring' : 'ändringar'} försöker igen`;
+    if (msgLine) { msgLine.className = "msgLine warn"; msgLine.textContent = label; }
+    show(label, "warn");
+    return;
+  }
   if (failedTags.length > 0) {
     const details = Array.isArray(failedTags.details) ? failedTags.details : [];
     // v160: en historikrad per nekat jobb med orsaken i klartext. Bannern
@@ -2847,11 +2979,10 @@ function _renderBatchOutcome_(failedTags) {
       (reason ? ` – ${reason}` : '');
     if (msgLine) { msgLine.className = "msgLine warn"; msgLine.textContent = label; }
     show(label, "warn", { autoreset: false });
-    // P3a: batch-vägen re-köar INTE misslyckade jobb (känt, ALLVARLIG #10) —
-    // andra argumentet till countsAsLostWrite är därför false, och ska bli
-    // true först den dag #10 är fixad. Fram till dess är varje failedTag en
-    // slutgiltigt osparad rad, och den ska överleva att banner-texten
-    // självrensar efter 5 s och att appen stängs.
+    // P3a: failedTags innehåller sedan A09 BARA permanenta fel (transient:false,
+    // staleRow, fel tagg skriven). De tillfälliga ligger kvar i kön (failedTags.retry)
+    // och räknas inte. Andra argumentet är därför false: ingen kö tar över ett
+    // permanent fel, och det ska överleva att bannern självrensar och att appen stängs.
     if (countsAsLostWrite('rejected', false)) _bumpFailedWrites_(failedTags.length);
   } else {
     if (msgLine) { msgLine.className = "msgLine ok"; msgLine.textContent = "☑️ Synkroniserad med Google Sheets"; }
@@ -2877,7 +3008,14 @@ function _revalidateCacheTs_() {
 // Orkestrerar: bygg batch → skicka → applicera resultat → rendera utfall →
 // revalidera cache. Ansvaren är utbrutna i _-helpers ovan; ordning/timing
 // är identisk med pre-refaktor (synk-kärna, får ej ändra beteende).
+// A08: bara EN batch åt gången. Den som anropar under en pågående flush får en
+// ny körning när den är klar, så varje batch äger sitt tillstånd (_inflightBatch,
+// diskposten) tills alla resultat är behandlade och ordningen på servern håller.
+let _flushAgain_ = false;
+let _lastFlushRequeued_ = false;
+const _BATCH_RETRY_MS_ = [2000, 5000, 15000, 30000, 60000];
 function flushUpdates() {
+  if (flushInFlight) { _flushAgain_ = true; return; }
   if (updateQueue.length === 0) return;
 
   const batch = _buildBatch_();
@@ -2889,15 +3027,22 @@ function flushUpdates() {
   _inflightBatch = batch;
   _persistQueue_();
 
+  _lastFlushRequeued_ = false;
   flushInFlight = gasCall('batch', {batch})
     .then(res => {
       _clearSyncBusyUI_();
       const failedTags = _applyBatchResults_(batch, res);
-      console.log("Synk klar:", batch.length - failedTags.length, "ok,", failedTags.length, "fail");
-      // #5: batchen bekräftad (per-jobb-utfall hanterat av _applyBatchResults_) →
-      // släpp in-flight-persistensen. Misslyckade jobb behåller pendingSync-gul i
-      // listan; de re-köas ej här (känt, ALLVARLIG #10 — andra paketet).
+      console.log("Synk klar:", batch.length - failedTags.length - failedTags.retry.length, "ok,", failedTags.length, "fail,", failedTags.retry.length, "igen");
+      // #5: batchen besvarad → släpp in-flight-persistensen. A09: jobb med
+      // tillfälligt fel läggs tillbaka i kön (samma payload, samma identitet)
+      // och skickas igen efter en paus som växer med antalet försök.
       _inflightBatch = null;
+      if (failedTags.retry.length) {
+        _requeueJobs_(failedTags.retry, true);
+        _lastFlushRequeued_ = true;
+        const n = Math.max(...failedTags.retry.map(j => j.retries || 1));
+        setTimeout(flushUpdates, _BATCH_RETRY_MS_[Math.min(n, _BATCH_RETRY_MS_.length) - 1]);
+      }
       _persistQueue_();
       renderLists();
       _renderBatchOutcome_(failedTags);
@@ -2913,7 +3058,8 @@ function flushUpdates() {
       // ordning (sätts först → körs i nästa flush före nya jobb). Idempotens
       // för upprepad fail: re-queue → nästa flush samma batch → fail igen →
       // re-queue igen (no growth, bara samma jobb).
-      updateQueue.unshift(...batch);
+      _requeueJobs_(batch, false);
+      _lastFlushRequeued_ = true;
       // #5: batchen är åter i updateQueue → flytta persistensen dit (in-flight
       // tömd) så LS speglar sanningen och en kill nu räddar den via updateQueue.
       _inflightBatch = null;
@@ -2925,7 +3071,17 @@ function flushUpdates() {
       }
       show("Sparas när du är online igen", "warn", { autoreset: false });
     })
-    .finally(() => { flushInFlight = null; });
+    .finally(() => {
+      flushInFlight = null;
+      if (_flushAgain_) { _flushAgain_ = false; if (updateQueue.length) setTimeout(flushUpdates, 0); }
+      // A07: singelregistreringar som väntade på ett äldre köjobb kan gå nu.
+      if (!_lastFlushRequeued_) _kickWaitingSingles_();
+    });
+}
+function _kickWaitingSingles_() {
+  for (const j of _pendingLogSingle.values()) {
+    if (j && !j._inflight) { setTimeout(() => { try { resyncPendingTagLinks(); } catch (_) {} }, 0); return; }
+  }
 }
 // 5.3: vid 'online' efter offline-fail, försök tömma updateQueue automatiskt
 // (idempotent via flushInFlight + tom-check i flushUpdates). Utan detta krävde
@@ -4335,10 +4491,9 @@ function prepareSingleDialog(item, tag) {
 // pendingSync-skydd mot poll-klobb (samma mönster som saveBtn-saldovägen
 // ~4029), sedan den BEFINTLIGA persisterade kö-vägen queueUpdate('updateCount')
 // — batchning, retry, rehydrering och rollback oförändrade (synk-kärnan orörd).
-// Historikraden får sitt utfall EFTER flushen genom att läsa det pendingSync-
-// tillstånd som _applyBatchResults_ redan satt: false = VERIFIERAT sparat → ✅,
-// annars ⚠️ (ingen falsk bock). waitForPendingSync är den befintliga
-// "flush:a nu + vänta"-kanalen (samma som delete-vägen ~4210).
+// Historikraden får sitt utfall från JUST det köjobbet (_jobHooks_, som
+// _applyBatchResults_ anropar): verifierat sparat → ✅, nekat → ⚠️. Inget svar
+// än → ⚠️ "sparas när du är online igen" tills svaret kommer (ingen falsk bock).
 function markSingleMissing(tag, name, payload) {
   setLocalMeta(tag, { qty: 0, lastMs: Date.now(), user: userName });
   tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: true });
@@ -4346,22 +4501,29 @@ function markSingleMissing(tag, name, payload) {
   renderLists();
   const le = appendLog(`${name} – markerad som saknad – sparas…`, tag);
   show(`${name}: markerad som saknad – sparas…`, "ok");
-  queueUpdate('updateCount', payload);
-  (async () => {
-    try { await waitForPendingSync(); } catch (_) {}
-    const cur = tagCache.get(tag);
+  const job = queueUpdate('updateCount', payload);
+  // Utfallet kommer från just det här jobbet, när det än besvaras: efter ett
+  // hållet namnbyte, efter ett tillfälligt fel som försökts igen eller efter
+  // att nätet kommit tillbaka. ⚠️ blir då ✅ (eller står kvar om det nekades;
+  // nekandet har då redan fått en egen historikrad av _renderBatchOutcome_).
+  let settled = false;
+  _jobHooks_.set(job.seq, cls => {
+    settled = true;
     const ic = le.querySelector('.icon'), m = le.querySelector('.msg');
-    if (cur && cur.pendingSync === false) {
+    if (cls === 'verified') {
+      le.classList.remove(LOG_WARN_CLASS);
       if (ic) ic.textContent = '✅';
       if (m) m.textContent = `${name} – markerad som saknad`;
     } else {
-      // Offline/avvisad: jobbet ligger kvar i den persisterade kön (gul rad),
-      // online-flushen tar det vidare — meddelandet är SANT, ingen falsk bock.
-      // P3b: eviction-immun rad. Ingen uppräkning av felräknaren här (kön
-      // re-försöker); blev jobbet däremot AVVISAT har _renderBatchOutcome_
-      // redan räknat det, så en uppräkning här vore dubbelräkning.
-      markLogWarn(le, `${name} – markerad som saknad – sparas när du är online igen`);
+      markLogWarn(le, `${name} – markerad som saknad – sparades inte`);
     }
+  });
+  (async () => {
+    try { await waitForPendingSync(); } catch (_) {}
+    // Inte besvarat än (offline, tillfälligt fel eller ett namnbyte som håller
+    // jobbet): det ligger kvar i den beständiga kön, meddelandet är SANT.
+    // P3b: eviction-immun rad. Ingen uppräkning av felräknaren (kön försöker igen).
+    if (!settled) markLogWarn(le, `${name} – markerad som saknad – sparas när du är online igen`);
   })();
   return le;
 }
@@ -5283,8 +5445,10 @@ function prepareContainerDialog(item, tag, opts = {}) {
         frozen.forEach(el => { el.disabled = el.dataset._wasDisabled === "1"; delete el.dataset._wasDisabled; });
       };
       try {
-        // deleteRow shiftar rader — flush:a köade batch-jobb först annars skrivs
-        // uppdateringar till fel rad.
+        // Köade ändringar skickas före raderingen, så att de inte står kvar och
+        // pekar på en artikel som inte längre finns. Att en skrivning hamnar på fel
+        // rad när deleteRow flyttat raderna hindras numera av identitetskontrollen
+        // på servern (artikel-id/namn/tagg, A03–A06), inte av ordningen här.
         if (updateQueue.length > 0 || flushInFlight) {
           setMsg("Synkar pending ändringar…", "");
           await waitForPendingSync();

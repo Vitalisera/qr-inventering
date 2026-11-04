@@ -57,7 +57,7 @@
         <b>Ej inventerat</b> = övriga artiklar.<br>
         <b>Röd bakgrund</b> = mängden understiger "ska finnas under kurs".<br>
         <b>Gul markering</b> = ändring väntar på synk mot Sheetet.<br>
-        Den gula statusraden under kameran (t.ex. "⏳ 2 ändringar synkas") visar hur mycket som väntar; tryck på den för att öppna historiken.<br>
+        Den gula statusraden under kameran (t.ex. "⏳ 2 ändringar synkas") visar hur mycket som väntar; tryck på den för att öppna historiken. Meddelandet "⏳ försöker igen" betyder att arket var upptaget och att appen skickar ändringen på nytt av sig själv.<br>
         Blir statusraden <b>röd</b> ("⚠️ 1 kunde inte sparas – tryck här") har något inte kommit fram till arket. Tryck på den, läs historiken och gör om ändringen. Siffran ligger kvar tills du tryckt.<br>
         Står det att <b>artikeln har flyttats i arket</b> har någon ändrat raderna i arket. Listan hämtas om av sig själv. Öppna artikeln igen och gör om ändringen. Står det att <b>två artiklar utan kod heter likadant</b> behöver artikeln ett eget namn eller en kod innan den kan sparas.<br>
         Tryck på en rad för att öppna artikeln. Tryck på rubrikerna för att byta ordning.
@@ -303,8 +303,8 @@
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">13</span> Allt sparas automatiskt</h3>
       <p class="qr-p">Appen är byggd för att fungera även med dålig eller ingen uppkoppling. Varje ändring sparas först på din telefon och visas med en <b>gul markering</b>. Så snart det går synkas den till Google-arket, och markeringen blir en <b>☑️</b>. Det är ☑️ som betyder att siffran finns i arket, så det är den du ska lita på.</p>
-      <p class="qr-p">Saldon, kommentarer och egenskaper läggs i en kö på telefonen, och detsamma gäller registreringar av skannade artiklar, kopplingar av etiketter och nya artiklar. Kön ligger kvar även om appen stängs, och så länge det bara är nätet som saknas fortsätter appen försöka av sig själv. Blir en ändring däremot avvisad av arket står det <b>⚠️ 1 rad kunde inte sparas</b> under kameran, och raden förblir gul. Då gör du om ändringen på artikeln.</p>
-      <p class="qr-p">Under kameran finns en liten <b>gul statusrad</b> som visar när något fortfarande håller på att sparas, till exempel <b>⏳ 2 ändringar synkas</b>. Tryck på den för att öppna historiken och se exakt vad som väntar. Statusraden försvinner när allt är bekräftat.</p>
+      <p class="qr-p">Saldon, kommentarer och egenskaper läggs i en kö på telefonen, och detsamma gäller registreringar av skannade artiklar, kopplingar av etiketter och nya artiklar. Kön ligger kvar även om appen stängs, och så länge det bara är nätet som saknas eller arket tillfälligt är upptaget fortsätter appen försöka av sig själv. Ändringar på samma artikel från den här telefonen skickas i den ordning du gjorde dem, så det du ändrade sist vinner över det du ändrade före. Blir en ändring däremot avvisad av arket står det <b>⚠️ 1 rad kunde inte sparas</b> under kameran, och raden förblir gul. Då gör du om ändringen på artikeln.</p>
+      <p class="qr-p">Under kameran finns en liten <b>gul statusrad</b> som visar när något fortfarande håller på att sparas, till exempel <b>⏳ 2 ändringar synkas</b>. Tryck på den för att öppna historiken och se exakt vad som väntar. Visar appen meddelandet <b>⏳ 1 ändring försöker igen</b> var arket upptaget en stund. Ändringen ligger kvar i kön och skickas på nytt av sig själv. Statusraden försvinner när allt är bekräftat.</p>
       <p class="qr-p">Gick något däremot inte fram blir statusraden i stället röd: <b>⚠️ 1 kunde inte sparas – tryck här</b>. Den räknaren gäller allt du kan ändra: skanningar, kopplingar, nya artiklar, saldon, kommentarer, egenskaper, inventeringsdatum och ångra. Den räknar bara sådant som appen <i>inte</i> försöker om av sig själv. Ett saldo eller en skanning som ligger i kön och väntar på nät hamnar alltså inte där, men ett ångra gör det, eftersom den vägen saknar kö och inte försöks om. Siffran ligger kvar även om du stänger appen och startar den igen, och nollställs först när du tryckt på statusraden. Har ett köat jobb försökt om och om igen utan att lyckas förblir statusraden röd även efter att du tryckt, för då är det fortfarande osparat, och du behöver skanna om artikeln eller göra om ändringen.</p>
       <p class="qr-p">Appen kontrollerar att den sparar på den artikel du har valt. Har någon lagt till, tagit bort eller döpt om rader direkt i arket sedan listan hämtades, kan artikeln ligga på en annan rad nu. Då sparas ingenting, och du får beskedet <b>artikeln har flyttats i arket, ladda om listan och försök igen</b>. Det ligger kvar som en ⚠️ i historiken. Appen hämtar då listan på nytt av sig själv. Öppna artikeln igen när listan uppdaterats och gör om ändringen. Står det i stället att <b>artikeln inte finns längre</b> har någon tagit bort den ur arket. Har två artiklar utan kod samma namn på samma flik kan appen inte skilja dem åt, och då sparas inget på dem. Ge dem olika namn eller en egen kod.</p>
       <p class="qr-p">Går något fel <b>fäller historiken ut sig själv</b>, så du slipper upptäcka det i efterhand. Rader med <b>⚠️</b> ligger dessutom kvar i historiken även när du fortsätter skanna. Vanliga rader rullas bort av nyare, men en varning gör det inte.</p>
@@ -358,7 +358,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=160"></script>
+  <script src="app.js?v=161"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

@@ -91,6 +91,9 @@ function selectPendingResync(map) {
   return out;
 }
 
+let _lastOpSeq_ = 0;
+function _noteOpSeq_(seq) { if (Number(seq) > _lastOpSeq_) _lastOpSeq_ = Number(seq); }
+
 function _persistPending_() {
   try {
     const tagLinks = [];
@@ -98,6 +101,7 @@ function _persistPending_() {
       if (v && v.scannedTag) tagLinks.push({
         scannedTag: v.scannedTag, sheetName: v.sheetName ?? null,
         rowNum: v.rowNum ?? null, currentTag: v.currentTag ?? null, name: v.name ?? '',
+        ...(v.seq ? { seq: v.seq } : {}),
         // v160: identiteten som fångades när användaren agerade följer med jobbet.
         ...(v.id !== undefined ? { id: v.id } : {}),
         ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
@@ -108,6 +112,7 @@ function _persistPending_() {
       if (v && v.tag) logSingle.push({
         tag: v.tag, name: v.name ?? '', sheetName: v.sheetName ?? null, rowNum: v.rowNum ?? null,
         retries: v.retries || 0,  // v151: eskaleringsräknaren överlever PWA-kill
+        ...(v.seq ? { seq: v.seq } : {}),   // A07: ordningen överlever omstart
         ...(v.id !== undefined ? { id: v.id } : {}),
         ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
       });
@@ -141,10 +146,10 @@ function _rehydratePending_() {
     if (!raw) return;
     const d = JSON.parse(raw);
     if (d && Array.isArray(d.tagLinks)) for (const j of d.tagLinks) {
-      if (j && j.scannedTag && !_pendingTagLinks.has(j.scannedTag)) _pendingTagLinks.set(j.scannedTag, j);
+      if (j && j.scannedTag && !_pendingTagLinks.has(j.scannedTag)) { _noteOpSeq_(j.seq); _pendingTagLinks.set(j.scannedTag, j); }
     }
     if (d && Array.isArray(d.logSingle)) for (const j of d.logSingle) {
-      if (j && j.tag && !_pendingLogSingle.has(j.tag)) _pendingLogSingle.set(j.tag, j);
+      if (j && j.tag && !_pendingLogSingle.has(j.tag)) { _noteOpSeq_(j.seq); _pendingLogSingle.set(j.tag, j); }
     }
     // P2b: creates rehydreras på exakt samma villkor (nyckelfältet måste finnas,
     // befintlig post vinner). ck följer med ur lagringen → ett omförsök efter

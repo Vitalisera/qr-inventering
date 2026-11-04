@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 161;
+const APP_VERSION = 162;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -1203,7 +1203,7 @@ const prefs = {
 
 function renderRowIcons(t, item, hasComment) {
   const out = [];
-  if (prefs.iconTag && !t.startsWith('S')) out.push('<span class="rowIcon">🏷️</span>');
+  if (prefs.iconTag && (!t.startsWith('S') || item.dupTag)) out.push('<span class="rowIcon">🏷️</span>');
   if (prefs.iconType && item.type === 'singel') out.push('<span class="rowIcon">•</span>');
   if (prefs.iconComment && hasComment) {
     out.push(`<span class="infoIcon" data-tag="${esc(t)}">ℹ️</span>`);
@@ -1293,7 +1293,7 @@ function acceptScan(code, format) {
   // Accept direkt utan konsensus så användaren får snabb feedback.
   // Konsensus krävs bara för OKÄNDA koder (potentiella felläsningar som
   // annars skulle öppna "Koppla till befintlig?"-dialog felaktigt).
-  if (lookupByTag(code)) return true;
+  if (lookupByTag(code) || _dupKeysForScan_(code).length > 1) return true;
   return passesScanConsensus(code);
 }
 
@@ -1359,6 +1359,15 @@ setTimeout(() => ensureName(() => {}), 0);
 let reader,lastCode="",userName=null,lastCamera=null;
 let busy=false,preloadDone=false,cameraOn=false;
 const tagCache=new Map(),metaCache=new Map();const placeSet=new Set();
+// A11: en kod som sitter på flera rader i arket (dubblett som väntar på rättning).
+// Nyckel = koden utan ledande nollor → postnycklarna ("S<flik>R<rad>") för raderna.
+const dupTagKeys=new Map();
+const _tagZeroKey_=t=>String(t).replace(/^0+/,'')||'0';
+// Postnycklarna för en skannad kod som sitter på flera rader (annars tom lista).
+function _dupKeysForScan_(scanned){
+  if(!scanned||String(scanned).startsWith('S'))return [];
+  return (dupTagKeys.get(_tagZeroKey_(scanned))||[]).filter(k=>tagCache.has(k));
+}
 let maxLastMs=null;const COOLDOWN_MS=1200;let activePlaces=null;
 let activeSteps=null;  // null = alla steg synliga, Set<string> = bara dessa
 let onlyLow=false;
@@ -3855,14 +3864,32 @@ function initData(records, { fromCache = false } = {}) {
   tagCache.clear();
   metaCache.clear();
   placeSet.clear();
+  dupTagKeys.clear();
+
+  // A11: samma kod på flera rader får inte skriva över varandra (då blev en av
+  // artiklarna osynlig). Varje sådan rad får radens egen nyckel "S<flik>R<rad>",
+  // samma form som tagglösa rader, och skrivs alltså via flik, rad och identitet.
+  const _codeRows = new Map();
+  for (const rec of records) {
+    if (!Array.isArray(rec) || !rec[1] || !rec[11]) continue;
+    const c = normTag(rec[0]);
+    if (!c || c.startsWith("S")) continue;
+    const k = _tagZeroKey_(c);
+    _codeRows.set(k, (_codeRows.get(k) || 0) + 1);
+  }
 
   records.forEach(rec => {
     // Index 16 = beständigt artikel-ID (v160). Saknas hos äldre backend → undefined.
     const [t, name, type, qty, unit, last, user, place, minQty, step, comment, rowNum, altTags, category, synonyms, sheetPlace, articleId] = rec;
     if (!name) return;
-    const nt = normTag(t);
+    const code = normTag(t);
     const plc = normPlace(place);
-    const isSynthetic = nt.startsWith("S");
+    const isDup = !!code && !code.startsWith("S") && rowNum && _codeRows.get(_tagZeroKey_(code)) > 1;
+    const nt = isDup ? 'S' + String(plc).replace(/[^a-zA-Z0-9]/g, '') + 'R' + rowNum : code;
+    if (isDup) {
+      const k = _tagZeroKey_(code);
+      dupTagKeys.set(k, [...(dupTagKeys.get(k) || []), nt]);
+    }
 
     tagCache.set(nt, {
       name,
@@ -3878,7 +3905,8 @@ function initData(records, { fromCache = false } = {}) {
       altTags: Array.isArray(altTags) ? altTags : [],
       synonyms: Array.isArray(synonyms) ? synonyms : [],
       id: articleId ? String(articleId) : null,
-      serverName: String(name).trim()
+      serverName: String(name).trim(),
+      dupTag: isDup ? code : null
     });
 
     placeSet.add(plc);
@@ -4936,7 +4964,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
 
     <label>Tag <span style="font-weight:400;font-size:0.8em;opacity:0.7">(sparas direkt vid skanning)</span></label>
     <div class="tagRow">
-      <input id="tagDisplay" type="text" value="${esc(tag.startsWith('S') ? '(ingen tag)' : tag)}" readonly title="Klicka för att se hela taggen">
+      <input id="tagDisplay" type="text" value="${esc(tag.startsWith('S') ? (tagCache.get(tag)?.dupTag || '(ingen tag)') : tag)}" readonly title="Klicka för att se hela taggen">
       <button id="scanTagBtn" class="btn" type="button">Skanna tag</button>
     </div>
 
@@ -5110,7 +5138,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
   const cached = tagCache.get(tag);
   if (tagDisplay) {
     tagDisplay.addEventListener("click", () => {
-      const primary = tag.startsWith("S") ? null : tag;
+      const primary = tag.startsWith("S") ? (cached?.dupTag || null) : tag;
       const alts = cached?.altTags || [];
       const all = [primary, ...alts].filter(Boolean);
       if (!all.length) { show("Ingen tag kopplad ännu", "warn"); return; }
@@ -6062,7 +6090,7 @@ function openLinkSearchDialog(tagToLink) {
       if (!name) continue;
       const btn = document.createElement('button');
       btn.type = "button"; btn.className = "statusRow";
-      const hasTag = !tag.startsWith("S");
+      const hasTag = !tag.startsWith("S") || !!val?.dupTag;
       btn.innerHTML = `<span class="sr-name">${esc(name)}</span><span class="sr-date">${hasTag ? "har tag" : "ingen tag"}</span>`;
       btn.onclick = async () => {
         closeSearchDialog();
@@ -6583,6 +6611,23 @@ qs('#snapBtn')?.addEventListener('click', () => {
 // FIX v108-review #2: använd _linkModeCleanup-hooken (existing pattern från
 // openLinkSearchDialog) så Escape-tangenten också triggar cleanup. Annars
 // hänger AI-titel/placeholder kvar nästa gång sökrutan öppnas.
+// A11: en skannad kod sitter på flera artiklar (dubblett i arket). Samma
+// #searchDialog och samma sökträffar som vanlig sökning; tryck = öppna artikeln.
+function openDuplicateChoice(keys) {
+  const items = keys.map(k => [k, tagCache.get(k)]).filter(([, v]) => v);
+  if (!items.length) return;
+  openSearchDialog();
+  try { searchInput.blur(); } catch (_) {}
+  const h2 = searchDialog.querySelector('h2');
+  const origTitle = h2.textContent;
+  const labels = items.map(([, v]) => `${v.name} (${v.sheetName})`);
+  const list = labels.length === 2 ? labels.join(' och ') : labels.join(', ');
+  h2.textContent = `Koden sitter på ${labels.length} artiklar: ${list}. Välj vilken.`;
+  _linkModeCleanup = () => { h2.textContent = origTitle; };
+  searchResults.innerHTML = '';
+  items.forEach(([k], i) => _appendSearchHit_({ tag: k, label: labels[i] }));
+}
+
 window.openVisionResults = function (matches) {
   if (!Array.isArray(matches) || matches.length === 0) return;
   openSearchDialog();
@@ -6704,6 +6749,15 @@ async function onScanResult(res) {
     if (!acceptScan(scanned, fmt)) return;
     busy=true; scanBox.classList.add("flash"); setTimeout(()=>scanBox.classList.remove("flash"),220);
 
+    // A11: koden sitter på flera artiklar → välj ingen tyst, låt användaren välja.
+    const dupKeys=_dupKeysForScan_(scanned);
+    if(dupKeys.length>1){
+      await flashFeedback("Koden sitter på flera artiklar");
+      cooldown(scanned); busy=false;
+      if (dialogOpen()) return;
+      openDuplicateChoice(dupKeys);
+      return;
+    }
     const hit=lookupByTag(scanned);
     // P4: 1D-streckkoder kan rapporteras med olika .text mellan frames för
     // SAMMA fysiska kod (UPC-A 12-digit ↔ EAN-13 med leading-0-pad, andra

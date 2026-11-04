@@ -1,6 +1,13 @@
 {
-  "latest": 161,
+  "latest": 162,
   "versions": [
+    {
+      "version": 162,
+      "date": "2026-11-04",
+      "notes": [
+        "Sitter samma kod på två artiklar i arket syns nu båda i listan. Förut visades bara den ena. Skannar du en sådan kod sparas ingenting förrän du har valt vilken av artiklarna du har framför dig. Det du ändrar hamnar sedan på just den artikeln."
+      ]
+    },
     {
       "version": 161,
       "date": "2026-11-04",

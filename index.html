@@ -155,7 +155,7 @@
   <div id="searchDialog" class="dialog hidden" role="dialog" aria-modal="true" tabindex="-1">
     <h2>Sök artiklar <span class="help-toggle dark" data-help="search">?</span></h2>
     <div class="help-box" id="help-search">
-      Sök artiklar med fritext. Tryck på ett resultat för att öppna artikeln. Tryck "Ny artikel" för att skapa en helt ny.
+      Sök artiklar med fritext. Tryck på ett resultat för att öppna artikeln. Tryck "Ny artikel" för att skapa en helt ny. Har du skannat en kod som sitter på flera artiklar visas de här, med fliken inom parentes. Tryck på den du har framför dig.
     </div>
     <input id="searchInput" type="search" placeholder="Sök..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
     <div id="searchResults" class="list"></div>
@@ -229,6 +229,7 @@
         <div class="qr-card-row"><span class="mc-ic">1</span><span><b class="mc-nm">Singel.</b> <span class="mc-desc">En sak som räknas som en, till exempel ett verktyg. Den registreras direkt med dagens datum och ditt namn, utan något extra steg. Blev det fel artikel går registreringen att ångra en kort stund efteråt, se avsnitt 6.</span></span></div>
         <div class="qr-card-row"><span class="mc-ic">＋</span><span><b class="mc-nm">Behållare.</b> <span class="mc-desc">Något du har flera av, till exempel en låda pennor. En ruta öppnas där du räknar upp och ner med − och +, eller skriver in en ny total direkt.</span></span></div>
       </div>
+      <p class="qr-p">Ibland sitter samma kod på två artiklar i arket. Då sparar appen ingenting när du skannar. I stället visas båda artiklarna med fliken inom parentes, och du trycker på den du har framför dig. Säg till den som sköter arket, så att koden bara sitter på en artikel.</p>
     </section>
 
     <section class="qr-sec">
@@ -358,7 +359,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=161"></script>
+  <script src="app.js?v=162"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

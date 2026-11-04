@@ -40,7 +40,7 @@ function _deriveCatsUnitsFromPreload_(rows) {
 function _collisionPrecheckFromPreload_(rows, wanted) {
   if (!wanted) return { decision: 'needsFullScan', reason: 'no-wanted' };
   const wantedNum = wanted.replace(/^0+/, '') || '0';
-  const numericKeys = {};
+  const numericKeys = {};   // sheet|row -> true (distinkta numeric-träff-rader)
   let numericCount = 0;
   for (const r of rows) {
     const cellTags = [];
@@ -48,19 +48,23 @@ function _collisionPrecheckFromPreload_(rows, wanted) {
     if (pt) cellTags.push(pt);
     const alt = r[PT.ALTTAGS];
     if (Array.isArray(alt)) for (const a of alt) { if (a) cellTags.push(String(a)); }
+    // effectiveTag kan vara syntetisk ("S<flik>R<rad>") — normalizeTag strippar
+    // icke-siffror, så syntetiska tags blir '' och matchar aldrig en riktig tag.
     if (cellTags.indexOf(wanted) !== -1) {
       return { decision: 'needsFullScan', reason: 'exact-hit-in-cache' };
     }
-    if (wantedNum !== wanted) {
-      for (const t of cellTags) {
-        if ((String(t).replace(/^0+/, '') || '0') === wantedNum) {
-          const key = String(r[PT.SHEET] || '') + '|' + r[PT.ROW];
-          if (!numericKeys[key]) { numericKeys[key] = true; numericCount++; }
-          break;
-        }
+    // A11: jämför ALLTID på nollstrippad nyckel. Grinden "wantedNum !== wanted"
+    // gav 'clear' när cachen hade "0959773" och skanningen var "959773", och då
+    // hoppades den auktoritativa genomsökningen över.
+    for (const t of cellTags) {
+      if ((String(t).replace(/^0+/, '') || '0') === wantedNum) {
+        const key = String(r[PT.SHEET] || '') + '|' + r[PT.ROW];
+        if (!numericKeys[key]) { numericKeys[key] = true; numericCount++; }
+        break;
       }
     }
   }
+  // Vilken numeric-träff som helst (1 eller fler) → låt full scan vara auktoritativ.
   if (numericCount > 0) return { decision: 'needsFullScan', reason: 'numeric-hit-in-cache' };
   return { decision: 'clear' };
 }
@@ -179,6 +183,14 @@ t('(b4) ENDA numeric-träff i cache -> ändå needsFullScan (konservativt)', () 
   const a = new Array(16).fill(''); a[PT.TAG] = '959773'; a[PT.SHEET] = 'A'; a[PT.ROW] = 3; a[PT.ALTTAGS] = [];
   const p = _collisionPrecheckFromPreload_([a], '0959773');
   eq(p.decision, 'needsFullScan', 'numeric-hit (även entydig) -> full scan');
+});
+
+t('(b4b) A11: cachen har 0959773, sökt 959773 (nollan åt andra hållet) -> needsFullScan', () => {
+  // Före A11 jämfördes numeriskt bara när den SÖKTA koden hade nollor → 'clear'
+  // → genomsökningen hoppades över → koden kopplades till en andra rad.
+  const r = []; r[PT.TAG] = '0959773'; r[PT.SHEET] = 'Kurslokal/Reception'; r[PT.ROW] = 145;
+  const p = _collisionPrecheckFromPreload_([r], '959773');
+  eq(p.decision, 'needsFullScan', 'omvänd nolla -> aldrig clear');
 });
 
 t('(b5) tag finns BEVISLIGEN ingenstans -> clear (snabbväg ok)', () => {

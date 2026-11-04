@@ -981,7 +981,8 @@ function _persistPending_() {
         ...(v.seq ? { seq: v.seq } : {}),
         // v160: identiteten som fångades när användaren agerade följer med jobbet.
         ...(v.id !== undefined ? { id: v.id } : {}),
-        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
+        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {}),
+        ...(v.wireTag ? { wireTag: v.wireTag } : {})
       });
     }
     const logSingle = [];
@@ -991,7 +992,8 @@ function _persistPending_() {
         retries: v.retries || 0,  // v151: eskaleringsräknaren överlever PWA-kill
         ...(v.seq ? { seq: v.seq } : {}),   // A07: ordningen överlever omstart
         ...(v.id !== undefined ? { id: v.id } : {}),
-        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
+        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {}),
+        ...(v.wireTag ? { wireTag: v.wireTag } : {})
       });
     }
     // P2b: creates ligger som TREDJE array i samma blob — samma serialiserings-
@@ -2193,7 +2195,11 @@ const Save = {
     }
 
     if (res && res.ok) {
-      if (isSynthetic) {
+      // A11: en dubblettrad (koden sitter även på en annan rad) behåller sin
+      // radnyckel. Den nya koden ligger kvar som extra tagg (altTags ovan), så
+      // båda koderna hittar rätt rad, och den gamla koden öppnar fortfarande
+      // valet mellan raderna i stället för att bli en okänd kod.
+      if (isSynthetic && !tagCache.get(currentTag)?.dupTag) {
         const oldData = tagCache.get(currentTag);
         if (oldData) {
           // B4 (v151): BEHÅLL koordinaterna vid key-swap. addTag skriver taggen
@@ -2694,6 +2700,7 @@ async function resyncPendingTagLinks() {
           ...(job.seq ? { seq: job.seq } : {}),
           ...(job.id !== undefined ? { id: job.id } : {}),
           ...(job.expectedName !== undefined ? { expectedName: job.expectedName } : {}),
+        ...(job.wireTag ? { wireTag: job.wireTag } : {}),
           _resync: true
         });
         // verified/rejected → Save.linkTag har redan _pendingTagLinks.delete:at.
@@ -2716,6 +2723,7 @@ async function resyncPendingTagLinks() {
           name: job.name, sheetName: job.sheetName, rowNum: job.rowNum,
           ...(job.id !== undefined ? { id: job.id } : {}),
           ...(job.expectedName !== undefined ? { expectedName: job.expectedName } : {}),
+        ...(job.wireTag ? { wireTag: job.wireTag } : {}),
           ...(job.seq ? { seq: job.seq } : {}),
           _resync: true,
           _resyncLe: job._le || null
@@ -5915,7 +5923,7 @@ function showLinkTagDialog(scannedTag) {
       if (uniq.length) {
         similarHtml = `<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(0,0,0,.1)"><i style="font-size:0.85em;display:block;margin-bottom:4px">Du har redan liknande:</i>`;
         for (const m of uniq) {
-          similarHtml += `<button type="button" class="btn cancel offMatchBtn" data-tag="${esc(m.tag)}" data-sheet="${esc(m.sheetName||'')}" data-row="${esc(m.rowNum||'')}" data-name="${esc(m.name)}" data-id="${esc((m.ident && m.ident.id) || '')}" data-ename="${esc((m.ident && m.ident.expectedName) || '')}" style="display:block;margin-top:4px;font-size:0.9em;width:100%">Koppla till "${esc(m.name)}"</button>`;
+          similarHtml += `<button type="button" class="btn cancel offMatchBtn" data-tag="${esc(m.tag)}" data-sheet="${esc(m.sheetName||'')}" data-row="${esc(m.rowNum||'')}" data-name="${esc(m.name)}" data-id="${esc((m.ident && m.ident.id) || '')}" data-ename="${esc((m.ident && m.ident.expectedName) || '')}" data-wtag="${esc((m.ident && m.ident.wireTag) || '')}" style="display:block;margin-top:4px;font-size:0.9em;width:100%">Koppla till "${esc(m.name)}"</button>`;
         }
         similarHtml += `</div>`;
       }
@@ -5946,7 +5954,8 @@ function showLinkTagDialog(scannedTag) {
           rowNum,
           currentTag: matchTag,
           ...(btn.dataset.id ? { id: btn.dataset.id } : {}),
-          ...(btn.dataset.ename ? { expectedName: btn.dataset.ename } : {})
+          ...(btn.dataset.ename ? { expectedName: btn.dataset.ename } : {}),
+          ...(btn.dataset.wtag ? { wireTag: btn.dataset.wtag } : {})
         });
         if (result.ok) {
           show(`Tag kopplad till "${matchName}"`, 'ok');

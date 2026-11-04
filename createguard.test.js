@@ -104,7 +104,8 @@ function _persistPending_() {
         ...(v.seq ? { seq: v.seq } : {}),
         // v160: identiteten som fångades när användaren agerade följer med jobbet.
         ...(v.id !== undefined ? { id: v.id } : {}),
-        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
+        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {}),
+        ...(v.wireTag ? { wireTag: v.wireTag } : {})
       });
     }
     const logSingle = [];
@@ -114,7 +115,8 @@ function _persistPending_() {
         retries: v.retries || 0,  // v151: eskaleringsräknaren överlever PWA-kill
         ...(v.seq ? { seq: v.seq } : {}),   // A07: ordningen överlever omstart
         ...(v.id !== undefined ? { id: v.id } : {}),
-        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {})
+        ...(v.expectedName !== undefined ? { expectedName: v.expectedName } : {}),
+        ...(v.wireTag ? { wireTag: v.wireTag } : {})
       });
     }
     // P2b: creates ligger som TREDJE array i samma blob — samma serialiserings-

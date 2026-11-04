@@ -2862,7 +2862,8 @@ function _buildBatch_() {
   }
   hold.sort((a, b) => (a.seq || 0) - (b.seq || 0));
   const batch = ready.map(job =>
-    job.fnName === "updateMeta"
+    // A13: "rensa datum" (clearUser) ska tömma användarfältet, inte skriva dit den som är inloggad.
+    job.fnName === "updateMeta" && !job.args.clearUser
       ? { fnName: job.fnName, args: { ...job.args, userName }, seq: job.seq, ...(job.retries ? { retries: job.retries } : {}) }
       : job
   );
@@ -4506,8 +4507,8 @@ function prepareSingleDialog(item, tag) {
     // pendingSync:true skyddar optimistisk write, villkorat meddelande (success
     // först vid verified), rollback vid äkta server-avvisning. OBS: clear-grenen
     // (userName:'') KAN EJ gå via batch — _buildBatch_ injicerar global userName
-    // för updateMeta → skulle skriva tillbaka användaren istf. blanka. Direkt
-    // anrop använder nästlat {tag, args:{}} (doPost → updateMeta(body.tag, body.args)).
+    // för updateMeta → skulle skriva tillbaka användaren istf. blanka. (A13: det
+    // gäller inte längre, _buildBatch_ hoppar över clearUser-jobb; datumet köas.)
     const cur = tagCache.get(tag) || {};
     const _prevMeta = metaCache.get(tag) || {};
     const innerArgs = newVal
@@ -4529,44 +4530,35 @@ function prepareSingleDialog(item, tag) {
     const le = appendLog(newVal
       ? `${item.name} – datum ${newVal}`
       : `${item.name} – datum rensat (avinventerad)`, tag);
-    gasCallWithRetry('updateMeta', { tag, args: { ...innerArgs, ..._dlgIdent } })
-      .then(res => {
-        const cls = classifyLinkResult(res);
+    // A13: datumet går genom den beständiga kön, som i commitContainerDate. Det
+    // ligger på disk direkt, överlever att appen stängs och skickas om av sig
+    // självt när nätet är tillbaka. _buildBatch_ skriver inte dit inloggat namn
+    // för clearUser, så "rensa datum" tömmer användarfältet även via kön.
+    const job = queueUpdate('updateMeta', { tag, ...innerArgs, ..._dlgIdent });
+    let settled = false;
+    _jobHooks_.set(job.seq, cls => {
+      settled = true;
+      const ml2 = qs("#msgLine");
+      if (cls === 'verified') {
+        // Utan detta står historikraden kvar med ⏳ för alltid.
+        markAsDone(le);
+        if (ml2) { ml2.className = 'msgLine ok'; ml2.textContent = newVal ? 'Datum uppdaterat' : 'Datum rensat, artikeln avinventerad'; }
+        return;
+      }
+      metaCache.set(tag, _prevMeta);
+      tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: _tagHasPendingOps_(tag) });
+      recomputeMaxLast(); renderLists();
+      markLogWarn(le, `${item.name} – datumet sparades inte`);
+      if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Kunde inte spara datumet'; }
+    });
+    (async () => {
+      try { await waitForPendingSync(); } catch (_) {}
+      if (!settled) {
         const ml2 = qs("#msgLine");
-        if (cls === 'verified') {
-          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
-          _recentlySynced.set(tag, Date.now()); // grace mot stale in-flight-preload (2026-07-30)
-          // Utan detta står historikraden kvar med ⏳ för alltid, även när datumet
-          // gick fram — en lyckad skrivning som ser ut att hänga.
-          markAsDone(le);
-          if (ml2) { ml2.className = 'msgLine ok'; ml2.textContent = newVal ? 'Datum uppdaterat' : 'Datum rensat, artikeln avinventerad'; }
-        } else if (cls === 'pending-retry') {
-          // Singel-dialogens datumväg har INGEN kö — ingenting försöker om av sig
-          // självt. Här stod tidigare "Sparas när du är online igen", ett löfte som
-          // aldrig kunde infrias, och räknaren bumpades inte. Samma väg i
-          // commitContainerDate gjorde redan båda rätt; singel är dessutom
-          // STANDARDTYPEN, så felet gällde det vanligaste fallet.
-          markLogWarn(le, `${item.name} – datumet nådde inte arket, gör om ändringen`);
-          if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Datumet nådde inte arket, gör om ändringen'; }
-          if (countsAsLostWrite(cls, false)) _bumpFailedWrites_(1);
-        } else {
-          metaCache.set(tag, _prevMeta);
-          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
-          recomputeMaxLast(); renderLists();
-          // markLogFail skriver klarspråk i både historikrad och banner OCH räknar
-          // själv (countsAsLostWrite inuti funktionen). Ingen extra bump här —
-          // annars räknas ett och samma fel två gånger.
-          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code, ambiguousName: !!(res && res.ambiguousName) });
-          if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Kunde inte spara datumet'; }
-        }
-      })
-      .catch(() => {
-        // Ingen kö här heller → default är rätt: räknas.
-        const ml2 = qs("#msgLine");
-        markLogWarn(le, `${item.name} – datumet nådde inte arket, gör om ändringen`);
-        if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Datumet nådde inte arket, gör om ändringen'; }
-        _bumpFailedWrites_(1);
-      });
+        markLogWarn(le, `${item.name} – datumet sparas när du är online igen`);
+        if (ml2) { ml2.className = 'msgLine warn'; ml2.textContent = 'Datumet sparas när du är online igen'; }
+      }
+    })();
   });
 
   qs("#confirmSingle").onclick = () => {
@@ -4854,6 +4846,7 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const dec = decideDateCommit(oldDate, newVal, _lastCommittedDate);
     if (dec.action === 'none') return false;
     // Markera committat FÖRE async så samtidig saveBtn ser no-op (ingen dubbel).
+    const _prevCommitted = _lastCommittedDate;
     _lastCommittedDate = dec.action === 'clear' ? '' : dec.ymd;
     const isClear = dec.action === 'clear';
     // Snapshot FÖRE optimistisk overwrite — exakt återställning vid server-avvisning.
@@ -4879,42 +4872,35 @@ function prepareContainerDialog(item, tag, opts = {}) {
     const args = isClear
       ? { clearTimestamp: true, clearUser: true, userName: '', sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum }
       : { lastYMD: dec.ymd, userName, sheetName: dialogItem.sheetName, rowNum: dialogItem.rowNum };
-    gasCallWithRetry('updateMeta', { tag, args: { ...args, ..._dlgIdent } })
-      .then(res => {
-        const cls = classifyLinkResult(res);
-        if (cls === 'verified') {
-          // Server bekräftad → släpp pendingSync så server blir sanningskälla
-          // igen vid nästa poll; rensa gul markering direkt.
-          tagCache.set(tag, { ...(tagCache.get(tag) || {}), pendingSync: false });
-          _recentlySynced.set(tag, Date.now()); // grace mot stale in-flight-preload (2026-07-30)
-          recomputeMaxLast(); renderLists();
-          markAsDone(le);
-        } else if (cls === 'pending-retry') {
-          // Offline: behåll pendingSync — optimistisk write överlever poll.
-          // OBS: datumvägen registrerar INTE jobbet för resync (till skillnad
-          // från logSingle via _pendingLogSingle och tag-koppling via
-          // _pendingTagLinks). Det som står här måste därför vara sant: inget
-          // skickas om av sig självt. Att skriva "sparas när du är online igen"
-          // vore samma lögn som logSingle hade före 9.6-fixen (se kommentaren
-          // vid _pendingLogSingle). Rätt lösning är att routa datumvägen genom
-          // kön — det är P4c i fixplanen; tills dess säger vi som det är.
-          // P3: eftersom inget re-försök finns är även 'pending-retry' ett
-          // slutgiltigt tapp här — därför räknas den, till skillnad från
-          // motsvarande gren i logSingle/create/linkTag där en kö tar över.
-          const _msg = le && le.querySelector('.msg');
-          markLogWarn(le, (_msg ? _msg.textContent : '') +
-            ' – datumet nådde inte arket, gör om ändringen');
-          if (countsAsLostWrite(cls, false)) _bumpFailedWrites_(1);
-        } else {
-          // Server AVVISADE (t.ex. staleRow) → rulla tillbaka optimistisk write.
-          metaCache.set(tag, _prevMeta);
-          tagCache.set(tag, { ..._prevItem, pendingSync: false });
-          recomputeMaxLast(); renderLists();
-          markLogFail(le, new Error((res && res.msg) || 'serverfel'), { code: res && res.code, ambiguousName: !!(res && res.ambiguousName) });
-        }
-      })
-      // Datumvägen har ingen kö → default (retryable saknas) är rätt: räknas.
-      .catch(err => markLogFail(le, err));
+    // A13: datumet går genom den beständiga kön (samma väg som saldo och
+    // "saknas"): det ligger på disk direkt, överlever att appen stängs och
+    // skickas om av sig självt när nätet är tillbaka. Utfallet kommer från just
+    // det här jobbet. Nekar servern rullas ändringen tillbaka och datumet räknas
+    // inte längre som sparat, så samma datum kan sättas igen direkt.
+    const _committed = _lastCommittedDate;
+    const job = queueUpdate('updateMeta', { tag, ...args, ..._dlgIdent });
+    let settled = false;
+    _jobHooks_.set(job.seq, cls => {
+      settled = true;
+      if (cls === 'verified') {
+        recomputeMaxLast(); renderLists();
+        markAsDone(le);
+        return;
+      }
+      metaCache.set(tag, _prevMeta);
+      tagCache.set(tag, { ..._prevItem, pendingSync: _tagHasPendingOps_(tag) });
+      if (_lastCommittedDate === _committed) _lastCommittedDate = _prevCommitted;
+      recomputeMaxLast(); renderLists();
+      const _msg = le && le.querySelector('.msg');
+      markLogWarn(le, (_msg ? _msg.textContent : '') + ' – sparades inte');
+    });
+    (async () => {
+      try { await waitForPendingSync(); } catch (_) {}
+      if (!settled) {
+        const _msg = le && le.querySelector('.msg');
+        markLogWarn(le, (_msg ? _msg.textContent : '') + ' – sparas när du är online igen');
+      }
+    })();
     return true;
   };
 

@@ -180,8 +180,8 @@ console.log('B3: dialog öppen, raden flyttas, listan byggs om, radera:');
     "queueUpdate('updateCount', { tag, newCount: newQty, userName, sheetName: _sn, rowNum: _rn, ..._dlgIdent })",
     "queueUpdate('updateCount', { tag, newCount, userName, sheetName: _sn, rowNum: _rn, ..._dlgIdent })",
     "rowNum: _rn, ..._dlgIdent };\n    if (date) payload.lastYMD",
-    "gasCallWithRetry('updateMeta', { tag, args: { ...args, ..._dlgIdent } })",
-    "gasCallWithRetry('updateMeta', { tag, args: { ...innerArgs, ..._dlgIdent } })",
+    "queueUpdate('updateMeta', { tag, ...args, ..._dlgIdent })",   // A13: datumet via kön
+    "queueUpdate('updateMeta', { tag, ...innerArgs, ..._dlgIdent })",   // A13: singeldatumet via kön
     "Save.logSingle(tag, { name: dialogItem.name, sheetName: _sn, rowNum: _rn, ..._dlgIdent })",
     "Save.logSingle(tag, { name: item.name, sheetName: item.sheetName, rowNum: item.rowNum, ..._dlgIdent })",
     "{ ...buildMissingPayload(tag, item, userName), ..._dlgIdent }",

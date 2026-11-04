@@ -1,6 +1,16 @@
 {
-  "latest": 162,
+  "latest": 163,
   "versions": [
+    {
+      "version": 163,
+      "date": "2026-11-04",
+      "notes": [
+        "En artikel förblir gul så länge något du ändrat på den inte är sparat i arket. Förut kunde den se sparad ut så fort en av ändringarna gick fram.",
+        "Ändrar du datumet på en artikel sparas det på telefonen direkt och skickas när nätet är tillbaka. Gick det inte fram kan du göra om det.",
+        "En streckkod hittas nu även om arket har nollor i början som skannern inte läser, eller tvärtom. Passar koden på flera artiklar får du välja vilken du menar.",
+        "Antalsfälten tar bara emot siffror. Decimalkomma går bra, till exempel 1,5. Skriver du något annat står det \"Skriv bara siffror\" och ingenting sparas. 0 sparas som 0."
+      ]
+    },
     {
       "version": 162,
       "date": "2026-11-04",

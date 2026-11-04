@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 162;
+const APP_VERSION = 163;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;

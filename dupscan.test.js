@@ -14,6 +14,8 @@
  *   (6) En gammal post under koden (v161-kö) försvinner när den är synkad.
  *   (7) En ny kod kopplad till en dubblettrad blir extra tagg: radnyckeln står kvar,
  *       den gamla koden öppnar fortfarande valet, den nya koden leder till rätt rad.
+ *   (8) Registrering och koppling som väntar på disk (offline), omstart, rad infogad
+ *       ovanför, online: omsändningen bär den riktiga koden och grannraden rörs inte.
  * Kör: node dupscan.test.js            (båda backendarna: 2655c04 = live @126, och HEAD)
  *      GAS_CODE_PATH=<fil> node dupscan.test.js   (bara den backend)
  */
@@ -40,7 +42,12 @@ if (!process.env.GAS_CODE_PATH) {
   console.log(bad ? `\n${bad} backend(ar) FAIL` : '\nBåda backendarna: 0 FAIL');
   process.exit(bad ? 1 : 0);
 }
-const BACKEND_HAS_ID = /ARTICLE_ID_HEADER/.test(fs.readFileSync(process.env.GAS_CODE_PATH, 'utf8'));
+const BACKEND_SRC = fs.readFileSync(process.env.GAS_CODE_PATH, 'utf8');
+const BACKEND_HAS_ID = /ARTICLE_ID_HEADER/.test(BACKEND_SRC);
+// @126 (2655c04) läser varken body.tag eller identiteten i addTag: kopplingen
+// skrivs på flik+rad utan prov. Det kan klienten inte laga; det stängs av A03–A06.
+const BACKEND_ADDTAG_GUARDED = /case 'addTag':[^\n]*body\.tag/.test(BACKEND_SRC);
+const known = m => console.log('  KÄND LUCKA (backend) ' + m);
 const { loadApp } = require('./appvm');
 const { makeRig, HEADERS, COL, row } = require(path.join(__dirname, '..', 'QR-aktuell', 'test', 'gas-rig'));
 
@@ -175,6 +182,66 @@ async function drain(a, rounds = 6) {
     ok(rg.cell(B, 3, COL['användare']) === 'Testare' && rg.cell(A, 2, COL['användare']) === '', 'bara Köksutrustning rad 3 fick registreringen');
     ok(rg.findByTag('0959773').length === 2 && rg.findByTag(NEW).length === 1, 'ingen tredje rad fick någon av koderna');
     d.stop();
+  }
+
+  // (8) Väntande registrering (Kurslokal/Reception) och koppling (Köksutrustning)
+  // ligger på disk när appen dör. Efter omstarten läggs en rad in ovanför båda
+  // dubblettraderna, sedan kommer nätet tillbaka och svepet skickar om dem.
+  for (const withId of [false, true]) {
+    console.log(`A11 klient: (8) väntande på disk, omstart, rad infogad ovanför, ${withId ? 'med' : 'utan'} artikel-id-kolumn`);
+    const H = withId ? [...HEADERS, 'artikel-id'] : HEADERS;
+    const R = (r, id) => withId ? [...r, id] : r;
+    const rg = makeRig();
+    rg.addSheet(A, H, [R(row(NAME, 1, '0959773|'), 'ID-A')]);
+    rg.addSheet(B, H, [R(row('Visp', 3, '1110001|'), 'ID-V'), R(row(NAME, 1, '0959773|'), 'ID-B')]);
+    const d = start(rg);
+    await ready(d);
+    const kA = (entries(d).find(e => e.sheetName === A) || {}).k;
+    const kB = (entries(d).find(e => e.sheetName === B) || {}).k;
+    const NEW = '2220002';
+    d.fetchMode = 'hang';                                  // nätet borta: anropen kommer aldrig fram
+    d.run(`openContainerForTag(${JSON.stringify(kA)}); qs('#confirmSingle').onclick()`);
+    d.run(`(() => { const it = tagCache.get(${JSON.stringify(kB)});
+      Save.linkTag('${NEW}', { name: it.name, sheetName: it.sheetName, rowNum: it.rowNum, currentTag: ${JSON.stringify(kB)}, ..._identityOfItem_(it) }); })()`);
+    await d.settle(20);
+    const disk = d.persisted('vitaliseraPendingSync') || {};
+    ok((disk.logSingle || []).length === 1 && (disk.tagLinks || []).length === 1, 'registreringen och kopplingen ligger på disk');
+    const ls = Object.fromEntries(d.ls);
+    d.stop();
+
+    const c = start(rg, ls);                               // omstart, fortfarande utan nät
+    c.fetchMode = 'hang';
+    await ready(c);
+    rg.insertRowAt(A, 2, R(row('Tältduk', 7, ''), 'ID-T1'));
+    rg.insertRowAt(B, 3, R(row('Presenning', 5, ''), 'ID-T2'));
+    const log = [];
+    c.serve = (fn, p) => { const r = rg.api(fn, p); if (fn === 'logTag' || fn === 'addTag') log.push({ fn, tag: p.tag, ok: r.ok, code: r.code || (r.staleRow ? 'STALE_ROW' : undefined) }); return r; };
+    const b8 = c.calls.length;
+    c.fetchMode = 'rig';                                   // nätet tillbaka
+    c.releaseHung();
+    c.run('resyncPendingTagLinks()');
+    await c.settle(50); await drain(c); await c.settle(50); await drain(c);
+    const sent = c.calls.filter(x => x.fn === 'logTag' || x.fn === 'addTag');
+    ok(sent.some(x => x.fn === 'logTag') && sent.some(x => x.fn === 'addTag'), 'efter omstarten skickades både registreringen och kopplingen: ' + sent.map(x => x.fn).join(','));
+    ok(sent.length && sent.every(x => x.tag === '0959773' && !('wireTag' in x)), 'omsändningen bär den riktiga koden: ' + JSON.stringify(sent.map(x => x.tag)));
+    ok(rg.cell(A, 2, COL.NAME) === 'Tältduk' && rg.cell(A, 2, COL['användare']) === '' && rg.cell(A, 2, COL.QTY) === 7 && rg.cell(A, 2, COL.TAG) === '',
+      `grannraden i ${A} är orörd (användare "${rg.cell(A, 2, COL['användare'])}", tagg "${rg.cell(A, 2, COL.TAG)}")`);
+    const okIds = withId && BACKEND_HAS_ID;
+    const verdict = r => !!r && (okIds ? r.ok === true : (r.ok === false && /^(STALE_ROW|ROW_UNVERIFIED)$/.test(String(r.code))));
+    const rLog = log.filter(x => x.fn === 'logTag').pop(), rAdd = log.filter(x => x.fn === 'addTag').pop();
+    ok(verdict(rLog), `registreringen: ${okIds ? 'rätt rad via id' : 'nekas'} ${JSON.stringify(rLog)}`);
+    ok(okIds ? rg.cell(A, 3, COL['användare']) === 'Testare' : rg.cell(A, 3, COL['användare']) === '',
+      `${A}: dubblettraden (nu rad 3) ${okIds ? 'fick registreringen' : 'fick inget'} ("${rg.cell(A, 3, COL['användare'])}")`);
+    const neighbourB = rg.cell(B, 3, COL.NAME) === 'Presenning' && rg.cell(B, 3, COL['användare']) === '' && rg.cell(B, 3, COL.TAG) === '';
+    if (BACKEND_ADDTAG_GUARDED) {
+      ok(neighbourB, `grannraden i ${B} är orörd (tagg "${rg.cell(B, 3, COL.TAG)}")`);
+      ok(verdict(rAdd), `kopplingen: ${okIds ? 'rätt rad via id' : 'nekas'} ${JSON.stringify(rAdd)}`);
+      ok(okIds ? String(rg.cell(B, 4, COL.TAG)).includes(NEW) : rg.findByTag(NEW).length === 0,
+        `${B}: ${okIds ? 'koden hamnade på dubblettraden (nu rad 4)' : 'den nya koden finns ingenstans'}`);
+    } else {
+      known(`kopplingen prövas inte av den här backenden: grannraden i ${B} fick taggen "${rg.cell(B, 3, COL.TAG)}" (${JSON.stringify(rAdd)})`);
+    }
+    c.stop();
   }
 
   // (4) En rad infogas ovanför dubblettraden EFTER att listan hämtats. Varje

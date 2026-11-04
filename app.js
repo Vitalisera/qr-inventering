@@ -2700,7 +2700,7 @@ async function resyncPendingTagLinks() {
           ...(job.seq ? { seq: job.seq } : {}),
           ...(job.id !== undefined ? { id: job.id } : {}),
           ...(job.expectedName !== undefined ? { expectedName: job.expectedName } : {}),
-        ...(job.wireTag ? { wireTag: job.wireTag } : {}),
+          ...(job.wireTag ? { wireTag: job.wireTag } : {}),
           _resync: true
         });
         // verified/rejected → Save.linkTag har redan _pendingTagLinks.delete:at.
@@ -2723,7 +2723,7 @@ async function resyncPendingTagLinks() {
           name: job.name, sheetName: job.sheetName, rowNum: job.rowNum,
           ...(job.id !== undefined ? { id: job.id } : {}),
           ...(job.expectedName !== undefined ? { expectedName: job.expectedName } : {}),
-        ...(job.wireTag ? { wireTag: job.wireTag } : {}),
+          ...(job.wireTag ? { wireTag: job.wireTag } : {}),
           ...(job.seq ? { seq: job.seq } : {}),
           _resync: true,
           _resyncLe: job._le || null

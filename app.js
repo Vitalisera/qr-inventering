@@ -2947,6 +2947,10 @@ function _applyBatchResults_(batch, res) {
     const h = _jobHooks_.get(job.seq);
     if (h) { _jobHooks_.delete(job.seq); try { h(cls); } catch (_) {} }
   };
+  // A12: synkstatusen gäller ARTIKELN, inte jobbet. Gul släcks först när inget
+  // jobb för artikeln i denna batch nekades eller ska försökas igen, och ingen
+  // annan ändring för den väntar (kö, singelregistrering, koppling, ny artikel).
+  const verifiedTags = [], dirtyTags = new Set();
   for (let i = 0; i < batch.length; i++) {
     const tag = batch[i].args.tag;
     const r = results ? results[i] : res;
@@ -2955,15 +2959,15 @@ function _applyBatchResults_(batch, res) {
     // EFTER det nyare och vinna. Omsändningen är ofarlig (samma värde igen).
     const transient = retryTags.has(tag) ||
       (results ? (r == null || (r.ok === false && r.transient === true)) : wholeTransient);
-    if (transient) { retryTags.add(tag); failedTags.retry.push(batch[i]); continue; }
+    if (transient) { retryTags.add(tag); dirtyTags.add(tag); failedTags.retry.push(batch[i]); continue; }
     if (!_isJobVerifiedOk_(tag, r)) {
+      dirtyTags.add(tag);
       failedTags.push(tag);
       failedTags.details.push({ tag, fnName: batch[i].fnName, code: r && r.code, msg: r && r.msg, ambiguousName: !!(r && r.ambiguousName) });
       hook(batch[i], 'rejected');
     } else {
       hook(batch[i], 'verified');
-      const cur = tagCache.get(tag);
-      if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
+      verifiedTags.push(tag);
       // Synk-audit 2026-07-01 (kommentar-display-bugg): batch bekräftad → pendingSync
       // rensas, MEN _revalidateCacheTs_ kör direkt efter och kan dra en coalescad
       // preload som STARTADE FÖRE vår write (stale, utan ändringen). Då pendingSync
@@ -2974,7 +2978,27 @@ function _applyBatchResults_(batch, res) {
       _recentlySynced.set(tag, Date.now());
     }
   }
+  for (const tag of new Set(verifiedTags)) {
+    if (dirtyTags.has(tag) || _tagHasPendingOps_(tag)) continue;
+    const cur = tagCache.get(tag);
+    if (cur) tagCache.set(tag, { ...cur, pendingSync: false });
+  }
+  // A12: ett jobb som ska försökas igen ligger ännu inte i kön när krokarna ovan
+  // körs (det läggs tillbaka efter detta), så en krok kan ha släckt gult för
+  // artikeln. Den väntar fortfarande → gul.
+  for (const tag of retryTags) {
+    const cur = tagCache.get(tag);
+    if (cur && !cur.pendingSync) tagCache.set(tag, { ...cur, pendingSync: true });
+  }
   return failedTags;
+}
+// A12: väntar någon annan ändring för artikeln på svar eller på att skickas?
+function _tagHasPendingOps_(tag) {
+  if (updateQueue.some(j => j && j.args && j.args.tag === tag)) return true;
+  if (_pendingLogSingle.has(tag)) return true;
+  for (const j of _pendingTagLinks.values()) if (j && j.currentTag === tag) return true;
+  for (const j of _pendingCreates.values()) if (j && j.tag === tag) return true;
+  return false;
 }
 
 // msgLine + status-banner. Vid fail behålls meddelandet (med pendingSync-CSS

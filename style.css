@@ -735,7 +735,10 @@ body:has(.dialog:not(.hidden))::after {
 #searchDialog .actions { flex-shrink: 0; }
 
 /* Namndialog */
-#nameDialog input { text-align: center; }
+#nameDialog input, #accessDialog input { text-align: center; }
+/* Åtkomstfrågan (A01) ska ligga över andra dialoger: annars kan den öppnas osynligt
+   under t.ex. artikeldialogen och sparningarna vänta utan att något syns. */
+#accessDialog { z-index: 1003; }
 
 /* === FABs === */
 .btn.fab {

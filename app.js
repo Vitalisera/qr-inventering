@@ -6,7 +6,7 @@
 /* ===== Service Worker + update-banner ===== */
 // APP_VERSION bumpas synkat med sw.js CACHE och index.html app.js?v=
 // Används för att räkna ut vilka changelog-entries som är "nya" för användaren.
-const APP_VERSION = 163;
+const APP_VERSION = 164;
 // S5/U1 (v152): EN sanningskälla för hur länge namnet sparas (localStorage +
 // cookie i ensureName). Texterna i index.html ("ett år") ska spegla detta värde.
 const NAME_TTL_DAYS = 365;
@@ -550,9 +550,155 @@ function _wireBody_(fn, params) {
   return body;
 }
 
+/* ===== Åtkomstfrågan (A01, v164) =====
+ * Servern nekar varje anrop utan giltigt åtkomstbevis med code UNAUTHORIZED
+ * (transient:true). Beviset fås genom att svara på frågan i #accessDialog och
+ * sparas i localStorage (vitaliseraAccessToken). Frågan visas FÖRST när servern
+ * nekat: innan svaret lagts in på servern släpps alla igenom och ingen ska se den.
+ *
+ * Allt sker här i transportlagret, så ingen anropare ser UNAUTHORIZED: inget
+ * försök räknas, inget jobb parkeras eller kastas, gasCallWithRetry loopar inte.
+ * Ett nekat anrop väntar tills inloggningen lyckats och skickas sedan om, med
+ * samma payload. Omsändningen är säker: grinden nekar innan servern gjort något.
+ * Medan frågan är öppen skickas inget alls (pollningen av cacheTs hoppas över),
+ * och efter inloggningen släpps de väntande anropen ett i taget i den ordning de
+ * kom (nya anrop som startar under tiden går direkt, parallellt med dem). En
+ * skrivning som väntar på ett namnbyte ger upp väntan efter 45 s (_awaitRenames_);
+ * dröjer inloggningen längre kan servern neka den synligt (gammalt namn), aldrig tyst.
+ * Beviset läggs bara på det som skickas (aldrig i params eller köade jobb, som
+ * sparas på disk), och svaret på frågan sparas aldrig. */
+const ACCESS_TOKEN_LS_KEY = 'vitaliseraAccessToken';
+function _getAccessToken_() { try { return localStorage.getItem(ACCESS_TOKEN_LS_KEY) || ''; } catch (_) { return ''; } }
+function _setAccessToken_(t) {
+  try { if (t) localStorage.setItem(ACCESS_TOKEN_LS_KEY, t); else localStorage.removeItem(ACCESS_TOKEN_LS_KEY); } catch (_) {}
+}
+let _accessWait_ = false;     // true = inloggning krävs, väntande anrop hålls
+const _accessHeld_ = [];      // väntande anrop i ordning; varje post startar ett anrop
+let _accessReleasing_ = false;
+function _isAccessDenied_(r) { return !!r && r.ok === false && r.code === 'UNAUTHORIZED'; }
+// Max EN dialog, även om flera anrop nekas samtidigt.
+function _requireAccess_() {
+  if (_accessWait_) return;
+  _accessWait_ = true;
+  _openAccessDialog_();
+}
+// Ett anrop väntar på sin tur. Löses med en funktion som anropet kör när det fått svar.
+function _holdForAccess_(first) {
+  return new Promise(go => { if (first) _accessHeld_.unshift(go); else _accessHeld_.push(go); });
+}
+// Efter inloggning: släpp de väntande anropen ett i taget.
+async function _releaseHeld_() {
+  if (_accessReleasing_) return;
+  _accessReleasing_ = true;
+  try {
+    while (_accessHeld_.length && !_accessWait_) {
+      const go = _accessHeld_.shift();
+      await new Promise(done => go(done));
+    }
+  } finally { _accessReleasing_ = false; }
+}
+function _afterAccessGranted_() {
+  _releaseHeld_().then(() => {
+    if (_accessWait_) return;   // nekad igen under tiden: frågan är redan öppen
+    try { if (updateQueue.length && !flushInFlight) flushUpdates(); } catch (_) {}
+    try { resyncPendingTagLinks(); } catch (_) {}
+    try { preloadShared().then(initData).catch(() => {}); } catch (_) {}
+  });
+}
+// Skickar svaret. Returnerar serverns svar ({ok:true} eller {ok:false, code}).
+// Svaret på frågan loggas inte, sparas inte och följer inte med i något annat anrop.
+async function _submitAccessAnswer_(answer) {
+  let res;
+  try { res = await gasCall('auth', { answer: String(answer == null ? '' : answer) }); }
+  catch (err) { res = { ok: false, code: 'NETWORK' }; }
+  if (res && res.ok === true && typeof res.token === 'string' && res.token) {
+    _setAccessToken_(res.token);
+    _accessWait_ = false;
+    _closeAccessDialog_();
+    show('☑️ Rätt svar. Appen fortsätter där den var.', 'ok');
+    _afterAccessGranted_();
+    return { ok: true };
+  }
+  return { ok: false, code: (res && res.code) || 'UNKNOWN' };
+}
+function _accessErrorText_(code) {
+  if (code === 'WRONG_ANSWER') return 'Det var inte rätt svar. Försök igen.';
+  if (code === 'ACCESS_LOCKED') return 'För många försök. Vänta en stund och försök sedan igen.';
+  if (code === 'NETWORK') return 'Ingen kontakt med servern. Försök igen när du har nät.';
+  return 'Det gick inte att kontrollera svaret just nu. Försök igen om en stund.';
+}
+function _openAccessDialog_() {
+  const d = (typeof document !== 'undefined') ? document.querySelector('#accessDialog') : null;
+  if (!d || !d.classList) return;
+  // Två frågor ovanpå varandra blir rörigt: står namnfrågan öppen visas den här efteråt.
+  const nd = document.querySelector('#nameDialog');
+  if (nd && nd.classList && nd.classList.contains('hidden') === false && nd !== d) {
+    setTimeout(() => { if (_accessWait_) _openAccessDialog_(); }, 500);
+    return;
+  }
+  const input = document.querySelector('#accessAnswerInput');
+  const msg = document.querySelector('#accessMsg');
+  const btn = document.querySelector('#accessOkBtn');
+  if (input) input.value = '';
+  if (msg) { msg.textContent = ''; msg.className = 'msgLine'; }
+  if (btn) {
+    btn.disabled = false;
+    btn.onclick = async () => {
+      const val = input ? String(input.value || '') : '';
+      if (!val.trim()) { if (msg) msg.textContent = 'Skriv svaret i rutan.'; return; }
+      btn.disabled = true;
+      if (msg) { msg.textContent = '⏳ Kontrollerar…'; msg.className = 'msgLine'; }
+      const r = await _submitAccessAnswer_(val);
+      btn.disabled = false;
+      if (!r.ok) {
+        if (msg) { msg.textContent = _accessErrorText_(r.code); msg.className = 'msgLine warn'; }
+        if (input) { input.value = ''; try { input.focus(); } catch (_) {} }
+      }
+    };
+  }
+  if (input && !input._accessEnter) {
+    input._accessEnter = true;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && btn) { e.preventDefault(); btn.click(); } });
+  }
+  d.classList.remove('hidden');
+  try { if (input) input.focus(); } catch (_) {}
+}
+function _closeAccessDialog_() {
+  const d = (typeof document !== 'undefined') ? document.querySelector('#accessDialog') : null;
+  const input = (typeof document !== 'undefined') ? document.querySelector('#accessAnswerInput') : null;
+  if (input) input.value = '';
+  if (d && d.classList) d.classList.add('hidden');
+}
+
 async function gasCall(fn, params = {}, timeoutMs = 30000) {
   _attachIdentityForSend_(fn, params);
   await _awaitRenames_(fn, params);
+  let turnDone = null, hadTurn = false;
+  try {
+    for (;;) {
+      if (fn !== 'auth' && _accessWait_) {
+        // Pollningen ska inte stapla väntande anrop medan frågan är öppen.
+        if (fn === 'cacheTs') return null;
+        if (turnDone) { turnDone(); turnDone = null; }
+        turnDone = await _holdForAccess_(hadTurn);
+        hadTurn = true;
+        continue;   // pröva igen: en annan nekan kan ha öppnat frågan på nytt
+      }
+      const sent = fn === 'auth' ? '' : _getAccessToken_();
+      const res = await _gasFetch_(fn, params, timeoutMs, sent);
+      if (fn !== 'auth' && _isAccessDenied_(res)) {
+        // Radera bara beviset om det är just det som nekades. Ett sent svar på ett
+        // anrop som gick före en lyckad inloggning skickas bara om med det nya.
+        if (_getAccessToken_() === sent) { _setAccessToken_(''); _requireAccess_(); }
+        continue;
+      }
+      return res;
+    }
+  } finally {
+    if (turnDone) turnDone();
+  }
+}
+async function _gasFetch_(fn, params, timeoutMs, accessToken) {
   // Per-anrop-timeout (default 30s, oförändrat för alla anropare som inte
   // skickar timeoutMs): GAS cold-start kan ta ~10s, mobilnät-tap kan tappa
   // förbindelsen helt utan native error. Utan timeout hänger UI:n i evighet.
@@ -566,7 +712,7 @@ async function gasCall(fn, params = {}, timeoutMs = 30000) {
       method: 'POST',
       // cv = klientversion i VARJE anrop (v160). Backend använder den för att inte
       // ge äldre klienter svar de skulle läsa som framgång (TAG_EXISTS i st. f. existed).
-      body: JSON.stringify(_wireBody_(fn, params)),
+      body: JSON.stringify(Object.assign(_wireBody_(fn, params), accessToken ? { accessToken } : {})),
       redirect: 'follow',
       signal: ac.signal
     });
@@ -657,6 +803,9 @@ function classifyLinkResult(r) {
   if (r && (r.collision === true || r.staleRow === true)) return 'rejected';
   if (r && r.exhausted === true) return 'pending-retry';
   if (!r) return 'pending-retry';            // ingen res = nätfel innan svar
+  // A01: gasCall håller nekade anrop tills inloggningen lyckats, så hit kommer
+  // UNAUTHORIZED inte. Skulle det ändå göra det är jobbet inte avvisat: behåll det.
+  if (r.ok === false && r.code === 'UNAUTHORIZED') return 'pending-retry';
   // ok:false UTAN exhausted = servern svarade och avvisade (validering m.m.)
   return 'rejected';
 }

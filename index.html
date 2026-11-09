@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
-  <link rel="stylesheet" href="style.css?v=28">
+  <link rel="stylesheet" href="style.css?v=29">
 </head>
 
 <body>
@@ -81,6 +81,18 @@
     </div>
     <input id="userNameInput" placeholder="Ex. Robert Kraft" autocomplete="name" />
     <div class="actions"><button id="saveNameBtn" class="btn">OK</button></div>
+  </div>
+
+  <!-- ÅTKOMSTFRÅGAN (A01, v164). Visas först när servern nekat ett anrop, se app.js
+       _requireAccess_. Frågan är inte hemlig, svaret finns bara på servern. -->
+  <div id="accessDialog" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="accessTitle" tabindex="-1">
+    <h2 id="accessTitle">Vad är lösenordet till Vitaliseras wifi? <span class="help-toggle dark" data-help="access">?</span></h2>
+    <div class="help-box" id="help-access">
+      Frågan skyddar arket mot obehöriga. Skriv wifi-lösenordet. Stora och små bokstäver spelar ingen roll, och inte heller mellanslag före eller efter. Själva svaret sparas inte på telefonen, bara ett bevis på att det var rätt, så du slipper frågan nästa gång. Det du har ändrat väntar på telefonen och skickas så fort du har svarat rätt. Byts svaret får alla frågan en gång till.
+    </div>
+    <input id="accessAnswerInput" type="text" placeholder="Lösenordet" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" />
+    <p id="accessMsg" class="msgLine" aria-live="polite"></p>
+    <div class="actions"><button id="accessOkBtn" class="btn" type="button">OK</button></div>
   </div>
 
   <!-- ARTIKEL -->
@@ -173,6 +185,7 @@
       <h3 class="qr-h"><span class="qr-n">1</span> Kom igång</h3>
       <ul class="qr-list">
         <li>Skriv ditt namn första gången. Det sparas i ett år och visas i arket, så att man ser vem som inventerat.</li>
+        <li>Frågar appen efter lösenordet till Vitaliseras wifi skriver du det en gång. Det du har ändrat väntar på telefonen och skickas så fort du har svarat rätt.</li>
         <li>Tryck <b>📷 Skanna</b> och rikta kameran mot QR-koden eller streckkoden. En grön ram, ett pip och en blinkning betyder att koden är avläst.</li>
       </ul>
     </section>
@@ -219,6 +232,7 @@
     <section class="qr-sec">
       <h3 class="qr-h"><span class="qr-n">2</span> Kom igång</h3>
       <p class="qr-p">Första gången du öppnar appen får du skriva in <b>ditt namn</b>. Det sparas lokalt i ett år och visas i Google-arket vid varje registrering, så att man i efterhand ser vem som inventerat vad.</p>
+      <p class="qr-p">Appen kan också fråga <b>Vad är lösenordet till Vitaliseras wifi?</b> Frågan skyddar arket mot obehöriga och kommer första gången, och igen om svaret har bytts. Skriv lösenordet. Stora och små bokstäver spelar ingen roll, och inte heller mellanslag före eller efter. Själva svaret sparas inte, bara ett bevis på att det var rätt, och ditt namn ligger kvar. Medan frågan står öppen väntar det du har ändrat på telefonen, och det skickas så fort du har svarat rätt. Ingenting går förlorat. Svarar du fel många gånger i rad får du vänta en stund innan du kan försöka igen.</p>
       <p class="qr-p">Tryck sedan <b>📷 Skanna</b> för att slå på kameran. Vill du hellre söka eller bläddra så finns hela lagret i listorna längre ner, och sökknappen hittar en artikel direkt på namnet.</p>
     </section>
 
@@ -361,7 +375,7 @@
   </audio>
 
   <script src="autocomplete.js?v=2"></script>
-  <script src="app.js?v=163"></script>
+  <script src="app.js?v=164"></script>
 
   <div id="rotateBlock">Vänd enheten till stående läge</div>
 

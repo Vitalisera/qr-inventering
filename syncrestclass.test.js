@@ -28,6 +28,7 @@ function classifyLinkResult(r) {
   if (r && (r.collision === true || r.staleRow === true)) return 'rejected';
   if (r && r.exhausted === true) return 'pending-retry';
   if (!r) return 'pending-retry';
+  if (r.ok === false && r.code === 'UNAUTHORIZED') return 'pending-retry';
   return 'rejected';
 }
 function decideDateCommit(origYMD, currentYMD, lastCommittedYMD) {

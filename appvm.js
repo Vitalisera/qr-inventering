@@ -61,7 +61,8 @@ function loadApp(opts = {}) {
     key: i => [...lsData.keys()][i] ?? null,
     get length() { return lsData.size; },
   };
-  const app = { rig, ls: lsData, fetchMode: 'rig', calls: [], hung: [], timers: new Set() };
+  const app = { rig, ls: lsData, fetchMode: 'rig', calls: [], hung: [], timers: new Set(), delays: [] };
+  const scale = typeof opts.timeScale === 'number' ? opts.timeScale : 1;
   const navigator = { onLine: true, userAgent: 'node', serviceWorker: stub('sw'), mediaDevices: stub('md'), clipboard: stub('cb') };
   const listeners = {};
   const fetch = async (url, init) => {
@@ -95,7 +96,9 @@ function loadApp(opts = {}) {
     console: opts.quiet === false ? console : { log() {}, warn() {}, error() {}, info() {}, debug() {} },
     localStorage, sessionStorage: localStorage, navigator, fetch, document,
     location: win.location, URLSearchParams, AbortController, TextEncoder, TextDecoder,
-    setTimeout: (f, ms, ...a) => { const t = realSetTimeout(() => { app.timers.delete(t); f(...a); }, ms); if (t.unref) t.unref(); app.timers.add(t); return t; },
+    // app.delays sparar de väntetider appen BER om (opts.timeScale krymper den
+    // faktiska väntan, så att ett prov av 2 s/5 s/15 s-backoff går på millisekunder).
+    setTimeout: (f, ms, ...a) => { app.delays.push({ ms, fn: (f && f.name) || "" }); const t = realSetTimeout(() => { app.timers.delete(t); f(...a); }, (ms || 0) * scale); if (t.unref) t.unref(); app.timers.add(t); return t; },
     clearTimeout: t => { app.timers.delete(t); realClearTimeout(t); },
     setInterval: () => 0, clearInterval() {},
     requestAnimationFrame: () => 0, cancelAnimationFrame() {},
@@ -111,7 +114,8 @@ function loadApp(opts = {}) {
   Object.assign(win, ctx);
   ctx.window = win; ctx.self = win; ctx.globalThis = ctx;
   vm.createContext(ctx);
-  const src = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  // opts.appPath: ladda en annan app.js, t.ex. en äldre version ur git, för rött-mot-gammalt-prov.
+  const src = fs.readFileSync(opts.appPath || path.join(__dirname, 'app.js'), 'utf8');
   vm.runInContext(src, ctx, { filename: 'app.js' });
   app.ctx = ctx;
   app.navigator = navigator;

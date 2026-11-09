@@ -26,7 +26,8 @@ function classifyLinkResult(r) {
   if (r && r.ok === true) return 'verified';
   if (r && (r.collision === true || r.staleRow === true)) return 'rejected';
   if (r && r.exhausted === true) return 'pending-retry';
-  if (!r) return 'pending-retry';            // ingen res = nätfel innan svar
+  if (!r) return 'pending-retry';
+  if (r.ok === false && r.code === 'UNAUTHORIZED') return 'pending-retry';            // ingen res = nätfel innan svar
   return 'rejected';
 }
 // ---- slut kopia ----

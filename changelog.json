@@ -1,6 +1,13 @@
 {
-  "latest": 163,
+  "latest": 164,
   "versions": [
+    {
+      "version": 164,
+      "date": "2026-11-10",
+      "notes": [
+        "Appen kan nu fråga efter lösenordet till Vitaliseras wifi. Frågan skyddar arket mot obehöriga. Du svarar en gång, och sedan slipper du frågan på den här telefonen tills svaret byts. Stora och små bokstäver spelar ingen roll. Det du har ändrat väntar på telefonen medan frågan står öppen och skickas så fort du har svarat rätt. Ditt namn ligger kvar."
+      ]
+    },
     {
       "version": 163,
       "date": "2026-11-04",

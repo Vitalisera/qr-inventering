@@ -35,8 +35,8 @@ function mkRig() {
   rig.props.set('ACCESS_ANSWER_NEW', SVAR);   // grinden spärras vid första anropet
   return rig;
 }
-function start(rig, appPath) {
-  const a = loadApp({ rig, appPath, timeScale: SCALE, ls: { vitaliseraUser: 'Testare', vitaliseraExpiry: String(Date.now() + 864e5) } });
+function start(rig, appPath, ls) {
+  const a = loadApp({ rig, appPath, timeScale: SCALE, ls: ls || { vitaliseraUser: 'Testare', vitaliseraExpiry: String(Date.now() + 864e5) } });
   a.run('userName = "Testare"');
   // DOM-stubben: dialogernas synlighet följs här. Namnfrågan är stängd.
   const opened = { n: 0 };
@@ -154,6 +154,65 @@ async function partV164(appPath) {
   }
 }
 
+// Del 3 (TL villkor 3): en enhet på v163 med kö som kommer tillbaka efter att hashen
+// satts, kör v163 tills den gett upp, och laddas sedan om som v164 med SAMMA localStorage.
+async function partOffline(v163) {
+  console.log('Del 3: v163 med kö möter spärrad grind, sedan omladdning till v164');
+  const rig = mkRig();
+  const a = start(rig, v163);
+  a.run(`queueUpdate('updateCount', { tag: '7310001', newCount: 9, userName: 'Testare', sheetName: '${S}', rowNum: 2, expectedName: 'Kratta' })`);
+  a.run('clearTimeout(updateTimer); updateTimer = null; flushUpdates()');
+  a.run(`Save.logSingle('7310003', { name: 'Hink', sheetName: '${S}', rowNum: 4, expectedName: 'Hink' })`);
+  a.run(`Save.createItem({ ck: 'ck-off-1', tag: '7399001', name: 'Ny sak', type: 'singel', qty: 1, unit: 'st', category: '', sheetPlace: '', sheetName: '${S}', minQty: '', user: 'Testare', retries: 0 })`);
+  await settle(a, 400);
+  const ls = Object.fromEntries(a.ls);
+  a.stop();
+  const q = JSON.parse(ls[QKEY] || '[]'), p = JSON.parse(ls[PKEY] || '{}');
+  ok(q.length === 1 && q[0].retries === 5, 'v163: saldojobbet ligger kvar i localStorage efter 5 försök (parkeringen själv sparas inte)');
+  ok((p.logSingle || []).length === 1 && (p.creates || []).length === 1, 'v163: skanning och ny artikel ligger kvar i localStorage');
+  ok(qty(rig, 2) === 5 && qty(rig, 4) === 0 && rig.findByTag('7399001').length === 0, 'v163 har inte skrivit något');
+  const b = start(rig, null, ls);   // kallstart av v164 med v163:s localStorage
+  b.run('flushUpdates(); resyncPendingTagLinks();');
+  await settle(b, 200);
+  ok(b.opened.n === 1, 'v164 tar över kön och visar frågan en gång (' + b.opened.n + ')');
+  ok(qty(rig, 2) === 5, 'inget skickas förbi grinden');
+  const r = await b.run(`_submitAccessAnswer_("${SVAR}")`);
+  await settle(b, 150);
+  ok(r.ok && qty(rig, 2) === 9 && qty(rig, 4) === 1 && rig.findByTag('7399001').length === 1,
+    'efter rätt svar når saldo, skanning och ny artikel arket, en gång var (' + qty(rig, 2) + '/' + qty(rig, 4) + '/' + rig.findByTag('7399001').length + ')');
+  ok(queued(b).length === 0 && !((b.persisted(PKEY) || {}).logSingle || []).length && !((b.persisted(PKEY) || {}).creates || []).length, 'köerna är tomma');
+  b.stop();
+}
+
+// Del 4 (TL villkor 1): liveprovet med fetch-interceptor, mot den riktiga Code.js
+// med ÖPPEN grind. Interceptorn lägger till qaToken + qaForceGate och förfalskar auth.
+async function partQaInterceptor() {
+  console.log('Del 4: QA-interceptor mot öppen grind (som liveprovet)');
+  const QA = (fs.readFileSync(path.join(__dirname, '..', 'QR-aktuell', 'Code.js'), 'utf8').match(/QA_SELFTEST_TOKEN = '([^']+)'/) || [])[1];
+  const rig = makeRig();
+  rig.addSheet(S, HEADERS, [row('Kratta', 5, '7310001')]);
+  const a = start(rig, null);
+  let forcing = true, authFaked = 0;
+  a.serve = (fn, p) => {
+    if (fn === 'auth') { authFaked++; forcing = false; return { ok: true, token: 'qa-dummy' }; }
+    return rig.api(fn, forcing ? Object.assign({}, p, { qaToken: QA, qaForceGate: true }) : p);
+  };
+  a.run('_revalidateCacheTs_()');   // som 15-sekunderspollningen
+  await settle(a, 100);
+  ok(a.opened.n === 1 && a.run('_accessWait_') === true, 'tvingad nekan av cacheTs: frågan visas');
+  const r = await a.run('_submitAccessAnswer_("vad som helst")');
+  await settle(a, 100);
+  ok(r.ok && authFaked === 1 && a.ls.get(TKEY) === 'qa-dummy', 'förfalskat auth-svar godtas, dummy-bevis sparat');
+  const pre = a.calls.slice(a.calls.findIndex(c => c.fn === 'auth') + 1).filter(c => c.fn === 'preload');
+  ok(pre.length >= 1 && pre.every(c => c.accessToken === 'qa-dummy'), 'efter inloggning: preload skickas med dummy-beviset');
+  a.serve = null;   // interceptorn borttagen
+  a.run(`queueUpdate('updateCount', { tag: '7310001', newCount: 7, userName: 'Testare', sheetName: '${S}', rowNum: 2, expectedName: 'Kratta' })`);
+  a.run('clearTimeout(updateTimer); updateTimer = null; flushUpdates()');
+  await settle(a, 100);
+  ok(qty(rig, 2) === 7 && a.opened.n === 1, 'utan interceptor: ett riktigt anrop med dummy-bevis går igenom den öppna grinden, ingen ny fråga');
+  a.stop();
+}
+
 (async () => {
   const under = process.env.APP_UNDER_TEST;
   try {
@@ -165,6 +224,8 @@ async function partV164(appPath) {
       fs.writeFileSync(v163, execFileSync('git', ['show', '1412909:app.js'], { cwd: __dirname }));
       await partV163(v163);
       await partV164(null);
+      await partOffline(v163);
+      await partQaInterceptor();
     }
   } catch (e) {
     fail++; console.log('  FAIL kraschade: ' + (e && e.message));

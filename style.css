@@ -738,7 +738,9 @@ body:has(.dialog:not(.hidden))::after {
 #nameDialog input, #accessDialog input { text-align: center; }
 /* Åtkomstfrågan (A01) ska ligga över andra dialoger: annars kan den öppnas osynligt
    under t.ex. artikeldialogen och sparningarna vänta utan att något syns. */
-#accessDialog { z-index: 1003; }
+/* v165: frågan ligger överst, över installationsguiden (100000), nyhetsrutan (99998),
+   uppdateringsbannern (99999) och introt, så att den aldrig kan döljas. */
+#accessDialog { z-index: 100001; }
 
 /* === FABs === */
 .btn.fab {

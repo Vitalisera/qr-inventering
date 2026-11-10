@@ -1,6 +1,13 @@
 {
-  "latest": 164,
+  "latest": 165,
   "versions": [
+    {
+      "version": 165,
+      "date": "2026-11-10",
+      "notes": [
+        "Frågan om wifi-lösenordet hamnar nu alltid överst. Förut kunde rutan om ny version eller nyheterna lägga sig ovanpå den."
+      ]
+    },
     {
       "version": 164,
       "date": "2026-11-10",
